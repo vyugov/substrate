@@ -4225,7 +4225,9 @@ dependencies = [
 name = "substrate-badger-primitives"
 version = "2.0.0"
 dependencies = [
+ "bincode 1.1.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "hbbft 0.1.1",
+ "pairing 0.14.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "parity-codec 4.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.94 (registry+https://github.com/rust-lang/crates.io-index)",
  "sr-primitives 2.0.0",

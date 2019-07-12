@@ -115,6 +115,19 @@ pub use fg_primitives::{AuthorityId, AuthorityPair,ScheduledChange};
 #[cfg(test)]
 mod tests;
 
+pub enum Message<H, N> {
+	/// A prevote message.
+	#[cfg_attr(feature = "derive-codec", codec(index = "0"))]
+	Prevote(Prevote<H, N>),
+	/// A precommit message.
+	#[cfg_attr(feature = "derive-codec", codec(index = "1"))]
+	Precommit(Precommit<H, N>),
+	// Primary proposed block.
+	#[cfg_attr(feature = "derive-codec", codec(index = "2"))]
+	PrimaryPropose(PrimaryPropose<H, N>),
+}
+
+
 /// A GRANDPA message for a substrate chain.
 pub type Message<Block> = grandpa::Message<<Block as BlockT>::Hash, NumberFor<Block>>;
 /// A signed message.

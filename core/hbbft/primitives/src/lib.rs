@@ -23,26 +23,64 @@ extern crate alloc;
 
 #[cfg(feature = "std")]
 use serde::Serialize;
+
+#[cfg(feature = "std")]
+use serde::Deserialize;
+
+
 use parity_codec::{Encode, Decode, Codec,Input};
 use sr_primitives::{ConsensusEngineId, traits::{DigestFor, NumberFor}};
 use client::decl_runtime_apis;
 use rstd::vec::Vec;
-use badger::crypto::{self, PublicKey, PublicKeySet, PublicKeyShare, SecretKey, SecretKeyShare,Signature};
+use badger::crypto::{self, PublicKey, PublicKeySet, PublicKeyShare, SecretKey, SecretKeyShare,Signature, Fr, FrRepr};
 /// The hbbft crypto scheme defined via the keypair type.
 #[cfg(feature = "std")]
 pub type AuthorityPair = (PublicKey,SecretKey);
 
+use bincode;
+use threshold_crypto::serde_impl::SerdeSecret;
+
+
+pub const SK_SIZE: usize = 32;
+
+
+#[derive(Debug,Clone,PartialEq,Eq)]
+pub struct SecretKeyWrap(pub SecretKey);
+
+impl parity_codec::Encode for SecretKeyWrap {
+ 
+	fn encode_to<T: parity_codec::Output>(&self, dest: &mut T) {
+		//let len = <C::Affine as CurveAffine>::Compressed::size();
+		 for bt in bincode::serialize(&SerdeSecret(&self.0)).expect("Falied serialize").iter()
+		 {
+			 dest.push_byte(*bt);
+		 }
+	
+	}
+}
+impl parity_codec::Decode for SecretKeyWrap {
+  fn decode<I: Input>(value: &mut I) -> Option<Self>
+  {
+	   let mut mt:[u8; SK_SIZE]= [0;SK_SIZE ];
+	  let rd=value.read(&mut mt);
+        if rd!=SK_SIZE
+		{
+        return None
+		}
+   match bincode::deserialize(&mt)
+   {
+	   Ok(val) => Some(Self { 0: val}),
+	   Err(_)  => None
+   }
+  }
+}
 
 #[derive(Debug,Serialize,Clone,PartialEq,Eq,Hash)]
-pub struct SecretKeyWrap(SecretKey)
+pub struct PublicKeySetWrap( pub PublicKeySet);
 
 
 #[derive(Debug,Serialize,Clone,PartialEq,Eq,Hash)]
-pub struct PublicKeySetWrap(PublicKeySet)
-
-
-#[derive(Debug,Serialize,Clone,PartialEq,Eq,Hash)]
-pub struct PublicKeyWrap(PublicKey);
+pub struct PublicKeyWrap(pub PublicKey);
 
 use badger::crypto::PK_SIZE;
 use badger::crypto::SIG_SIZE;
@@ -110,9 +148,36 @@ impl parity_codec::Decode for PublicKeyShareWrap {
   }
 }
 
-#[derive(Debug,Serialize,Clone,PartialEq,Eq,Hash)]
-pub struct SecretKeyShareWrap(SecretKeyShare);
+#[derive(Debug,Clone,PartialEq,Eq)]
+pub struct SecretKeyShareWrap(pub SecretKeyShare);
 
+impl parity_codec::Encode for SecretKeyShareWrap 
+{ 
+	fn encode_to<T: parity_codec::Output>(&self, dest: &mut T) 
+	{
+     for bt in bincode::serialize(&SerdeSecret(&self.0)).expect("Falied serialize").iter()
+		 {
+			 dest.push_byte(*bt);
+		 }
+	}
+}
+impl parity_codec::Decode for SecretKeyShareWrap {
+  fn decode<I: Input>(value: &mut I) -> Option<Self>
+  {
+	let mut mt:[u8; SK_SIZE]= [0;SK_SIZE ];
+	  let rd=value.read(&mut mt);
+        if rd!=SK_SIZE
+		{
+        return None
+		}
+   match bincode::deserialize(&mt)
+   {
+	   Ok(val) => Some(Self { 0: val}),
+	   Err(_)  => None
+   }
+  
+  }
+}
 
 /// Identity of a HBBFT  proposer.
 pub type AuthorityId = PublicKeyWrap;
@@ -253,9 +318,9 @@ impl<N: Codec> ConsensusLog<N> {
 }
 
 /// WASM function call to check for pending changes.
-pub const PENDING_CHANGE_CALL: &str = "grandpa_pending_change";
+pub const PENDING_CHANGE_CALL: &str = "badger_pending_change";
 /// WASM function call to get current GRANDPA authorities.
-pub const AUTHORITIES_CALL: &str = "grandpa_authorities";
+pub const AUTHORITIES_CALL: &str = "badger_authorities";
 
 decl_runtime_apis! {
 	/// APIs for integrating the GRANDPA finality gadget into runtimes.
