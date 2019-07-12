@@ -44,6 +44,7 @@ pub struct Header<Number: Copy + Into<u128>, Hash: HashT> {
 	pub extrinsics_root: <Hash as HashT>::Output,
 	/// A chain-specific digest of data useful for light clients or referencing auxiliary data.
 	pub digest: Digest<<Hash as HashT>::Output>,
+//	pub consensus_delta_root: <Hash as HashT>::Output,
 }
 
 #[cfg(feature = "std")]

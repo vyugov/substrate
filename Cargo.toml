@@ -19,6 +19,7 @@ vergen = "3"
 
 [workspace]
 members = [
+	"core/hbbft",
 	"core/cli",
 	"core/client",
 	"core/client/db",
