@@ -110,6 +110,11 @@ pub(crate) fn round_topic<B: BlockT>(round: u64, set_id: u64) -> B::Hash {
 	<<B::Header as HeaderT>::Hashing as HashT>::hash(format!("{}-{}", set_id, round).as_bytes())
 }
 
+pub fn badger_topic<B: BlockT>() -> B::Hash {
+	<<B::Header as HeaderT>::Hashing as HashT>::hash(format!("badger-mushroom").as_bytes())
+}
+
+
 /// Create a unique topic for global messages on a set ID.
 pub(crate) fn global_topic<B: BlockT>(set_id: u64) -> B::Hash {
 	<<B::Header as HeaderT>::Hashing as HashT>::hash(format!("{}-GLOBAL", set_id).as_bytes())
@@ -123,16 +128,18 @@ struct SourcedMessage<D: ConsensusProtocol> {
 }
 
 
-pub struct BadgerNode<B: BlockT,D: ConsensusProtocol,R: Rng> {
+pub struct BadgerNode<B: BlockT,D,R: Rng> 
+where 
+D: ConsensusProtocol<NodeId=PeerId> //specialize to avoid some of the confusion
+{
     /// This node's own ID.
-    id: D::NodeId,
+    id: PeerId,
     /// The instance of the broadcast algorithm.
     algo: D,
 
 	main_rng:R,
 
 	peers: Peers<NumberFor<Block>>,
-	live_topics: KeepTopics<Block>,
 	authorities: Vec<AuthorityId>,
 	config: crate::Config,
 	next_rebroadcast: Instant,
@@ -143,12 +150,9 @@ pub struct BadgerNode<B: BlockT,D: ConsensusProtocol,R: Rng> {
     out_queue: VecDeque<SourcedMessage<D>>,
     /// The values this node has output so far, with timestamps.
     outputs: Vec<(Duration, D::Output)>,
-    /// The number of messages this node has handled so far.
-    message_count: usize,
-    /// The total size of messages this node has handled so far, in bytes.
-    message_size: u64,
 
 }
+
 impl<B: BlockT,D: ConsensusProtocol,R: Rng> BadgerNode<B,D,R>
 {
 fn register_peer_public_key(&mut self,who :&PeerId, auth:AuthorityId)
@@ -171,14 +175,55 @@ fn register_peer_public_key(&mut self,who :&PeerId, auth:AuthorityId)
  }
 
 }
+type BadgerNodeStepResult<D> = CpStep<D>;
 
 impl<B: BlockT,D: ConsensusProtocol,R: Rng> BadgerNode<B,D,R>
 {
-	pub fn  handle_message(who: AuthorityId, msg:  D::Message) -> Result<(),&'static str>
+	pub fn new(config: crate::Config, self_id:PeerId) -> BadgerNode<B,D,R>
 	{
-		match   self.algo.handle_message(&ts_msg.sender_id, msg, rng) 
+	
+	let ni=NetworkInfo<D::NodeId>::new(self_id.clone(),config.secret_key_share,config.public_key_set,config.node_id.1.clone(),config.initial_validators.clone());
+    let dhb = DynamicHoneyBadger::builder().build(ni);
+	let (qhb, qhb_step) = QueueingHoneyBadger::builder(dhb)
+            .batch_size(config.batch_size)
+            .build( rng).expect("instantiate QueueingHoneyBadger");
+	let peer_ids: Vec<_> = netinfo
+            .all_ids()
+            .filter(|&&them| them != our_id)
+            .cloned()
+            .collect();
+	 let (sq, mut step) = SenderQueue::builder(qhb, peer_ids.into_iter()).build(self_id.clone());
+
+     BadgerNode<B,D,R>{
+		 id: self_id,
+		 algo:???,
+         main_rng::OsRng::new(),
+
+	 }
+	}
+	pub fn  handle_message(&mut self, who: AuthorityId, msg:  D::Message) -> Result<(),&'static str>
+	{
+		match   self.algo.handle_message(&who, msg, &self.main_rng) 
 		{
-			Some(step) => {}
+			Some(step) => 
+			 {
+              let out_msgs: Vec<_> = step
+            .messages
+            .into_iter()
+            .map(|mmsg| {
+                let ser_msg = bincode::serialize(&mmsg.message).expect("serialize");
+                (mmsg.target, ser_msg)
+                }).collect();
+		      self.outputs.extend(step.output.into_iter().map(|out| (time, out)));	
+			    for (target, message) in out_msgs {
+            self.sent_time += self.hw_quality.inv_bw * message.len() as u32;
+            self.out_queue.push_back(SourcedMessage {
+                sender_id: self.id.clone(),
+                target,
+                message,});
+				}
+				Ok(())
+			 }
 			None => return Err("Cannot handle message")
 		}
 	}
@@ -186,32 +231,19 @@ impl<B: BlockT,D: ConsensusProtocol,R: Rng> BadgerNode<B,D,R>
 
 pub(super) struct BadgerGossipValidator<Block: BlockT,D: ConsensusProtocol,R: Rng> {
 	inner: parking_lot::RwLock<BadgerNode<Block,D,R>>,
-	set_state: environment::SharedVoterSetState<Block>,
 }
 impl<Block: BlockT,D: ConsensusProtocol,R: Rng> BadgerGossipValidator<Block,D,R> {
-	/// Create a new gossip-validator. This initialized the current set to 0.
-	pub(super) fn new(config: crate::Config, set_state: environment::SharedVoterSetState<Block>)
+	/// Create a new gossip-validator. 
+	pub(super) fn new(config: crate::Config, self_id:PeerId)
 		-> BadgerGossipValidator<Block>
 	{
-		let (tx, rx) = mpsc::unbounded();
 		let val = BadgerGossipValidator {
-			inner: parking_lot::RwLock::new(Inner::new(config)),
-			set_state,
-
+			inner: parking_lot::RwLock::new(BadgerNode::new(config,self_id)),
 		};
 
 		val
 	}
 
-	/// Note a round in the current set has started.
-	pub(super) fn note_round<F>(&self, round: Round, send_neighbor: F)
-		where F: FnOnce(Vec<PeerId>, NeighborPacket<NumberFor<Block>>)
-	{
-		let maybe_msg = self.inner.write().note_round(round);
-		if let Some((to, msg)) = maybe_msg {
-			send_neighbor(to, msg);
-		}
-	}
 
 	/// Note that a voter set with given ID has started. Updates the current set to given
 	/// value and initializes the round to 0.
@@ -242,107 +274,74 @@ impl<Block: BlockT,D: ConsensusProtocol,R: Rng> BadgerGossipValidator<Block,D,R>
 
 
 	pub(super) fn do_validate(&self, who: &PeerId, mut data: &[u8])
-		-> (Action<Block::Hash>, Vec<Block::Hash>, Option<GossipMessage<Block>>)
+		-> (Action<Block::Hash>,  Option<GossipMessage<Block>>)
 	{
-		let mut broadcast_topics = Vec::new();
+
 		let mut peer_reply = None;
 
 
 		let action = {
-
-			let action = {
 			match GossipMessage::<Block>::decode(&mut data) {
-					Greeting(msg)  =>
+					Some(GossipMessage::Greeting(msg))  =>
 					{
-						if msg.mySig.verify(msg.myId.to_bytes()) {
+						if msg.mySig.verify(msg.myId.to_bytes()) 
+						 {
 							self.inner.write().register_peer_public_key(who,msg.myId);
-						}
-					}
+							Action::ProcessAndKeep()
+						 } 
+						 else
+						 {
+						 Action::Discard(-1)
+						 }
+					},
+					Some(GossipMessage::RequestGreeting) =>
+					{
+						let rd=self.inner.read().unwrap();
+						let msrep=GreetingMessage { rd.id.clone(),rd.config.node_id.1.sign(rd.id.clone().to_bytes())} 
+                    peer_reply = Some(GossipMessage::Greeting(msrep));
+					Action::ProcessAndDiscard()
+					},
 	              /// Raw Badger data
-	              BadgerData(badger_msg) => 
-				  {
-					  
-                  let locked=self.inner.write();
-				  if locked.is_authority(who) 
-				   {
-					   locked.algo.handle_message(locked.peers.peer(who).unwrap(),badger_msg, locked.main_rng);
-                    //len()
-				   }
-				  },
+					Some(GossipMessage::BadgerData(badger_msg)) => 
+					{
+						
+					let locked=self.inner.write();
+					if locked.is_authority(who) 
+					 {
+						if let Some(msg) = bincode::deserialize::<D::Message>(&badger_msg)
+						{
+						match locked.handle_message(locked.peers.peer(who).unwrap(),msg);
+						{
+							Ok(_) => {}
+							Err(e) =>
+							{
+							telemetry!(CONSENSUS_DEBUG; "afg.err_handling_msg"; "err" => ?format!("{}", e));
+							Action::Discard(-1)
+							}
+						}
+						}
+						else
+						{
+							Action::Discard(-1)
+						}
+					 } 
+					else
+					 { 
+						Action::Discard(-1) 
+					 }
+					},
 
-
-				Greeting(GossipMessage::VoteOrPrecommit(ref message))
-					=> self.inner.write().validate_round_message(who, message),
-				BadgerData(Vec<u8>),
-				
-				
-				Some(GossipMessage::Neighbor(update)) => {
-					let (topics, action, catch_up, report) = self.inner.write().import_neighbor_message(
-						who,
-						update.into_neighbor_packet(),
-					);
-
-					if let Some((peer, cost_benefit)) = report {
-						self.report(peer, cost_benefit);
-					}
-
-					broadcast_topics = topics;
-					peer_reply = catch_up;
-					action
-				}
-				Some(GossipMessage::CatchUp(ref message))
-					=> self.inner.write().validate_catch_up_message(who, message),
-				Some(GossipMessage::CatchUpRequest(request)) => {
-					let (reply, action) = self.inner.write().handle_catch_up_request(
-						who,
-						request,
-						&self.set_state,
-					);
-
-					peer_reply = reply;
-					action
-				}
 				None => {
 					debug!(target: "afg", "Error decoding message");
 					telemetry!(CONSENSUS_DEBUG; "afg.err_decoding_msg"; "" => "");
 
 					let len = std::cmp::min(i32::max_value() as usize, data.len()) as i32;
-					Action::Discard(Misbehavior::UndecodablePacket(len).cost())
+					Action::Discard(-len)
 				}
 			}
 		};
 
-		(action, broadcast_topics, peer_reply)
-
-
-
-			match bincode::deserialize::<D::Message>(&ts_msg.message) {
-
-				Ok(msg) => self.inner.write().handle_message(who, message),
-
-				Some(GossipMessage::CatchUp(ref message))
-					=> self.inner.write().validate_catch_up_message(who, message),
-				Some(GossipMessage::CatchUpRequest(request)) => {
-					let (reply, action) = self.inner.write().handle_catch_up_request(
-						who,
-						request,
-						&self.set_state,
-					);
-
-					peer_reply = reply;
-					action
-				}
-				None => {
-					debug!(target: "afg", "Error decoding message");
-					telemetry!(CONSENSUS_DEBUG; "afg.err_decoding_msg"; "" => "");
-
-					let len = std::cmp::min(i32::max_value() as usize, data.len()) as i32;
-					Action::Discard(Misbehavior::UndecodablePacket(len).cost())
-				}
-			}
-		};
-
-		(action, broadcast_topics, peer_reply)
+		(action,  peer_reply)
 	}
 }
 
@@ -359,24 +358,15 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
 			inner.peers.new_peer(who.clone());
             GreetingMessage
 			{
-				inner.config.node_id.0,
-				self.
+				self.inner.config.node_id.0,
+				self.inner.config.node_id.1.sign(self.inner.config.node_id.0.clone())
 			}
-			inner.local_view.as_ref().map(|v| {
-				NeighborPacket {
-					round: v.round,
-					set_id: v.set_id,
-					commit_finalized_height: v.last_commit.unwrap_or(Zero::zero()),
-				}
-			})
 		};
 
 		if let Some(packet) = packet {
 			let packet_data = GossipMessage::<Block>::from(packet).encode();
 			context.send_message(who, packet_data);
 		}
-
-       /// i don't think we need to send packet here
 	}
 
 	fn peer_disconnected(&self, _context: &mut dyn ValidatorContext<Block>, who: &PeerId) 
@@ -387,24 +377,19 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
 	fn validate(&self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, data: &[u8])
 		-> network_gossip::ValidationResult<Block::Hash>
 	{
-		let (action, broadcast_topics, peer_reply) = self.do_validate(who, data);
-
+		let (action,  peer_reply) = self.do_validate(who, data);
+        let topic = badger_topic::<Block>();
 		// not with lock held!
 		if let Some(msg) = peer_reply {
 			context.send_message(who, msg.encode());
 		}
-
-		for topic in broadcast_topics {
-			context.send_topic(who, topic, false);
-		}
-
+		context.send_topic(who, topic, false);
 		match action {
-			Action::Keep(topic, cb) => {
-				self.report(who.clone(), cb);
+			Action::Keep() => {
 				context.broadcast_message(topic, data.to_vec(), false);
 				network_gossip::ValidationResult::ProcessAndKeep(topic)
 			}
-			Action::ProcessAndDiscard(topic, cb) => {
+			Action::ProcessAndDiscard() => {
 				self.report(who.clone(), cb);
 				network_gossip::ValidationResult::ProcessAndDiscard(topic)
 			}
@@ -622,7 +607,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 		impl futures::Future<Item = (), Error = ()> + Send + 'static,
 	) {
 
-		let validator= GossipValidator::new(config, set_state.clone());
+		let validator= BadgerGossipValidator::new(config, service.local_peer_id().clone());
 		let validator = Arc::new(validator);
 		service.register_validator(validator.clone());
 

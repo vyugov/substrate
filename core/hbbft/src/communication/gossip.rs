@@ -247,7 +247,8 @@ pub(super) enum GossipMessage<Block: BlockT> {
 
 #[derive(Debug, Encode, Decode)]
 pub(super) struct GreetingMessage {
-	/// the badgr ID of the peer
+
+	/// the badger ID of the peer
 	pub(super) myId: AuthorityId,
 	/// Signature to verify id
 	pub(super) mySig: AuthoritySignature,
@@ -419,10 +420,10 @@ impl<N: Ord> Peers<N> {
 #[derive(Debug, PartialEq)]
 pub(super) enum Action<H>  {
 	// repropagate under given topic, to the given peers, applying cost/benefit to originator.
-	Keep(H, i32),
+	Keep(),
 	// discard and process.
-	ProcessAndDiscard(H, i32),
-	// discard, applying cost/benefit to originator.
+	ProcessAndDiscard(),
+	// discard
 	Discard(i32),
 }
 
