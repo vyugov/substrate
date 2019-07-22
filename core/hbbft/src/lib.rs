@@ -214,11 +214,11 @@ pub struct Config {
 	pub local_key: Option<Arc<ed25519::Pair>>,
 	/// Some local identifier of the voter.
 	pub name: Option<String>,
-	num_validators: usize,
-	num_faulty:usize,
-	secret_key_share: Option<Arc<SecretKeyShareWrap>>,
-	node_key: Arc<SecretKeyWrap>,
-	public_key_set: Arc<PublickeySetWrap>,
+	pub num_validators: usize,
+	pub num_faulty:usize,
+	pub secret_key_share: Option<Arc<SecretKeyShareWrap>>,
+	pub node_id: Arc<AuthorityPair>,
+	pub public_key_set: Arc<PublickeySetWrap>,
 
 }
 
@@ -232,7 +232,7 @@ impl Config {
 #[derive(Debug)]
 pub enum Error {
 	/// An error within grandpa.
-	Grandpa(GrandpaError),
+	Badger(GrandpaError),
 	/// A network error.
 	Network(String),
 	/// A blockchain error.

@@ -154,6 +154,78 @@ impl<C, A> consensus_common::Environment<<C as AuthoringApi>::Block> for Propose
 	}
 }
 
+/// Proposer factory.
+pub struct ProposerHoneyFactory<C, A> where A: txpool::ChainApi {
+	/// The client instance.
+	pub client: Arc<C>,
+	/// The transaction pool.
+	pub transaction_pool: Arc<TransactionPool<A>>,
+}
+pub struct ProposerHoney<Block: BlockT, C, A: txpool::ChainApi> {
+	client: Arc<C>,
+	parent_hash: <Block as BlockT>::Hash,
+	parent_id: BlockId<Block>,
+	parent_number: <<Block as BlockT>::Header as HeaderT>::Number,
+	transaction_pool: Arc<TransactionPool<A>>,
+}
+
+impl<Block, C, A> consensus_common::Proposer<<C as AuthoringApi>::Block> for ProposerHoney<Block, C, A> where
+	Block: BlockT,
+	C: AuthoringApi<Block=Block>,
+	<C as ProvideRuntimeApi>::Api: BlockBuilderApi<Block>,
+	A: txpool::ChainApi<Block=Block>,
+	client::error::Error: From<<C as AuthoringApi>::Error>
+{
+	type Create = Result<<C as AuthoringApi>::Block, error::Error>;
+	type Error = error::Error;
+
+	fn propose(
+		&self,
+		inherent_data: InherentData,
+		inherent_digests: DigestFor<Block>,
+		max_duration: time::Duration,
+	) -> Result<<C as AuthoringApi>::Block, error::Error>
+	{
+		// leave some time for evaluation and block finalization (33%)
+		self.propose_with(inherent_data, inherent_digests)
+	}
+}
+
+
+impl<C, A> consensus_common::Environment<<C as AuthoringApi>::Block> for ProposerHoneyFactory<C, A> where
+	C: AuthoringApi,
+	<C as ProvideRuntimeApi>::Api: BlockBuilderApi<<C as AuthoringApi>::Block>,
+	A: txpool::ChainApi<Block=<C as AuthoringApi>::Block>,
+	client::error::Error: From<<C as AuthoringApi>::Error>,
+	Proposer<<C as AuthoringApi>::Block, C, A>: consensus_common::Proposer<<C as AuthoringApi>::Block>,
+{
+	type Proposer = ProposerHoney<<C as AuthoringApi>::Block, C, A>;
+	type Error = error::Error;
+
+	fn init(
+		&self,
+		parent_header: &<<C as AuthoringApi>::Block as BlockT>::Header,
+	) -> Result<Self::Proposer, error::Error> {
+		let parent_hash = parent_header.hash();
+
+		let id = BlockId::hash(parent_hash);
+
+		info!("Starting consensus session on top of parent {:?}", parent_hash);
+
+		let proposer = Proposer {
+			client: self.client.clone(),
+			parent_hash,
+			parent_id: id,
+			parent_number: *parent_header.number(),
+			transaction_pool: self.transaction_pool.clone(),
+			now: Box::new(time::Instant::now),
+		};
+
+		Ok(proposer)
+	}
+}
+
+
 /// The proposer logic.
 pub struct Proposer<Block: BlockT, C, A: txpool::ChainApi> {
 	client: Arc<C>,

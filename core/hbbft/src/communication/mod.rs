@@ -33,10 +33,10 @@ use badger::dynamic_honey_badger::DynamicHoneyBadger;
 use badger::queueing_honey_badger::{Batch, QueueingHoneyBadger};
 use badger::sender_queue::{Message as BMessage, SenderQueue};
 use badger::{ConsensusProtocol, CpStep, NetworkInfo, Step, Target};
+use rand::{distributions::Standard, rngs::OsRng, seq::SliceRandom, Rng};
 
-
-use grandpa::{voter, voter_set::VoterSet};
-use grandpa::Message::{Prevote, Precommit, PrimaryPropose};
+//use grandpa::{voter, voter_set::VoterSet};
+//use grandpa::Message::{Prevote, Precommit, PrimaryPropose};
 use futures::prelude::*;
 use futures::sync::{oneshot, mpsc};
 use log::{debug, trace};
@@ -56,7 +56,8 @@ use crate::environment::HasVoted;
 use gossip::{
 	GossipMessage, FullCatchUpMessage, FullCommitMessage, VoteOrPrecommitMessage, GossipValidator
 };
-use substrate_primitives::ed25519::{Public as AuthorityId, Signature as AuthoritySignature};
+use fg_primitives::{AuthorityId, AuthoritySignature}
+//use substrate_primitives::ed25519::{Public as AuthorityId, Signature as AuthoritySignature};
 
 pub mod gossip;
 mod periodic;
@@ -65,38 +66,8 @@ mod periodic;
 mod tests;
 
 pub use fg_primitives::HBBFT_ENGINE_ID;
-
+use badger::{SourcedMessage, Target, TargetedMessage, ConsensusProtocol};
 // cost scalars for reporting peers.
-mod cost {
-	pub(super) const PAST_REJECTION: i32 = -50;
-	pub(super) const BAD_SIGNATURE: i32 = -100;
-	pub(super) const MALFORMED_CATCH_UP: i32 = -1000;
-	pub(super) const MALFORMED_COMMIT: i32 = -1000;
-	pub(super) const FUTURE_MESSAGE: i32 = -500;
-	pub(super) const UNKNOWN_VOTER: i32 = -150;
-
-	pub(super) const INVALID_VIEW_CHANGE: i32 = -500;
-	pub(super) const PER_UNDECODABLE_BYTE: i32 = -5;
-	pub(super) const PER_SIGNATURE_CHECKED: i32 = -25;
-	pub(super) const PER_BLOCK_LOADED: i32 = -10;
-	pub(super) const INVALID_CATCH_UP: i32 = -5000;
-	pub(super) const INVALID_COMMIT: i32 = -5000;
-	pub(super) const OUT_OF_SCOPE_MESSAGE: i32 = -500;
-	pub(super) const CATCH_UP_REQUEST_TIMEOUT: i32 = -200;
-
-	// cost of answering a catch up request
-	pub(super) const CATCH_UP_REPLY: i32 = -200;
-	pub(super) const HONEST_OUT_OF_SCOPE_CATCH_UP: i32 = -200;
-}
-
-// benefit scalars for reporting peers.
-mod benefit {
-	pub(super) const NEIGHBOR_MESSAGE: i32 = 100;
-	pub(super) const ROUND_MESSAGE: i32 = 100;
-	pub(super) const BASIC_VALIDATED_CATCH_UP: i32 = 200;
-	pub(super) const BASIC_VALIDATED_COMMIT: i32 = 100;
-	pub(super) const PER_EQUIVOCATION: i32 = 10;
-}
 
 /// A handle to the network. This is generally implemented by providing some
 /// handle to a gossip service or similar.
@@ -143,6 +114,403 @@ pub(crate) fn round_topic<B: BlockT>(round: u64, set_id: u64) -> B::Hash {
 pub(crate) fn global_topic<B: BlockT>(set_id: u64) -> B::Hash {
 	<<B::Header as HeaderT>::Hashing as HashT>::hash(format!("{}-GLOBAL", set_id).as_bytes())
 }
+
+#[derive(Eq, PartialEq, Debug, Encode, Decode)]
+struct SourcedMessage<D: ConsensusProtocol> {
+    sender_id: D::NodeId,
+    target: Target<D::NodeId>,
+    message: Vec<u8>,
+}
+
+
+pub struct BadgerNode<B: BlockT,D: ConsensusProtocol,R: Rng> {
+    /// This node's own ID.
+    id: D::NodeId,
+    /// The instance of the broadcast algorithm.
+    algo: D,
+
+	main_rng:R,
+
+	peers: Peers<NumberFor<Block>>,
+	live_topics: KeepTopics<Block>,
+	authorities: Vec<AuthorityId>,
+	config: crate::Config,
+	next_rebroadcast: Instant,
+	pending_catch_up: PendingCatchUp,
+    /// Incoming messages from other nodes that this node has not yet handled.
+    in_queue: VecDeque<SourcedMessage<D>>,
+    /// Outgoing messages to other nodes.
+    out_queue: VecDeque<SourcedMessage<D>>,
+    /// The values this node has output so far, with timestamps.
+    outputs: Vec<(Duration, D::Output)>,
+    /// The number of messages this node has handled so far.
+    message_count: usize,
+    /// The total size of messages this node has handled so far, in bytes.
+    message_size: u64,
+
+}
+impl<B: BlockT,D: ConsensusProtocol,R: Rng> BadgerNode<B,D,R>
+{
+fn register_peer_public_key(&mut self,who :&PeerId, auth:AuthorityId)
+ {
+  self.peers.update_id(who,auth)
+ }
+
+ fn is_authority(who :&PeerId) -> bool
+  {
+	  let auth=peers.peer(who);
+	  match auth
+	  {
+		  Some(info) =>
+		  {
+			  authorities.contains(&info.id)
+		  },
+           None => false
+	  }  
+  }
+ }
+
+}
+
+impl<B: BlockT,D: ConsensusProtocol,R: Rng> BadgerNode<B,D,R>
+{
+	pub fn  handle_message(who: AuthorityId, msg:  D::Message) -> Result<(),&'static str>
+	{
+		match   self.algo.handle_message(&ts_msg.sender_id, msg, rng) 
+		{
+			Some(step) => {}
+			None => return Err("Cannot handle message")
+		}
+	}
+}
+
+pub(super) struct BadgerGossipValidator<Block: BlockT,D: ConsensusProtocol,R: Rng> {
+	inner: parking_lot::RwLock<BadgerNode<Block,D,R>>,
+	set_state: environment::SharedVoterSetState<Block>,
+}
+impl<Block: BlockT,D: ConsensusProtocol,R: Rng> BadgerGossipValidator<Block,D,R> {
+	/// Create a new gossip-validator. This initialized the current set to 0.
+	pub(super) fn new(config: crate::Config, set_state: environment::SharedVoterSetState<Block>)
+		-> BadgerGossipValidator<Block>
+	{
+		let (tx, rx) = mpsc::unbounded();
+		let val = BadgerGossipValidator {
+			inner: parking_lot::RwLock::new(Inner::new(config)),
+			set_state,
+
+		};
+
+		val
+	}
+
+	/// Note a round in the current set has started.
+	pub(super) fn note_round<F>(&self, round: Round, send_neighbor: F)
+		where F: FnOnce(Vec<PeerId>, NeighborPacket<NumberFor<Block>>)
+	{
+		let maybe_msg = self.inner.write().note_round(round);
+		if let Some((to, msg)) = maybe_msg {
+			send_neighbor(to, msg);
+		}
+	}
+
+	/// Note that a voter set with given ID has started. Updates the current set to given
+	/// value and initializes the round to 0.
+	pub(super) fn note_set<F>(&self, set_id: SetId, authorities: Vec<AuthorityId>, send_neighbor: F)
+		where F: FnOnce(Vec<PeerId>, NeighborPacket<NumberFor<Block>>)
+	{
+		let maybe_msg = self.inner.write().note_set(set_id, authorities);
+		if let Some((to, msg)) = maybe_msg {
+			send_neighbor(to, msg);
+		}
+	}
+
+	/// Note that we've imported a commit finalizing a given block.
+	pub(super) fn note_commit_finalized<F>(&self, finalized: NumberFor<Block>, send_neighbor: F)
+		where F: FnOnce(Vec<PeerId>, NeighborPacket<NumberFor<Block>>)
+	{
+		let maybe_msg = self.inner.write().note_commit_finalized(finalized);
+		if let Some((to, msg)) = maybe_msg {
+			send_neighbor(to, msg);
+		}
+	}
+
+	/// Note that we've processed a catch up message.
+	pub(super) fn note_catch_up_message_processed(&self)	{
+		self.inner.write().note_catch_up_message_processed();
+	}
+
+
+
+	pub(super) fn do_validate(&self, who: &PeerId, mut data: &[u8])
+		-> (Action<Block::Hash>, Vec<Block::Hash>, Option<GossipMessage<Block>>)
+	{
+		let mut broadcast_topics = Vec::new();
+		let mut peer_reply = None;
+
+
+		let action = {
+
+			let action = {
+			match GossipMessage::<Block>::decode(&mut data) {
+					Greeting(msg)  =>
+					{
+						if msg.mySig.verify(msg.myId.to_bytes()) {
+							self.inner.write().register_peer_public_key(who,msg.myId);
+						}
+					}
+	              /// Raw Badger data
+	              BadgerData(badger_msg) => 
+				  {
+					  
+                  let locked=self.inner.write();
+				  if locked.is_authority(who) 
+				   {
+					   locked.algo.handle_message(locked.peers.peer(who).unwrap(),badger_msg, locked.main_rng);
+                    //len()
+				   }
+				  },
+
+
+				Greeting(GossipMessage::VoteOrPrecommit(ref message))
+					=> self.inner.write().validate_round_message(who, message),
+				BadgerData(Vec<u8>),
+				
+				
+				Some(GossipMessage::Neighbor(update)) => {
+					let (topics, action, catch_up, report) = self.inner.write().import_neighbor_message(
+						who,
+						update.into_neighbor_packet(),
+					);
+
+					if let Some((peer, cost_benefit)) = report {
+						self.report(peer, cost_benefit);
+					}
+
+					broadcast_topics = topics;
+					peer_reply = catch_up;
+					action
+				}
+				Some(GossipMessage::CatchUp(ref message))
+					=> self.inner.write().validate_catch_up_message(who, message),
+				Some(GossipMessage::CatchUpRequest(request)) => {
+					let (reply, action) = self.inner.write().handle_catch_up_request(
+						who,
+						request,
+						&self.set_state,
+					);
+
+					peer_reply = reply;
+					action
+				}
+				None => {
+					debug!(target: "afg", "Error decoding message");
+					telemetry!(CONSENSUS_DEBUG; "afg.err_decoding_msg"; "" => "");
+
+					let len = std::cmp::min(i32::max_value() as usize, data.len()) as i32;
+					Action::Discard(Misbehavior::UndecodablePacket(len).cost())
+				}
+			}
+		};
+
+		(action, broadcast_topics, peer_reply)
+
+
+
+			match bincode::deserialize::<D::Message>(&ts_msg.message) {
+
+				Ok(msg) => self.inner.write().handle_message(who, message),
+
+				Some(GossipMessage::CatchUp(ref message))
+					=> self.inner.write().validate_catch_up_message(who, message),
+				Some(GossipMessage::CatchUpRequest(request)) => {
+					let (reply, action) = self.inner.write().handle_catch_up_request(
+						who,
+						request,
+						&self.set_state,
+					);
+
+					peer_reply = reply;
+					action
+				}
+				None => {
+					debug!(target: "afg", "Error decoding message");
+					telemetry!(CONSENSUS_DEBUG; "afg.err_decoding_msg"; "" => "");
+
+					let len = std::cmp::min(i32::max_value() as usize, data.len()) as i32;
+					Action::Discard(Misbehavior::UndecodablePacket(len).cost())
+				}
+			}
+		};
+
+		(action, broadcast_topics, peer_reply)
+	}
+}
+
+
+impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<Block> {
+	fn new_peer(&self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, _roles: Roles) 
+	{
+		{
+			let mut inner = self.inner.write();
+			inner.peers.new_peer(who.clone());
+		};
+		let packet = {
+			let mut inner = self.inner.write();
+			inner.peers.new_peer(who.clone());
+            GreetingMessage
+			{
+				inner.config.node_id.0,
+				self.
+			}
+			inner.local_view.as_ref().map(|v| {
+				NeighborPacket {
+					round: v.round,
+					set_id: v.set_id,
+					commit_finalized_height: v.last_commit.unwrap_or(Zero::zero()),
+				}
+			})
+		};
+
+		if let Some(packet) = packet {
+			let packet_data = GossipMessage::<Block>::from(packet).encode();
+			context.send_message(who, packet_data);
+		}
+
+       /// i don't think we need to send packet here
+	}
+
+	fn peer_disconnected(&self, _context: &mut dyn ValidatorContext<Block>, who: &PeerId) 
+	{
+		self.inner.write().peers.peer_disconnected(who);
+	}
+
+	fn validate(&self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, data: &[u8])
+		-> network_gossip::ValidationResult<Block::Hash>
+	{
+		let (action, broadcast_topics, peer_reply) = self.do_validate(who, data);
+
+		// not with lock held!
+		if let Some(msg) = peer_reply {
+			context.send_message(who, msg.encode());
+		}
+
+		for topic in broadcast_topics {
+			context.send_topic(who, topic, false);
+		}
+
+		match action {
+			Action::Keep(topic, cb) => {
+				self.report(who.clone(), cb);
+				context.broadcast_message(topic, data.to_vec(), false);
+				network_gossip::ValidationResult::ProcessAndKeep(topic)
+			}
+			Action::ProcessAndDiscard(topic, cb) => {
+				self.report(who.clone(), cb);
+				network_gossip::ValidationResult::ProcessAndDiscard(topic)
+			}
+			Action::Discard(cb) => {
+				self.report(who.clone(), cb);
+				network_gossip::ValidationResult::Discard
+			}
+		}
+	}
+
+	fn message_allowed<'a>(&'a self)
+		-> Box<dyn FnMut(&PeerId, MessageIntent, &Block::Hash, &[u8]) -> bool + 'a>
+	{
+		let (inner, do_rebroadcast) = {
+			use parking_lot::RwLockWriteGuard;
+
+			let mut inner = self.inner.write();
+			let now = Instant::now();
+			let do_rebroadcast = if now >= inner.next_rebroadcast {
+				inner.next_rebroadcast = now + REBROADCAST_AFTER;
+				true
+			} else {
+				false
+			};
+
+			// downgrade to read-lock.
+			(RwLockWriteGuard::downgrade(inner), do_rebroadcast)
+		};
+
+		Box::new(move |who, intent, topic, mut data| {
+			if let MessageIntent::PeriodicRebroadcast = intent {
+				return do_rebroadcast;
+			}
+
+			let peer = match inner.peers.peer(who) {
+				None => return false,
+				Some(x) => x,
+			};
+
+			// if the topic is not something we're keeping at the moment,
+			// do not send.
+			let (maybe_round, set_id) = match inner.live_topics.topic_info(&topic) {
+				None => return false,
+				Some(x) => x,
+			};
+
+			// if the topic is not something the peer accepts, discard.
+			if let Some(round) = maybe_round {
+				return peer.view.consider_vote(round, set_id) == Consider::Accept
+			}
+
+			// global message.
+			let local_view = match inner.local_view {
+				Some(ref v) => v,
+				None => return false, // cannot evaluate until we have a local view.
+			};
+
+			let our_best_commit = local_view.last_commit;
+			let peer_best_commit = peer.view.last_commit;
+
+			match GossipMessage::<Block>::decode(&mut data) {
+				None => false,
+				Some(GossipMessage::Commit(full)) => {
+					// we only broadcast our best commit and only if it's
+					// better than last received by peer.
+					Some(full.message.target_number) == our_best_commit
+					&& Some(full.message.target_number) > peer_best_commit
+				}
+				Some(GossipMessage::Neighbor(_)) => false,
+				Some(GossipMessage::CatchUpRequest(_)) => false,
+				Some(GossipMessage::CatchUp(_)) => false,
+				Some(GossipMessage::VoteOrPrecommit(_)) => false, // should not be the case.
+			}
+		})
+	}
+
+	fn message_expired<'a>(&'a self) -> Box<dyn FnMut(Block::Hash, &[u8]) -> bool + 'a> {
+		let inner = self.inner.read();
+		Box::new(move |topic, mut data| {
+			// if the topic is not one of the ones that we are keeping at the moment,
+			// it is expired.
+			match inner.live_topics.topic_info(&topic) {
+				None => return true,
+				Some((Some(_), _)) => return false, // round messages don't require further checking.
+				Some((None, _)) => {},
+			};
+
+			let local_view = match inner.local_view {
+				Some(ref v) => v,
+				None => return true, // no local view means we can't evaluate or hold any topic.
+			};
+
+			// global messages -- only keep the best commit.
+			let best_commit = local_view.last_commit;
+
+			match GossipMessage::<Block>::decode(&mut data) {
+				None => true,
+				Some(GossipMessage::Commit(full))
+					=> Some(full.message.target_number) != best_commit,
+				Some(_) => true,
+			}
+		})
+	}
+}
+
+
 
 impl<B, S, H> Network<B> for Arc<NetworkService<B, S, H>> where
 	B: BlockT,
@@ -208,7 +576,7 @@ impl<B, S, H> Network<B> for Arc<NetworkService<B, S, H>> where
 
 /// A stream used by NetworkBridge in its implementation of Network.
 pub struct NetworkStream {
-	inner: Option<mpsc::UnboundedReceiver<network_gossip::TopicNotification>>,
+	inner: Option<mpsc::UnboundedReceiver<network_gossip::8TopicNotification>>,
 	outer: oneshot::Receiver<mpsc::UnboundedReceiver<network_gossip::TopicNotification>>
 }
 
@@ -233,9 +601,9 @@ impl Stream for NetworkStream {
 }
 
 /// Bridge between the underlying network service, gossiping consensus messages and Grandpa
-pub(crate) struct NetworkBridge<B: BlockT, N: Network<B>> {
+pub(crate) struct NetworkBridge<B: BlockT, N: Network<B>,D: ConsensusProtocol> {
 	service: N,
-	validator: Arc<GossipValidator<B>>,
+	node: Arc<BadgerNode<B,D>>,
 	neighbor_sender: periodic::NeighborPacketSender<B>,
 }
 
@@ -254,7 +622,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 		impl futures::Future<Item = (), Error = ()> + Send + 'static,
 	) {
 
-		let (validator, report_stream) = GossipValidator::new(config, set_state.clone());
+		let validator= GossipValidator::new(config, set_state.clone());
 		let validator = Arc::new(validator);
 		service.register_validator(validator.clone());
 
@@ -636,12 +1004,9 @@ pub(crate) fn check_message_sig<Block: BlockT>(
 	message: &Message<Block>,
 	id: &AuthorityId,
 	signature: &AuthoritySignature,
-	round: u64,
-	set_id: u64,
 ) -> Result<(), ()> {
-	let as_public = AuthorityId::from_raw(id.0);
 	let encoded_raw = localized_payload(round, set_id, message);
-	if ed25519::Pair::verify(signature, &encoded_raw, as_public) {
+	if id.0.verify(&signature, &encoded_raw) {
 		Ok(())
 	} else {
 		debug!(target: "afg", "Bad signature on message from {:?}", id);

@@ -86,7 +86,7 @@ use runtime_primitives::traits::{NumberFor, Block as BlockT, Zero};
 use network::consensus_gossip::{self as network_gossip, MessageIntent, ValidatorContext};
 use network::{config::Roles, PeerId};
 use parity_codec::{Encode, Decode};
-use crate::ed25519::Public as AuthorityId;
+use fg_primitives::{AuthorityId,AuthoritySignature};
 
 use substrate_telemetry::{telemetry, CONSENSUS_DEBUG};
 use log::{trace, debug, warn};
@@ -106,20 +106,7 @@ const CATCH_UP_PROCESS_TIMEOUT: Duration = Duration::from_secs(15);
 /// catch up request.
 const CATCH_UP_THRESHOLD: u64 = 2;
 
-type Report = (PeerId, i32);
 
-/// An outcome of examining a message.
-#[derive(Debug, PartialEq, Clone, Copy)]
-enum Consider {
-	/// Accept the message.
-	Accept,
-	/// Message is too early. Reject.
-	RejectPast,
-	/// Message is from the future. Reject.
-	RejectFuture,
-	/// Message cannot be evaluated. Reject.
-	RejectOutOfScope,
-}
 
 /// A view of protocol state.
 #[derive(Debug)]
@@ -183,6 +170,7 @@ impl<N: Ord> View<N> {
 
 const KEEP_RECENT_ROUNDS: usize = 3;
 
+const BADGER_TOPIC: &str = "itsasnake";
 /// Tracks topics we keep messages for.
 struct KeepTopics<B: BlockT> {
 	current_set: SetId,
@@ -242,25 +230,33 @@ fn neighbor_topics<B: BlockT>(view: &View<NumberFor<B>>) -> Vec<B::Hash> {
 	topics
 }
 
-/// Grandpa gossip message type.
+/// HB gossip message type.
 /// This is the root type that gets encoded and sent on the network.
 #[derive(Debug, Encode, Decode)]
 pub(super) enum GossipMessage<Block: BlockT> {
 	/// Grandpa message with round and set info.
-	VoteOrPrecommit(VoteOrPrecommitMessage<Block>),
-	/// Grandpa commit message with round and set info.
-	Commit(FullCommitMessage<Block>),
+	Greeting(GreetingMessage),
+	/// Raw Badger data
+	BadgerData(Vec<u8>),
+
+	RequestGreeting(),
 	/// A neighbor packet. Not repropagated.
-	Neighbor(VersionedNeighborPacket<NumberFor<Block>>),
-	/// Grandpa catch up request message with round and set info. Not repropagated.
-	CatchUpRequest(CatchUpRequestMessage),
-	/// Grandpa catch up message with round and set info. Not repropagated.
-	CatchUp(FullCatchUpMessage<Block>),
+//	Neighbor(VersionedNeighborPacket<NumberFor<Block>>),
 }
 
-impl<Block: BlockT> From<NeighborPacket<NumberFor<Block>>> for GossipMessage<Block> {
-	fn from(neighbor: NeighborPacket<NumberFor<Block>>) -> Self {
-		GossipMessage::Neighbor(VersionedNeighborPacket::V1(neighbor))
+
+#[derive(Debug, Encode, Decode)]
+pub(super) struct GreetingMessage {
+	/// the badgr ID of the peer
+	pub(super) myId: AuthorityId,
+	/// Signature to verify id
+	pub(super) mySig: AuthoritySignature,
+
+}
+
+impl<Block: BlockT> From<GreetingMessage> for GossipMessage<Block> {
+	fn from(greet: GreetingMessage) -> Self {
+		GossipMessage::Greeting(greet)
 	}
 }
 
@@ -335,63 +331,22 @@ pub(super) struct FullCatchUpMessage<Block: BlockT> {
 ///
 /// `cost` gives a cost that can be used to perform cost/benefit analysis of a
 /// peer.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) enum Misbehavior {
-	// invalid neighbor message, considering the last one.
-	InvalidViewChange,
-	// could not decode neighbor message. bytes-length of the packet.
-	UndecodablePacket(i32),
-	// Bad catch up message (invalid signatures).
-	BadCatchUpMessage {
-		signatures_checked: i32,
-	},
-	// Bad commit message
-	BadCommitMessage {
-		signatures_checked: i32,
-		blocks_loaded: i32,
-		equivocations_caught: i32,
-	},
-	// A message received that's from the future relative to our view.
-	// always misbehavior.
-	FutureMessage,
-	// A message received that cannot be evaluated relative to our view.
-	// This happens before we have a view and have sent out neighbor packets.
-	// always misbehavior.
-	OutOfScopeMessage,
-}
 
-impl Misbehavior {
-	pub(super) fn cost(&self) -> i32 {
-		use Misbehavior::*;
-
-		match *self {
-			InvalidViewChange => cost::INVALID_VIEW_CHANGE,
-			UndecodablePacket(bytes) => bytes.saturating_mul(cost::PER_UNDECODABLE_BYTE),
-			BadCatchUpMessage { signatures_checked } =>
-				cost::PER_SIGNATURE_CHECKED.saturating_mul(signatures_checked),
-			BadCommitMessage { signatures_checked, blocks_loaded, equivocations_caught } => {
-				let cost = cost::PER_SIGNATURE_CHECKED
-					.saturating_mul(signatures_checked)
-					.saturating_add(cost::PER_BLOCK_LOADED.saturating_mul(blocks_loaded));
-
-				let benefit = equivocations_caught.saturating_mul(benefit::PER_EQUIVOCATION);
-
-				(benefit as i32).saturating_add(cost as i32)
-			},
-			FutureMessage => cost::FUTURE_MESSAGE,
-			OutOfScopeMessage => cost::OUT_OF_SCOPE_MESSAGE,
-		}
-	}
-}
 
 struct PeerInfo<N> {
-	view: View<N>,
+	//view: View<N>,
+	id: Option<AuthorityId> //public key
 }
 
 impl<N> PeerInfo<N> {
 	fn new() -> Self {
 		PeerInfo {
-			view: View::default(),
+			id: None,
+		}
+	}
+    fn new_id(id: AuthorityId) -> Self {
+		PeerInfo {
+			id: Some(id),
 		}
 	}
 }
@@ -445,22 +400,15 @@ impl<N: Ord> Peers<N> {
 		Ok(Some(&peer.view))
 	}
 
-	fn update_commit_height(&mut self, who: &PeerId, new_height: N) -> Result<(), Misbehavior> {
+	pub fn update_id(&mut self, who: &PeerId, authId: AuthorityId)  {
 		let peer = match self.inner.get_mut(who) {
-			None => return Ok(()),
+		    None =>  {
+				 self.inner.insert(who, PeerInfo::new_id(authId));
+				 return
+			     }
 			Some(p) => p,
 		};
-
-		// this doesn't allow a peer to send us unlimited commits with the
-		// same height, because there is still a misbehavior condition based on
-		// sending commits that are <= the best we are aware of.
-		if peer.view.last_commit.as_ref() > Some(&new_height) {
-			return Err(Misbehavior::InvalidViewChange);
-		}
-
-		peer.view.last_commit = Some(new_height);
-
-		Ok(())
+        p.id=Some(authId);
 	}
 
 	fn peer<'a>(&'a self, who: &PeerId) -> Option<&'a PeerInfo<N>> {
@@ -496,7 +444,7 @@ enum PendingCatchUp {
 }
 
 struct Inner<Block: BlockT> {
-	local_view: Option<View<NumberFor<Block>>>,
+	//local_view: Option<View<NumberFor<Block>>>,
 	peers: Peers<NumberFor<Block>>,
 	live_topics: KeepTopics<Block>,
 	authorities: Vec<AuthorityId>,
@@ -584,20 +532,14 @@ impl<Block: BlockT> Inner<Block> {
 		self.multicast_neighbor_packet()
 	}
 
-	fn consider_vote(&self, round: Round, set_id: SetId) -> Consider {
-		self.local_view.as_ref().map(|v| v.consider_vote(round, set_id))
-			.unwrap_or(Consider::RejectOutOfScope)
-	}
+	
 
 	fn consider_global(&self, set_id: SetId, number: NumberFor<Block>) -> Consider {
 		self.local_view.as_ref().map(|v| v.consider_global(set_id, number))
 			.unwrap_or(Consider::RejectOutOfScope)
 	}
 
-	fn cost_past_rejection(&self, _who: &PeerId, _round: Round, _set_id: SetId) -> i32 {
-		// hardcoded for now.
-		cost::PAST_REJECTION
-	}
+
 
 	fn validate_round_message(&self, who: &PeerId, full: &VoteOrPrecommitMessage<Block>)
 		-> Action<Block::Hash>
