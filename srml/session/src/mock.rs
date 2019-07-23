@@ -109,6 +109,7 @@ pub fn set_next_validators(next: Vec<u64>) {
 pub struct Test;
 parameter_types! {
 	pub const BlockHashCount: u64 = 250;
+	pub const MinimumPeriod: u64 = 5;
 }
 impl system::Trait for Test {
 	type Origin = Origin;
@@ -119,12 +120,14 @@ impl system::Trait for Test {
 	type AccountId = u64;
 	type Lookup = IdentityLookup<Self::AccountId>;
 	type Header = Header;
+	type WeightMultiplierUpdate = ();
 	type Event = ();
 	type BlockHashCount = BlockHashCount;
 }
 impl timestamp::Trait for Test {
 	type Moment = u64;
 	type OnTimestampSet = ();
+	type MinimumPeriod = MinimumPeriod;
 }
 
 
@@ -139,7 +142,7 @@ impl Trait for Test {
 	type ValidatorIdOf = ConvertInto;
 	type Keys = UintAuthorityId;
 	type Event = ();
-	type SelectInitialValidators = crate::ConfigValidators;
+	type SelectInitialValidators = ();
 }
 
 #[cfg(feature = "historical")]

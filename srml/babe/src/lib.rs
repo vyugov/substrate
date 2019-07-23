@@ -21,9 +21,12 @@
 pub use timestamp;
 
 use rstd::{result, prelude::*};
-use srml_support::{decl_storage, decl_module, StorageValue, traits::FindAuthor};
+use srml_support::{decl_storage, decl_module, StorageValue, traits::FindAuthor, traits::Get};
 use timestamp::{OnTimestampSet, Trait};
-use primitives::{generic::DigestItem, traits::{SaturatedConversion, Saturating, RandomnessBeacon}};
+use primitives::{
+	generic::DigestItem,
+	traits::{IsMember, SaturatedConversion, Saturating, RandomnessBeacon}
+};
 use primitives::ConsensusEngineId;
 #[cfg(feature = "std")]
 use timestamp::TimestampInherentData;
@@ -188,12 +191,20 @@ impl<T: Trait> FindAuthor<u64> for Module<T> {
 	}
 }
 
+impl<T: timestamp::Trait> IsMember<AuthorityId> for Module<T> {
+	fn is_member(authority_id: &AuthorityId) -> bool {
+		<Module<T>>::authorities()
+			.iter()
+			.any(|id| id == authority_id)
+	}
+}
+
 impl<T: Trait> Module<T> {
 	/// Determine the BABE slot duration based on the Timestamp module configuration.
 	pub fn slot_duration() -> T::Moment {
 		// we double the minimum block-period so each author can always propose within
 		// the majority of their slot.
-		<timestamp::Module<T>>::minimum_period().saturating_mul(2.into())
+		<T as timestamp::Trait>::MinimumPeriod::get().saturating_mul(2.into())
 	}
 
 	fn change_authorities(new: Vec<AuthorityId>) {
