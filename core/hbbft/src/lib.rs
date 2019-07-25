@@ -64,20 +64,20 @@ use futures::prelude::*;
 use futures::sync::mpsc;
 
 
-//! Aura (Authority-round) consensus in substrate.
-//!
-//! Aura works by having a list of authorities A who are expected to roughly
-//! agree on the current time. Time is divided up into discrete slots of t
-//! seconds each. For each slot s, the author of that slot is A[s % |A|].
-//!
-//! The author is allowed to issue one block but not more during that slot,
-//! and it will be built upon the longest valid chain that has been seen.
-//!
-//! Blocks from future steps will be either deferred or rejected depending on how
-//! far in the future they are.
-//!
-//! NOTE: Aura itself is designed to be generic over the crypto used.
-#![forbid(missing_docs, unsafe_code)]
+// Aura (Authority-round) consensus in substrate.
+//
+// Aura works by having a list of authorities A who are expected to roughly
+// agree on the current time. Time is divided up into discrete slots of t
+// seconds each. For each slot s, the author of that slot is A[s % |A|].
+//
+// The author is allowed to issue one block but not more during that slot,
+// and it will be built upon the longest valid chain that has been seen.
+//
+// Blocks from future steps will be either deferred or rejected depending on how
+// far in the future they are.
+//
+// NOTE: Aura itself is designed to be generic over the crypto used.
+// #![forbid(missing_docs, unsafe_code)]
 use std::{sync::Arc, time::Duration, thread, marker::PhantomData, hash::Hash, fmt::Debug};
 
 use parity_codec::{Encode, Decode, Codec};
@@ -121,32 +121,12 @@ pub use aura_primitives::*;
 pub use consensus_common::SyncOracle;
 pub use digest::CompatibleDigestItem;
 
-mod digest;
 
 type AuthorityId<P> = <P as Pair>::Public;
 
-/// A slot duration. Create with `get_or_compute`.
-#[derive(Clone, Copy, Debug, Encode, Decode, Hash, PartialOrd, Ord, PartialEq, Eq)]
-pub struct SlotDuration(slots::SlotDuration<u64>);
 
-impl SlotDuration {
-	/// Either fetch the slot duration from disk or compute it from the genesis
-	/// state.
-	pub fn get_or_compute<A, B, C>(client: &C) -> CResult<Self>
-	where
-		A: Codec,
-		B: Block,
-		C: AuxStore + ProvideRuntimeApi,
-		C::Api: AuraApi<B, A>,
-	{
-		slots::SlotDuration::get_or_compute(client, |a, b| a.slot_duration(b)).map(Self)
-	}
 
-	/// Get the slot duration in milliseconds.
-	pub fn get(&self) -> u64 {
-		self.0.get()
-	}
-}
+pub const INHERENT_IDENTIFIER: InherentIdentifier = *b"snakeshroom";
 
 /// Get slot author for given block along with authorities.
 fn slot_author<P: Pair>(slot_num: u64, authorities: &[AuthorityId<P>]) -> Option<&AuthorityId<P>> {
@@ -179,9 +159,76 @@ impl SlotCompatible for AuraSlotCompatible {
 	}
 }
 
-/// Start the aura worker. The returned future should be run in a tokio runtime.
-pub fn start_aura<B, C, SC, E, I, P, SO, Error, H>(
-	slot_duration: SlotDuration,
+pub fn start_slot_worker<B, C, W, T, SO, SC>(
+	slot_duration: SlotDuration<T>,
+	client: C,
+	worker: W,
+	sync_oracle: SO,
+	inherent_data_providers: InherentDataProviders,
+	timestamp_extractor: SC,
+) -> impl Future<Item = (), Error = ()>
+where
+	B: BlockT,
+	C: SelectChain<B> + Clone,
+	W: SlotWorker<B>,
+	SO: SyncOracle + Send + Clone,
+	SC: SlotCompatible,
+	T: SlotData + Clone,
+{
+	let SlotDuration(slot_duration) = slot_duration;
+
+	// rather than use a timer interval, we schedule our waits ourselves
+	let mut authorship = Slots::<SC>::new(
+		slot_duration.slot_duration(),
+		inherent_data_providers,
+		timestamp_extractor,
+	).map_err(|e| debug!(target: "slots", "Faulty timer: {:?}", e))
+		.for_each(move |slot_info| {
+			// only propose when we are not syncing.
+			if sync_oracle.is_major_syncing() {
+				debug!(target: "slots", "Skipping proposal slot due to sync.");
+				return Either::B(future::ok(()));
+			}
+
+			let slot_num = slot_info.number;
+			let chain_head = match client.best_chain() {
+				Ok(x) => x,
+				Err(e) => {
+					warn!(target: "slots", "Unable to author block in slot {}. \
+					no best block header: {:?}", slot_num, e);
+					return Either::B(future::ok(()));
+				}
+			};
+
+			Either::A(worker.on_slot(chain_head, slot_info).into_future().map_err(
+				|e| warn!(target: "slots", "Encountered consensus error: {:?}", e),
+			))
+		});
+
+	future::poll_fn(move ||
+		loop {
+			let mut authorship = std::panic::AssertUnwindSafe(&mut authorship);
+			match std::panic::catch_unwind(move || authorship.poll()) {
+				Ok(Ok(Async::Ready(()))) =>
+					warn!(target: "slots", "Slots stream has terminated unexpectedly."),
+				Ok(Ok(Async::NotReady)) => break Ok(Async::NotReady),
+				Ok(Err(())) => warn!(target: "slots", "Authorship task terminated unexpectedly. Restarting"),
+				Err(e) => {
+					if let Some(s) = e.downcast_ref::<&'static str>() {
+						warn!(target: "slots", "Authorship task panicked at {:?}", s);
+					}
+
+					warn!(target: "slots", "Restarting authorship task");
+				}
+			}
+		}
+	)
+}
+
+pub type AuraImportQueue<B> = BasicQueue<B>;
+
+/// Start the badger worker. The returned future should be run in a exec? runtime.
+pub fn start_badger<B, C, SC, E, I, P, SO, Error, H>(
 	local_key: Arc<P>,
 	client: Arc<C>,
 	select_chain: SC,
@@ -206,7 +253,7 @@ pub fn start_aura<B, C, SC, E, I, P, SO, Error, H>(
 	Error: ::std::error::Error + Send + From<::consensus_common::Error> + From<I::Error> + 'static,
 	SO: SyncOracle + Send + Sync + Clone,
 {
-	let worker = AuraWorker {
+	let worker = BadgerWorker {
 		client: client.clone(),
 		block_import: Arc::new(Mutex::new(block_import)),
 		env,
@@ -214,10 +261,7 @@ pub fn start_aura<B, C, SC, E, I, P, SO, Error, H>(
 		sync_oracle: sync_oracle.clone(),
 		force_authoring,
 	};
-	register_aura_inherent_data_provider(
-		&inherent_data_providers,
-		slot_duration.0.slot_duration()
-	)?;
+
 	Ok(slots::start_slot_worker::<_, _, _, _, _, AuraSlotCompatible>(
 		slot_duration.0,
 		select_chain,
@@ -228,7 +272,7 @@ pub fn start_aura<B, C, SC, E, I, P, SO, Error, H>(
 	))
 }
 
-struct AuraWorker<C, E, I, P, SO> {
+struct BadgerWorker<C, E, I, P, SO> {
 	client: Arc<C>,
 	block_import: Arc<Mutex<I>>,
 	env: Arc<E>,
@@ -237,7 +281,67 @@ struct AuraWorker<C, E, I, P, SO> {
 	force_authoring: bool,
 }
 
-impl<H, B, C, E, I, P, Error, SO> SlotWorker<B> for AuraWorker<C, E, I, P, SO> where
+pub struct BadgerVerifier<C, P> {
+	client: Arc<C>,
+	phantom: PhantomData<P>,
+	inherent_data_providers: inherents::InherentDataProviders,
+}
+
+impl<C, P> BadgerVerifier<C, P>
+	where P: Send + Sync + 'static
+{
+	fn check_inherents<B: BlockT>(
+		&self,
+		block: B,
+		block_id: BlockId<B>,
+		inherent_data: InherentData,
+		timestamp_now: u64,
+	) -> Result<(), String>
+		where C: ProvideRuntimeApi, C::Api: BlockBuilderApi<B>
+	{
+		//empty for now
+			Ok(())
+		
+	}
+}
+
+impl<B: BlockT, C, P> Verifier<B> for BadgerVerifier<C, P> where
+	C: ProvideRuntimeApi + Send + Sync + client::backend::AuxStore + ProvideCache<B>,
+	C::Api: BlockBuilderApi<B> + AuraApi<B, AuthorityId<P>>,
+	DigestItemFor<B>: CompatibleDigestItem<P>,
+	P: Pair + Send + Sync + 'static,
+	P::Public: Send + Sync + Hash + Eq + Clone + Decode + Encode + Debug + AsRef<P::Public> + 'static,
+	P::Signature: Encode + Decode,
+{
+	fn verify(
+		&self,
+		origin: BlockOrigin,
+		header: B::Header,
+		justification: Option<Justification>,
+		mut body: Option<Vec<B::Extrinsic>>,
+	) -> Result<(ImportBlock<B>, Option<Vec<(CacheKeyId, Vec<u8>)>>), String> {
+        // dummy for the moment
+     	let hash = header.hash();
+		let parent_hash = *header.parent_hash();
+		let import_block = ImportBlock {
+					origin,
+					header: pre_header,
+					post_digests: vec![],
+					body,
+					finalized: true,
+					justification,
+					auxiliary: Vec::new(),
+					fork_choice: ForkChoiceStrategy::LongestChain,
+				};
+
+				Ok((import_block, None))
+		
+	}
+}
+
+
+
+impl<H, B, C, E, I, P, Error, SO> SlotWorker<B> for BadgerWorker<C, E, I, P, SO> where
 	B: Block<Header=H>,
 	C: ProvideRuntimeApi + ProvideCache<B> + Sync,
 	C::Api: AuraApi<B, AuthorityId<P>>,
@@ -445,51 +549,11 @@ fn check_header<C, B: Block, P: Pair>(
 	C: client::backend::AuxStore,
 	P::Public: AsRef<P::Public> + Encode + Decode + PartialEq + Clone,
 {
-	let seal = match header.digest_mut().pop() {
-		Some(x) => x,
-		None => return Err(format!("Header {:?} is unsealed", hash)),
-	};
+	
 
-	let sig = seal.as_aura_seal().ok_or_else(|| {
-		aura_err!("Header {:?} has a bad seal", hash)
-	})?;
-
-	let slot_num = find_pre_digest::<B, _>(&header)?;
-
-	if slot_num > slot_now {
-		header.digest_mut().push(seal);
-		Ok(CheckedHeader::Deferred(header, slot_num))
-	} else {
-		// check the signature is valid under the expected authority and
-		// chain state.
-		let expected_author = match slot_author::<P>(slot_num, &authorities) {
-			None => return Err("Slot Author not found".to_string()),
-			Some(author) => author,
-		};
-
-		let pre_hash = header.hash();
-
-		if P::verify(&sig, pre_hash.as_ref(), expected_author) {
-			if let Some(equivocation_proof) = check_equivocation(
-				client,
-				slot_now,
-				slot_num,
-				&header,
-				expected_author,
-			).map_err(|e| e.to_string())? {
-				info!(
-					"Slot author is equivocating at slot {} with headers {:?} and {:?}",
-					slot_num,
-					equivocation_proof.fst_header().hash(),
-					equivocation_proof.snd_header().hash(),
-				);
-			}
-
-			Ok(CheckedHeader::Checked(header, (slot_num, seal)))
-		} else {
-			Err(format!("Bad signature on {:?}", hash))
-		}
-	}
+			Ok(CheckedHeader::Checked(header, (0, seal)))
+		
+	
 }
 
 /// A verifier for Aura blocks.
@@ -707,23 +771,23 @@ fn authorities<A, B, C>(client: &C, at: &BlockId<B>) -> Result<Vec<A>, Consensus
 pub type AuraImportQueue<B> = BasicQueue<B>;
 
 /// Register the aura inherent data provider, if not registered already.
-fn register_aura_inherent_data_provider(
+fn register_badger_inherent_data_provider(
 	inherent_data_providers: &InherentDataProviders,
 	slot_duration: u64,
 ) -> Result<(), consensus_common::Error> {
-	if !inherent_data_providers.has_provider(&srml_aura::INHERENT_IDENTIFIER) {
+	Ok(())
+/*	if !inherent_data_providers.has_provider(&hbbft::INHERENT_IDENTIFIER) {
 		inherent_data_providers
 			.register_provider(srml_aura::InherentDataProvider::new(slot_duration))
 			.map_err(Into::into)
 			.map_err(consensus_common::Error::InherentData)
 	} else {
 		Ok(())
-	}
+	}*/
 }
 
 /// Start an import queue for the Aura consensus algorithm.
-pub fn import_queue<B, C, P>(
-	slot_duration: SlotDuration,
+pub fn badger_import_queue<B, C, P>(
 	block_import: BoxBlockImport<B>,
 	justification_import: Option<BoxJustificationImport<B>>,
 	finality_proof_import: Option<BoxFinalityProofImport<B>>,
@@ -739,11 +803,11 @@ pub fn import_queue<B, C, P>(
 	P::Public: Clone + Eq + Send + Sync + Hash + Debug + Encode + Decode + AsRef<P::Public>,
 	P::Signature: Encode + Decode,
 {
-	register_aura_inherent_data_provider(&inherent_data_providers, slot_duration.get())?;
-	initialize_authorities_cache(&*client)?;
+	register_badger_inherent_data_provider(&inherent_data_providers, slot_duration.get())?;
+	//initialize_authorities_cache(&*client)?;
 
 	let verifier = Arc::new(
-		AuraVerifier {
+		BadgerVerifier {
 			client: client.clone(),
 			inherent_data_providers,
 			phantom: PhantomData,
@@ -756,188 +820,6 @@ pub fn import_queue<B, C, P>(
 		finality_proof_import,
 		finality_proof_request_builder,
 	))
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-	use futures::{Async, stream::Stream as _};
-	use consensus_common::NoNetwork as DummyOracle;
-	use network::test::*;
-	use network::test::{Block as TestBlock, PeersClient, PeersFullClient};
-	use runtime_primitives::traits::{Block as BlockT, DigestFor};
-	use network::config::ProtocolConfig;
-	use parking_lot::Mutex;
-	use tokio::runtime::current_thread;
-	use keyring::sr25519::Keyring;
-	use primitives::sr25519;
-	use client::{LongestChain, BlockchainEvents};
-	use test_client;
-
-	type Error = client::error::Error;
-
-	type TestClient = client::Client<
-		test_client::Backend,
-		test_client::Executor,
-		TestBlock,
-		test_client::runtime::RuntimeApi
-	>;
-
-	struct DummyFactory(Arc<TestClient>);
-	struct DummyProposer(u64, Arc<TestClient>);
-
-	impl Environment<TestBlock> for DummyFactory {
-		type Proposer = DummyProposer;
-		type Error = Error;
-
-		fn init(&self, parent_header: &<TestBlock as BlockT>::Header)
-			-> Result<DummyProposer, Error>
-		{
-			Ok(DummyProposer(parent_header.number + 1, self.0.clone()))
-		}
-	}
-
-	impl Proposer<TestBlock> for DummyProposer {
-		type Error = Error;
-		type Create = Result<TestBlock, Error>;
-
-		fn propose(
-			&self,
-			_: InherentData,
-			digests: DigestFor<TestBlock>,
-			_: Duration,
-		) -> Result<TestBlock, Error> {
-			self.1.new_block(digests).unwrap().bake().map_err(|e| e.into())
-		}
-	}
-
-	const SLOT_DURATION: u64 = 1;
-
-	pub struct AuraTestNet {
-		peers: Vec<Peer<(), DummySpecialization>>,
-	}
-
-	impl TestNetFactory for AuraTestNet {
-		type Specialization = DummySpecialization;
-		type Verifier = AuraVerifier<PeersFullClient, sr25519::Pair>;
-		type PeerData = ();
-
-		/// Create new test network with peers and given config.
-		fn from_config(_config: &ProtocolConfig) -> Self {
-			AuraTestNet {
-				peers: Vec::new(),
-			}
-		}
-
-		fn make_verifier(&self, client: PeersClient, _cfg: &ProtocolConfig)
-			-> Arc<Self::Verifier>
-		{
-			match client {
-				PeersClient::Full(client) => {
-					let slot_duration = SlotDuration::get_or_compute(&*client)
-						.expect("slot duration available");
-					let inherent_data_providers = InherentDataProviders::new();
-					register_aura_inherent_data_provider(
-						&inherent_data_providers,
-						slot_duration.get()
-					).expect("Registers aura inherent data provider");
-
-					assert_eq!(slot_duration.get(), SLOT_DURATION);
-					Arc::new(AuraVerifier {
-						client,
-						inherent_data_providers,
-						phantom: Default::default(),
-					})
-				},
-				PeersClient::Light(_) => unreachable!("No (yet) tests for light client + Aura"),
-			}
-		}
-
-		fn peer(&mut self, i: usize) -> &mut Peer<Self::PeerData, DummySpecialization> {
-			&mut self.peers[i]
-		}
-
-		fn peers(&self) -> &Vec<Peer<Self::PeerData, DummySpecialization>> {
-			&self.peers
-		}
-
-		fn mut_peers<F: FnOnce(&mut Vec<Peer<Self::PeerData, DummySpecialization>>)>(&mut self, closure: F) {
-			closure(&mut self.peers);
-		}
-	}
-
-	#[test]
-	#[allow(deprecated)]
-	fn authoring_blocks() {
-		let _ = ::env_logger::try_init();
-		let net = AuraTestNet::new(3);
-
-		let peers = &[
-			(0, Keyring::Alice),
-			(1, Keyring::Bob),
-			(2, Keyring::Charlie),
-		];
-
-		let net = Arc::new(Mutex::new(net));
-		let mut import_notifications = Vec::new();
-
-		let mut runtime = current_thread::Runtime::new().unwrap();
-		for (peer_id, key) in peers {
-			let client = net.lock().peer(*peer_id).client().as_full().expect("full clients are created").clone();
-			#[allow(deprecated)]
-			let select_chain = LongestChain::new(
-				client.backend().clone(),
-			);
-			let environ = Arc::new(DummyFactory(client.clone()));
-			import_notifications.push(
-				client.import_notification_stream()
-					.take_while(|n| Ok(!(n.origin != BlockOrigin::Own && n.header.number() < &5)))
-					.for_each(move |_| Ok(()))
-			);
-
-			let slot_duration = SlotDuration::get_or_compute(&*client)
-				.expect("slot duration available");
-
-			let inherent_data_providers = InherentDataProviders::new();
-			register_aura_inherent_data_provider(
-				&inherent_data_providers, slot_duration.get()
-			).expect("Registers aura inherent data provider");
-
-			let aura = start_aura::<_, _, _, _, _, sr25519::Pair, _, _, _>(
-				slot_duration,
-				Arc::new(key.clone().into()),
-				client.clone(),
-				select_chain,
-				client,
-				environ.clone(),
-				DummyOracle,
-				inherent_data_providers,
-				false,
-			).expect("Starts aura");
-
-			runtime.spawn(aura);
-		}
-
-		// wait for all finalized on each.
-		let wait_for = ::futures::future::join_all(import_notifications)
-			.map(|_| ())
-			.map_err(|_| ());
-
-		let drive_to_completion = futures::future::poll_fn(|| { net.lock().poll(); Ok(Async::NotReady) });
-		let _ = runtime.block_on(wait_for.select(drive_to_completion).map_err(|_| ())).unwrap();
-	}
-
-	#[test]
-	fn authorities_call_works() {
-		let client = test_client::new();
-
-		assert_eq!(client.info().chain.best_number, 0);
-		assert_eq!(authorities(&client, &BlockId::Number(0)).unwrap(), vec![
-			Keyring::Alice.into(),
-			Keyring::Bob.into(),
-			Keyring::Charlie.into()
-		]);
-	}
 }
 
 
@@ -1291,675 +1173,6 @@ enum PendingCatchUp {
 	},
 }
 
-struct Inner<Block: BlockT> {
-	//local_view: Option<View<NumberFor<Block>>>,
-	peers: Peers<NumberFor<Block>>,
-	live_topics: KeepTopics<Block>,
-	authorities: Vec<AuthorityId>,
-	config: crate::Config,
-	next_rebroadcast: Instant,
-	pending_catch_up: PendingCatchUp,
-}
-
-type MaybeMessage<Block> = Option<(Vec<PeerId>, NeighborPacket<NumberFor<Block>>)>;
-
-impl<Block: BlockT> Inner<Block> {
-	fn new(config: crate::Config) -> Self {
-		Inner {
-			local_view: None,
-			peers: Peers::default(),
-			live_topics: KeepTopics::new(),
-			next_rebroadcast: Instant::now() + REBROADCAST_AFTER,
-			authorities: Vec::new(),
-			pending_catch_up: PendingCatchUp::None,
-			config,
-		}
-	}
-
-	/// Note a round in the current set has started.
-	fn note_round(&mut self, round: Round) -> MaybeMessage<Block> {
-		{
-			let local_view = match self.local_view {
-				None => return None,
-				Some(ref mut v) => if v.round == round {
-					return None
-				} else {
-					v
-				},
-			};
-
-			let set_id = local_view.set_id;
-
-			debug!(target: "afg", "Voter {} noting beginning of round {:?} to network.",
-				self.config.name(), (round,set_id));
-
-			local_view.round = round;
-
-			self.live_topics.push(round, set_id);
-		}
-		self.multicast_neighbor_packet()
-	}
-
-	/// Note that a voter set with given ID has started. Does nothing if the last
-	/// call to the function was with the same `set_id`.
-	fn note_set(&mut self, set_id: SetId, authorities: Vec<AuthorityId>) -> MaybeMessage<Block> {
-		{
-			let local_view = match self.local_view {
-				ref mut x @ None => x.get_or_insert(View {
-					round: Round(0),
-					set_id,
-					last_commit: None,
-				}),
-				Some(ref mut v) => if v.set_id == set_id {
-					return None
-				} else {
-					v
-				},
-			};
-
-			local_view.update_set(set_id);
-			self.live_topics.push(Round(0), set_id);
-			self.authorities = authorities;
-		}
-		self.multicast_neighbor_packet()
-	}
-
-	/// Note that we've imported a commit finalizing a given block.
-	fn note_commit_finalized(&mut self, finalized: NumberFor<Block>) -> MaybeMessage<Block> {
-		{
-			match self.local_view {
-				None => return None,
-				Some(ref mut v) => if v.last_commit.as_ref() < Some(&finalized) {
-					v.last_commit = Some(finalized);
-				} else {
-					return None
-				},
-			};
-		}
-
-		self.multicast_neighbor_packet()
-	}
-
-	
-
-	fn consider_global(&self, set_id: SetId, number: NumberFor<Block>) -> Consider {
-		self.local_view.as_ref().map(|v| v.consider_global(set_id, number))
-			.unwrap_or(Consider::RejectOutOfScope)
-	}
-
-
-
-	fn validate_round_message(&self, who: &PeerId, full: &VoteOrPrecommitMessage<Block>)
-		-> Action<Block::Hash>
-	{
-		match self.consider_vote(full.round, full.set_id) {
-			Consider::RejectFuture => return Action::Discard(Misbehavior::FutureMessage.cost()),
-			Consider::RejectOutOfScope => return Action::Discard(Misbehavior::OutOfScopeMessage.cost()),
-			Consider::RejectPast =>
-				return Action::Discard(self.cost_past_rejection(who, full.round, full.set_id)),
-			Consider::Accept => {},
-		}
-
-		// ensure authority is part of the set.
-		if !self.authorities.contains(&full.message.id) {
-			telemetry!(CONSENSUS_DEBUG; "afg.bad_msg_signature"; "signature" => ?full.message.id);
-			return Action::Discard(cost::UNKNOWN_VOTER);
-		}
-
-		if let Err(()) = super::check_message_sig::<Block>(
-			&full.message.message,
-			&full.message.id,
-			&full.message.signature,
-			full.round.0,
-			full.set_id.0,
-		) {
-			debug!(target: "afg", "Bad message signature {}", full.message.id);
-			telemetry!(CONSENSUS_DEBUG; "afg.bad_msg_signature"; "signature" => ?full.message.id);
-			return Action::Discard(cost::BAD_SIGNATURE);
-		}
-
-		let topic = super::round_topic::<Block>(full.round.0, full.set_id.0);
-		Action::Keep(topic, benefit::ROUND_MESSAGE)
-	}
-
-	fn validate_commit_message(&mut self, who: &PeerId, full: &FullCommitMessage<Block>)
-		-> Action<Block::Hash>
-	{
-
-		if let Err(misbehavior) = self.peers.update_commit_height(who, full.message.target_number) {
-			return Action::Discard(misbehavior.cost());
-		}
-
-		match self.consider_global(full.set_id, full.message.target_number) {
-			Consider::RejectFuture => return Action::Discard(Misbehavior::FutureMessage.cost()),
-			Consider::RejectPast =>
-				return Action::Discard(self.cost_past_rejection(who, full.round, full.set_id)),
-			Consider::RejectOutOfScope => return Action::Discard(Misbehavior::OutOfScopeMessage.cost()),
-			Consider::Accept => {},
-
-		}
-
-		if full.message.precommits.len() != full.message.auth_data.len() || full.message.precommits.is_empty() {
-			debug!(target: "afg", "Malformed compact commit");
-			telemetry!(CONSENSUS_DEBUG; "afg.malformed_compact_commit";
-				"precommits_len" => ?full.message.precommits.len(),
-				"auth_data_len" => ?full.message.auth_data.len(),
-				"precommits_is_empty" => ?full.message.precommits.is_empty(),
-			);
-			return Action::Discard(cost::MALFORMED_COMMIT);
-		}
-
-		// always discard commits initially and rebroadcast after doing full
-		// checking.
-		let topic = super::global_topic::<Block>(full.set_id.0);
-		Action::ProcessAndDiscard(topic, benefit::BASIC_VALIDATED_COMMIT)
-	}
-
-	fn validate_catch_up_message(&mut self, who: &PeerId, full: &FullCatchUpMessage<Block>)
-		-> Action<Block::Hash>
-	{
-		match &self.pending_catch_up {
-			PendingCatchUp::Requesting { who: peer, request, instant } => {
-				if peer != who {
-					return Action::Discard(Misbehavior::OutOfScopeMessage.cost());
-				}
-
-				if request.set_id != full.set_id {
-					return Action::Discard(cost::MALFORMED_CATCH_UP);
-				}
-
-				if request.round.0 > full.message.round_number {
-					return Action::Discard(cost::MALFORMED_CATCH_UP);
-				}
-
-				if full.message.prevotes.is_empty() || full.message.precommits.is_empty() {
-					return Action::Discard(cost::MALFORMED_CATCH_UP);
-				}
-
-				// move request to pending processing state, we won't push out
-				// any catch up requests until we import this one (either with a
-				// success or failure).
-				self.pending_catch_up = PendingCatchUp::Processing {
-					instant: instant.clone(),
-				};
-
-				// always discard catch up messages, they're point-to-point
-				let topic = super::global_topic::<Block>(full.set_id.0);
-				Action::ProcessAndDiscard(topic, benefit::BASIC_VALIDATED_CATCH_UP)
-			},
-			_ => Action::Discard(Misbehavior::OutOfScopeMessage.cost()),
-		}
-	}
-
-	fn note_catch_up_message_processed(&mut self) {
-		match &self.pending_catch_up {
-			PendingCatchUp::Processing { .. } => {
-				self.pending_catch_up = PendingCatchUp::None;
-			},
-			state => trace!(target: "afg",
-				"Noted processed catch up message when state was: {:?}",
-				state,
-			),
-		}
-	}
-
-	fn handle_catch_up_request(
-		&mut self,
-		who: &PeerId,
-		request: CatchUpRequestMessage,
-		set_state: &environment::SharedVoterSetState<Block>,
-	) -> (Option<GossipMessage<Block>>, Action<Block::Hash>) {
-		let local_view = match self.local_view {
-			None => return (None, Action::Discard(Misbehavior::OutOfScopeMessage.cost())),
-			Some(ref view) => view,
-		};
-
-		if request.set_id != local_view.set_id {
-			// NOTE: When we're close to a set change there is potentially a
-			// race where the peer sent us the request before it observed that
-			// we had transitioned to a new set. In this case we charge a lower
-			// cost.
-			if local_view.round.0.saturating_sub(CATCH_UP_THRESHOLD) == 0 {
-				return (None, Action::Discard(cost::HONEST_OUT_OF_SCOPE_CATCH_UP));
-			}
-
-			return (None, Action::Discard(Misbehavior::OutOfScopeMessage.cost()));
-		}
-
-		match self.peers.peer(who) {
-			None =>
-				return (None, Action::Discard(Misbehavior::OutOfScopeMessage.cost())),
-			Some(peer) if peer.view.round >= request.round =>
-				return (None, Action::Discard(Misbehavior::OutOfScopeMessage.cost())),
-			_ => {},
-		}
-
-		let last_completed_round = set_state.read().last_completed_round();
-		if last_completed_round.number < request.round.0 {
-			return (None, Action::Discard(Misbehavior::OutOfScopeMessage.cost()));
-		}
-
-		trace!(target: "afg", "Replying to catch-up request for round {} from {} with round {}",
-			request.round.0,
-			who,
-			last_completed_round.number,
-		);
-
-		let mut prevotes = Vec::new();
-		let mut precommits = Vec::new();
-
-		// NOTE: the set of votes stored in `LastCompletedRound` is a minimal
-		// set of votes, i.e. at most one equivocation is stored per voter. The
-		// code below assumes this invariant is maintained when creating the
-		// catch up reply since peers won't accept catch-up messages that have
-		// too many equivocations (we exceed the fault-tolerance bound).
-		for vote in last_completed_round.votes {
-			match vote.message {
-				grandpa::Message::Prevote(prevote) => {
-					prevotes.push(grandpa::SignedPrevote {
-						prevote,
-						signature: vote.signature,
-						id: vote.id,
-					});
-				},
-				grandpa::Message::Precommit(precommit) => {
-					precommits.push(grandpa::SignedPrecommit {
-						precommit,
-						signature: vote.signature,
-						id: vote.id,
-					});
-				},
-				_ => {},
-			}
-		}
-
-		let (base_hash, base_number) = last_completed_round.base;
-
-		let catch_up = CatchUp::<Block> {
-			round_number: last_completed_round.number,
-			prevotes,
-			precommits,
-			base_hash,
-			base_number,
-		};
-
-		let full_catch_up = GossipMessage::CatchUp::<Block>(FullCatchUpMessage {
-			set_id: request.set_id,
-			message: catch_up,
-		});
-
-		(Some(full_catch_up), Action::Discard(cost::CATCH_UP_REPLY))
-	}
-
-	fn try_catch_up(&mut self, who: &PeerId) -> (Option<GossipMessage<Block>>, Option<Report>) {
-		let mut catch_up = None;
-		let mut report = None;
-
-		// if the peer is on the same set and ahead of us by a margin bigger
-		// than `CATCH_UP_THRESHOLD` then we should ask it for a catch up
-		// message.
-		if let (Some(peer), Some(local_view)) = (self.peers.peer(who), &self.local_view) {
-			if peer.view.set_id == local_view.set_id &&
-				peer.view.round.0.saturating_sub(CATCH_UP_THRESHOLD) > local_view.round.0
-			{
-				// send catch up request if allowed
-				let round = peer.view.round.0 - 1; // peer.view.round is > 0
-				let request = CatchUpRequestMessage {
-					set_id: peer.view.set_id,
-					round: Round(round),
-				};
-
-				let (catch_up_allowed, catch_up_report) = self.note_catch_up_request(who, &request);
-
-				if catch_up_allowed {
-					trace!(target: "afg", "Sending catch-up request for round {} to {}",
-						   round,
-						   who,
-					);
-
-					catch_up = Some(GossipMessage::<Block>::CatchUpRequest(request));
-				}
-
-				report = catch_up_report;
-			}
-		}
-
-		(catch_up, report)
-	}
-
-	fn import_neighbor_message(&mut self, who: &PeerId, update: NeighborPacket<NumberFor<Block>>)
-		-> (Vec<Block::Hash>, Action<Block::Hash>, Option<GossipMessage<Block>>, Option<Report>)
-	{
-		let update_res = self.peers.update_peer_state(who, update);
-
-		let (cost_benefit, topics) = match update_res {
-			Ok(view) =>
-				(benefit::NEIGHBOR_MESSAGE, view.map(|view| neighbor_topics::<Block>(view))),
-			Err(misbehavior) =>
-				(misbehavior.cost(), None),
-		};
-
-		let (catch_up, report) = match update_res {
-			Ok(_) => self.try_catch_up(who),
-			_ => (None, None),
-		};
-
-		let neighbor_topics = topics.unwrap_or_default();
-
-		// always discard neighbor messages, it's only valid for one hop.
-		let action = Action::Discard(cost_benefit);
-
-		(neighbor_topics, action, catch_up, report)
-	}
-
-	fn multicast_neighbor_packet(&self) -> MaybeMessage<Block> {
-		self.local_view.as_ref().map(|local_view| {
-			let packet = NeighborPacket {
-				round: local_view.round,
-				set_id: local_view.set_id,
-				commit_finalized_height: local_view.last_commit.unwrap_or(Zero::zero()),
-			};
-
-			let peers = self.peers.inner.keys().cloned().collect();
-			(peers, packet)
-		})
-	}
-
-	fn note_catch_up_request(
-		&mut self,
-		who: &PeerId,
-		catch_up_request: &CatchUpRequestMessage,
-	) -> (bool, Option<Report>) {
-		let report = match &self.pending_catch_up {
-			PendingCatchUp::Requesting { who: peer, instant, .. } =>
-				if instant.elapsed() <= CATCH_UP_REQUEST_TIMEOUT {
-					return (false, None);
-				} else {
-					// report peer for timeout
-					Some((peer.clone(), cost::CATCH_UP_REQUEST_TIMEOUT))
-				},
-			PendingCatchUp::Processing { instant, .. } =>
-				if instant.elapsed() < CATCH_UP_PROCESS_TIMEOUT {
-					return (false, None);
-				} else {
-					None
-				},
-			_ => None,
-		};
-
-		self.pending_catch_up = PendingCatchUp::Requesting {
-			who: who.clone(),
-			request: catch_up_request.clone(),
-			instant: Instant::now(),
-		};
-
-		(true, report)
-	}
-}
-
-/// A validator for GRANDPA gossip messages.
-pub(super) struct GossipValidator<Block: BlockT> {
-	inner: parking_lot::RwLock<Inner<Block>>,
-	set_state: environment::SharedVoterSetState<Block>,
-	report_sender: mpsc::UnboundedSender<PeerReport>,
-}
-
-impl<Block: BlockT> GossipValidator<Block> {
-	/// Create a new gossip-validator. This initialized the current set to 0.
-	pub(super) fn new(config: crate::Config, set_state: environment::SharedVoterSetState<Block>)
-		-> (GossipValidator<Block>, ReportStream)
-	{
-		let (tx, rx) = mpsc::unbounded();
-		let val = GossipValidator {
-			inner: parking_lot::RwLock::new(Inner::new(config)),
-			set_state,
-			report_sender: tx,
-		};
-
-		(val, ReportStream { reports: rx })
-	}
-
-	/// Note a round in the current set has started.
-	pub(super) fn note_round<F>(&self, round: Round, send_neighbor: F)
-		where F: FnOnce(Vec<PeerId>, NeighborPacket<NumberFor<Block>>)
-	{
-		let maybe_msg = self.inner.write().note_round(round);
-		if let Some((to, msg)) = maybe_msg {
-			send_neighbor(to, msg);
-		}
-	}
-
-	/// Note that a voter set with given ID has started. Updates the current set to given
-	/// value and initializes the round to 0.
-	pub(super) fn note_set<F>(&self, set_id: SetId, authorities: Vec<AuthorityId>, send_neighbor: F)
-		where F: FnOnce(Vec<PeerId>, NeighborPacket<NumberFor<Block>>)
-	{
-		let maybe_msg = self.inner.write().note_set(set_id, authorities);
-		if let Some((to, msg)) = maybe_msg {
-			send_neighbor(to, msg);
-		}
-	}
-
-	/// Note that we've imported a commit finalizing a given block.
-	pub(super) fn note_commit_finalized<F>(&self, finalized: NumberFor<Block>, send_neighbor: F)
-		where F: FnOnce(Vec<PeerId>, NeighborPacket<NumberFor<Block>>)
-	{
-		let maybe_msg = self.inner.write().note_commit_finalized(finalized);
-		if let Some((to, msg)) = maybe_msg {
-			send_neighbor(to, msg);
-		}
-	}
-
-	/// Note that we've processed a catch up message.
-	pub(super) fn note_catch_up_message_processed(&self)	{
-		self.inner.write().note_catch_up_message_processed();
-	}
-
-	fn report(&self, who: PeerId, cost_benefit: i32) {
-		let _ = self.report_sender.unbounded_send(PeerReport { who, cost_benefit });
-	}
-
-	pub(super) fn do_validate(&self, who: &PeerId, mut data: &[u8])
-		-> (Action<Block::Hash>, Vec<Block::Hash>, Option<GossipMessage<Block>>)
-	{
-		let mut broadcast_topics = Vec::new();
-		let mut peer_reply = None;
-
-		let action = {
-			match GossipMessage::<Block>::decode(&mut data) {
-				Some(GossipMessage::VoteOrPrecommit(ref message))
-					=> self.inner.write().validate_round_message(who, message),
-				Some(GossipMessage::Commit(ref message)) => self.inner.write().validate_commit_message(who, message),
-				Some(GossipMessage::Neighbor(update)) => {
-					let (topics, action, catch_up, report) = self.inner.write().import_neighbor_message(
-						who,
-						update.into_neighbor_packet(),
-					);
-
-					if let Some((peer, cost_benefit)) = report {
-						self.report(peer, cost_benefit);
-					}
-
-					broadcast_topics = topics;
-					peer_reply = catch_up;
-					action
-				}
-				Some(GossipMessage::CatchUp(ref message))
-					=> self.inner.write().validate_catch_up_message(who, message),
-				Some(GossipMessage::CatchUpRequest(request)) => {
-					let (reply, action) = self.inner.write().handle_catch_up_request(
-						who,
-						request,
-						&self.set_state,
-					);
-
-					peer_reply = reply;
-					action
-				}
-				None => {
-					debug!(target: "afg", "Error decoding message");
-					telemetry!(CONSENSUS_DEBUG; "afg.err_decoding_msg"; "" => "");
-
-					let len = std::cmp::min(i32::max_value() as usize, data.len()) as i32;
-					Action::Discard(Misbehavior::UndecodablePacket(len).cost())
-				}
-			}
-		};
-
-		(action, broadcast_topics, peer_reply)
-	}
-}
-
-impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> {
-	fn new_peer(&self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, _roles: Roles) {
-		let packet = {
-			let mut inner = self.inner.write();
-			inner.peers.new_peer(who.clone());
-
-			inner.local_view.as_ref().map(|v| {
-				NeighborPacket {
-					round: v.round,
-					set_id: v.set_id,
-					commit_finalized_height: v.last_commit.unwrap_or(Zero::zero()),
-				}
-			})
-		};
-
-		if let Some(packet) = packet {
-			let packet_data = GossipMessage::<Block>::from(packet).encode();
-			context.send_message(who, packet_data);
-		}
-	}
-
-	fn peer_disconnected(&self, _context: &mut dyn ValidatorContext<Block>, who: &PeerId) {
-		self.inner.write().peers.peer_disconnected(who);
-	}
-
-	fn validate(&self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, data: &[u8])
-		-> network_gossip::ValidationResult<Block::Hash>
-	{
-		let (action, broadcast_topics, peer_reply) = self.do_validate(who, data);
-
-		// not with lock held!
-		if let Some(msg) = peer_reply {
-			context.send_message(who, msg.encode());
-		}
-
-		for topic in broadcast_topics {
-			context.send_topic(who, topic, false);
-		}
-
-		match action {
-			Action::Keep(topic, cb) => {
-				self.report(who.clone(), cb);
-				context.broadcast_message(topic, data.to_vec(), false);
-				network_gossip::ValidationResult::ProcessAndKeep(topic)
-			}
-			Action::ProcessAndDiscard(topic, cb) => {
-				self.report(who.clone(), cb);
-				network_gossip::ValidationResult::ProcessAndDiscard(topic)
-			}
-			Action::Discard(cb) => {
-				self.report(who.clone(), cb);
-				network_gossip::ValidationResult::Discard
-			}
-		}
-	}
-
-	fn message_allowed<'a>(&'a self)
-		-> Box<dyn FnMut(&PeerId, MessageIntent, &Block::Hash, &[u8]) -> bool + 'a>
-	{
-		let (inner, do_rebroadcast) = {
-			use parking_lot::RwLockWriteGuard;
-
-			let mut inner = self.inner.write();
-			let now = Instant::now();
-			let do_rebroadcast = if now >= inner.next_rebroadcast {
-				inner.next_rebroadcast = now + REBROADCAST_AFTER;
-				true
-			} else {
-				false
-			};
-
-			// downgrade to read-lock.
-			(RwLockWriteGuard::downgrade(inner), do_rebroadcast)
-		};
-
-		Box::new(move |who, intent, topic, mut data| {
-			if let MessageIntent::PeriodicRebroadcast = intent {
-				return do_rebroadcast;
-			}
-
-			let peer = match inner.peers.peer(who) {
-				None => return false,
-				Some(x) => x,
-			};
-
-			// if the topic is not something we're keeping at the moment,
-			// do not send.
-			let (maybe_round, set_id) = match inner.live_topics.topic_info(&topic) {
-				None => return false,
-				Some(x) => x,
-			};
-
-			// if the topic is not something the peer accepts, discard.
-			if let Some(round) = maybe_round {
-				return peer.view.consider_vote(round, set_id) == Consider::Accept
-			}
-
-			// global message.
-			let local_view = match inner.local_view {
-				Some(ref v) => v,
-				None => return false, // cannot evaluate until we have a local view.
-			};
-
-			let our_best_commit = local_view.last_commit;
-			let peer_best_commit = peer.view.last_commit;
-
-			match GossipMessage::<Block>::decode(&mut data) {
-				None => false,
-				Some(GossipMessage::Commit(full)) => {
-					// we only broadcast our best commit and only if it's
-					// better than last received by peer.
-					Some(full.message.target_number) == our_best_commit
-					&& Some(full.message.target_number) > peer_best_commit
-				}
-				Some(GossipMessage::Neighbor(_)) => false,
-				Some(GossipMessage::CatchUpRequest(_)) => false,
-				Some(GossipMessage::CatchUp(_)) => false,
-				Some(GossipMessage::VoteOrPrecommit(_)) => false, // should not be the case.
-			}
-		})
-	}
-
-	fn message_expired<'a>(&'a self) -> Box<dyn FnMut(Block::Hash, &[u8]) -> bool + 'a> {
-		let inner = self.inner.read();
-		Box::new(move |topic, mut data| {
-			// if the topic is not one of the ones that we are keeping at the moment,
-			// it is expired.
-			match inner.live_topics.topic_info(&topic) {
-				None => return true,
-				Some((Some(_), _)) => return false, // round messages don't require further checking.
-				Some((None, _)) => {},
-			};
-
-			let local_view = match inner.local_view {
-				Some(ref v) => v,
-				None => return true, // no local view means we can't evaluate or hold any topic.
-			};
-
-			// global messages -- only keep the best commit.
-			let best_commit = local_view.last_commit;
-
-			match GossipMessage::<Block>::decode(&mut data) {
-				None => true,
-				Some(GossipMessage::Commit(full))
-					=> Some(full.message.target_number) != best_commit,
-				Some(_) => true,
-			}
-		})
-	}
-}
 
 struct PeerReport {
 	who: PeerId,
@@ -2497,29 +1710,7 @@ pub type CatchUp<Block> = grandpa::CatchUp<
 	AuthoritySignature,
 	AuthorityId,
 >;
-/// A commit message for this chain's block type.
-pub type Commit<Block> = grandpa::Commit<
-	<Block as BlockT>::Hash,
-	NumberFor<Block>,
-	AuthoritySignature,
-	AuthorityId,
->;
-/// A compact commit message for this chain's block type.
-pub type CompactCommit<Block> = grandpa::CompactCommit<
-	<Block as BlockT>::Hash,
-	NumberFor<Block>,
-	AuthoritySignature,
-	AuthorityId,
->;
-/// A global communication input stream for commits and catch up messages. Not
-/// exposed publicly, used internally to simplify types in the communication
-/// layer.
-type CommunicationIn<Block> = grandpa::voter::CommunicationIn<
-	<Block as BlockT>::Hash,
-	NumberFor<Block>,
-	AuthoritySignature,
-	AuthorityId,
->;
+
 
 /// Global communication input stream for commits and catch up messages, with
 /// the hash type not being derived from the block, useful for forcing the hash
@@ -2566,7 +1757,7 @@ pub struct Config {
 	pub public_key_set: Arc<PublickeySetWrap>,
     pub initial_validators:  BTreeMap<PeerId, AuthorityId>,
 	pub batch_size:u32,
-	
+
 }
 
 impl Config {
@@ -2783,9 +1974,7 @@ fn global_communication<Block: BlockT<Hash=H256>, B, E, N, RA>(
 	NumberFor<Block>: BlockNumberOps,
 {
 
-	let is_voter = local_key
-		.map(|pair| voters.contains_key(&pair.public().into()))
-		.unwrap_or(false);
+	let is_voter = network.is_validator();
 
 	// verification stream
 	let (global_in, global_out) = network.global_communication(
@@ -2807,8 +1996,8 @@ fn global_communication<Block: BlockT<Hash=H256>, B, E, N, RA>(
 	(global_in, global_out)
 }
 
-/// Register the finality tracker inherent data provider (which is used by
-/// GRANDPA), if not registered already.
+
+/*
 fn register_finality_tracker_inherent_data_provider<B, E, Block: BlockT<Hash=H256>, RA>(
 	client: Arc<Client<B, E, Block, RA>>,
 	inherent_data_providers: &InherentDataProviders,
@@ -2834,7 +2023,7 @@ fn register_finality_tracker_inherent_data_provider<B, E, Block: BlockT<Hash=H25
 	} else {
 		Ok(())
 	}
-}
+}*/
 
 /// Parameters used to run Grandpa.
 pub struct GrandpaParams<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X> {
@@ -3125,20 +2314,3 @@ pub fn run_grandpa_voter<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X>(
 	Ok(voter_work.select(on_exit).select2(telemetry_task).then(|_| Ok(())))
 }
 
-#[deprecated(since = "1.1", note = "Please switch to run_grandpa_voter.")]
-pub fn run_grandpa<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X>(
-	grandpa_params: GrandpaParams<B, E, Block, N, RA, SC, X>,
-) -> ::client::error::Result<impl Future<Item=(),Error=()> + Send + 'static> where
-	Block::Hash: Ord,
-	B: Backend<Block, Blake2Hasher> + 'static,
-	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
-	N: Network<Block> + Send + Sync + 'static,
-	N::In: Send + 'static,
-	SC: SelectChain<Block> + 'static,
-	NumberFor<Block>: BlockNumberOps,
-	DigestFor<Block>: Encode,
-	RA: Send + Sync + 'static,
-	X: Future<Item=(),Error=()> + Clone + Send + 'static,
-{
-	run_grandpa_voter(grandpa_params)
-}

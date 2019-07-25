@@ -142,8 +142,8 @@ D: ConsensusProtocol<NodeId=PeerId> //specialize to avoid some of the confusion
 	peers: Peers<NumberFor<Block>>,
 	authorities: Vec<AuthorityId>,
 	config: crate::Config,
-	next_rebroadcast: Instant,
-	pending_catch_up: PendingCatchUp,
+	//next_rebroadcast: Instant,
+	//pending_catch_up: PendingCatchUp,
     /// Incoming messages from other nodes that this node has not yet handled.
     in_queue: VecDeque<SourcedMessage<D>>,
     /// Outgoing messages to other nodes.
@@ -181,7 +181,7 @@ impl<B: BlockT,D: ConsensusProtocol,R: Rng> BadgerNode<B,D,R>
 {
 	pub fn new(config: crate::Config, self_id:PeerId) -> BadgerNode<B,D,R>
 	{
-	
+	let rng=OsRng::new();
 	let ni=NetworkInfo<D::NodeId>::new(self_id.clone(),config.secret_key_share,config.public_key_set,config.node_id.1.clone(),config.initial_validators.clone());
     let dhb = DynamicHoneyBadger::builder().build(ni);
 	let (qhb, qhb_step) = QueueingHoneyBadger::builder(dhb)
@@ -193,13 +193,38 @@ impl<B: BlockT,D: ConsensusProtocol,R: Rng> BadgerNode<B,D,R>
             .cloned()
             .collect();
 	 let (sq, mut step) = SenderQueue::builder(qhb, peer_ids.into_iter()).build(self_id.clone());
-
-     BadgerNode<B,D,R>{
+     let output = step.extend_with(qhb_step, |fault| fault, Message::from);
+     let out_queue = output
+            .messages
+            .into_iter()
+            .map(|msg| {
+                let ser_msg = bincode::serialize(&msg.message).expect("serialize");
+                SourcedMessage {
+                    sender_id: algo.our_id().clone(),
+                    target: msg.target,
+                    message: ser_msg,
+                }
+            }).collect();
+		let outputs = step
+            .output
+            .into_iter()
+            .map(|out| (Duration::default(), out)).collect();
+     let mut node=BadgerNode<B,D,R>{
 		 id: self_id,
-		 algo:???,
+		 algo: sq,
          main_rng::OsRng::new(),
-
+         peers:  Peers<NumberFor<Block>>::new(),
+		 authorities : config.initial_validators.clone().to_inter().map(|_,val| val).collect(),
+		 config: config.clone(),
+         in_queue:  VecDeque::new(),
+		    out_queue: out_queue,
+			outputs:outputs
 	 }
+	 	for k,v in config.initial_validators.clone()
+		 {
+			 node.register_peer_public_key(k,v)
+		 }
+		 node 
 	}
 	pub fn  handle_message(&mut self, who: AuthorityId, msg:  D::Message) -> Result<(),&'static str>
 	{
@@ -214,14 +239,15 @@ impl<B: BlockT,D: ConsensusProtocol,R: Rng> BadgerNode<B,D,R>
                 let ser_msg = bincode::serialize(&mmsg.message).expect("serialize");
                 (mmsg.target, ser_msg)
                 }).collect();
-		      self.outputs.extend(step.output.into_iter().map(|out| (time, out)));	
-			    for (target, message) in out_msgs {
-            self.sent_time += self.hw_quality.inv_bw * message.len() as u32;
-            self.out_queue.push_back(SourcedMessage {
-                sender_id: self.id.clone(),
-                target,
-                message,});
+		    self.outputs.extend(step.output.into_iter().map(|out| (time, out)));	
+			    for (target, message) in out_msgs 
+				{
+                 self.out_queue.push_back(SourcedMessage {
+                   sender_id: self.id.clone(),
+                   target,
+                   message,});
 				}
+				
 				Ok(())
 			 }
 			None => return Err("Cannot handle message")
@@ -244,18 +270,6 @@ impl<Block: BlockT,D: ConsensusProtocol,R: Rng> BadgerGossipValidator<Block,D,R>
 		val
 	}
 
-
-	/// Note that a voter set with given ID has started. Updates the current set to given
-	/// value and initializes the round to 0.
-	pub(super) fn note_set<F>(&self, set_id: SetId, authorities: Vec<AuthorityId>, send_neighbor: F)
-		where F: FnOnce(Vec<PeerId>, NeighborPacket<NumberFor<Block>>)
-	{
-		let maybe_msg = self.inner.write().note_set(set_id, authorities);
-		if let Some((to, msg)) = maybe_msg {
-			send_neighbor(to, msg);
-		}
-	}
-
 	/// Note that we've imported a commit finalizing a given block.
 	pub(super) fn note_commit_finalized<F>(&self, finalized: NumberFor<Block>, send_neighbor: F)
 		where F: FnOnce(Vec<PeerId>, NeighborPacket<NumberFor<Block>>)
@@ -270,7 +284,12 @@ impl<Block: BlockT,D: ConsensusProtocol,R: Rng> BadgerGossipValidator<Block,D,R>
 	pub(super) fn note_catch_up_message_processed(&self)	{
 		self.inner.write().note_catch_up_message_processed();
 	}
-
+    
+	pub  fn is_validator(&self) ->bool
+	{
+		let rd = self.inner.read();
+		read.is_authority(&read.id)
+	}
 
 
 	pub(super) fn do_validate(&self, who: &PeerId, mut data: &[u8])
@@ -312,7 +331,11 @@ impl<Block: BlockT,D: ConsensusProtocol,R: Rng> BadgerGossipValidator<Block,D,R>
 						{
 						match locked.handle_message(locked.peers.peer(who).unwrap(),msg);
 						{
-							Ok(_) => {}
+							Ok(_) => 
+							{
+                            //todo: send
+
+							}
 							Err(e) =>
 							{
 							telemetry!(CONSENSUS_DEBUG; "afg.err_handling_msg"; "err" => ?format!("{}", e));
@@ -384,13 +407,41 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
 			context.send_message(who, msg.encode());
 		}
 		context.send_topic(who, topic, false);
+
+		{
+         let locked= self.inner.write();    
+		 for msg in locked.out_msgs.drain()
+		 {
+			 let vdata=GossipMessage::BadgerData(msg.message).encode()
+			 match &msg.target
+			 {
+				 Target::All  => context.broadcast_message(topic,vdata,true),
+				Target::Node(to_id) => 
+				  {
+				  context.send_message(to_id, vdata);
+
+				  },
+              Target::AllExcept(exclude) => {
+				    
+                    for pid in self.peers.peer_list().filter(|n| !exclude.contains(&n)) {
+                        if pid != msg.sender_id {
+                            context.send_message(pid, vdata);
+                        }
+                    }
+                   }
+
+			 }
+			
+		 }
+		}
+		
 		match action {
 			Action::Keep() => {
 				context.broadcast_message(topic, data.to_vec(), false);
 				network_gossip::ValidationResult::ProcessAndKeep(topic)
 			}
 			Action::ProcessAndDiscard() => {
-				self.report(who.clone(), cb);
+				
 				network_gossip::ValidationResult::ProcessAndDiscard(topic)
 			}
 			Action::Discard(cb) => {
@@ -400,7 +451,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
 		}
 	}
 
-	fn message_allowed<'a>(&'a self)
+	fn message_allowed<'a>(&'a self) //todo: not sure what this is for
 		-> Box<dyn FnMut(&PeerId, MessageIntent, &Block::Hash, &[u8]) -> bool + 'a>
 	{
 		let (inner, do_rebroadcast) = {
@@ -421,7 +472,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
 
 		Box::new(move |who, intent, topic, mut data| {
 			if let MessageIntent::PeriodicRebroadcast = intent {
-				return do_rebroadcast;
+				return false; //rebroadcast not needed, I hope?
 			}
 
 			let peer = match inner.peers.peer(who) {
@@ -429,39 +480,20 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
 				Some(x) => x,
 			};
 
+            if topic!= badger_topic::<Block>() //only one topic, i guess we may add epochs eventually
+			{
+				return false;
+			}
 			// if the topic is not something we're keeping at the moment,
 			// do not send.
-			let (maybe_round, set_id) = match inner.live_topics.topic_info(&topic) {
-				None => return false,
-				Some(x) => x,
-			};
-
-			// if the topic is not something the peer accepts, discard.
-			if let Some(round) = maybe_round {
-				return peer.view.consider_vote(round, set_id) == Consider::Accept
-			}
-
-			// global message.
-			let local_view = match inner.local_view {
-				Some(ref v) => v,
-				None => return false, // cannot evaluate until we have a local view.
-			};
-
-			let our_best_commit = local_view.last_commit;
-			let peer_best_commit = peer.view.last_commit;
-
+	
 			match GossipMessage::<Block>::decode(&mut data) {
 				None => false,
-				Some(GossipMessage::Commit(full)) => {
-					// we only broadcast our best commit and only if it's
-					// better than last received by peer.
-					Some(full.message.target_number) == our_best_commit
-					&& Some(full.message.target_number) > peer_best_commit
+				Some(GossipMessage::BadgerData(_)) => {
+					return  false
 				}
-				Some(GossipMessage::Neighbor(_)) => false,
-				Some(GossipMessage::CatchUpRequest(_)) => false,
-				Some(GossipMessage::CatchUp(_)) => false,
-				Some(GossipMessage::VoteOrPrecommit(_)) => false, // should not be the case.
+				Some(GossipMessage::Greeting(_)) => true,
+				Some(GossipMessage::RequestGreeting()) => false,
 			}
 		})
 	}
@@ -471,24 +503,15 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
 		Box::new(move |topic, mut data| {
 			// if the topic is not one of the ones that we are keeping at the moment,
 			// it is expired.
-			match inner.live_topics.topic_info(&topic) {
-				None => return true,
-				Some((Some(_), _)) => return false, // round messages don't require further checking.
-				Some((None, _)) => {},
-			};
-
-			let local_view = match inner.local_view {
-				Some(ref v) => v,
-				None => return true, // no local view means we can't evaluate or hold any topic.
-			};
-
-			// global messages -- only keep the best commit.
-			let best_commit = local_view.last_commit;
+			if topic!= badger_topic::<Block>() //only one topic, i guess we may add epochs eventually
+			{
+				return true;
+			}
 
 			match GossipMessage::<Block>::decode(&mut data) {
 				None => true,
-				Some(GossipMessage::Commit(full))
-					=> Some(full.message.target_number) != best_commit,
+				Some(GossipMessage::Greeting(_))
+					=> false,
 				Some(_) => true,
 			}
 		})
@@ -588,7 +611,7 @@ impl Stream for NetworkStream {
 /// Bridge between the underlying network service, gossiping consensus messages and Grandpa
 pub(crate) struct NetworkBridge<B: BlockT, N: Network<B>,D: ConsensusProtocol> {
 	service: N,
-	node: Arc<BadgerNode<B,D>>,
+	node: Arc<BadgerGossipValidator<B,D>>,
 	neighbor_sender: periodic::NeighborPacketSender<B>,
 }
 
@@ -608,51 +631,14 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 	) {
 
 		let validator= BadgerGossipValidator::new(config, service.local_peer_id().clone());
-		let validator = Arc::new(validator);
-		service.register_validator(validator.clone());
+		let validator_arc = Arc::new(validator);
+		service.register_validator(validator_arc.clone());
 
-		{
-			// register all previous votes with the gossip service so that they're
-			// available to peers potentially stuck on a previous round.
-			let completed = set_state.read().completed_rounds();
-			let (set_id, voters) = completed.set_info();
-			validator.note_set(SetId(set_id), voters.to_vec(), |_, _| {});
-			for round in completed.iter() {
-				let topic = round_topic::<B>(round.number, set_id);
 
-				// we need to note the round with the gossip validator otherwise
-				// messages will be ignored.
-				validator.note_round(Round(round.number), |_, _| {});
-
-				for signed in round.votes.iter() {
-					let message = gossip::GossipMessage::VoteOrPrecommit(
-						gossip::VoteOrPrecommitMessage::<B> {
-							message: signed.clone(),
-							round: Round(round.number),
-							set_id: SetId(set_id),
-						}
-					);
-
-					service.register_gossip_message(
-						topic,
-						message.encode(),
-					);
-				}
-
-				trace!(target: "afg",
-					"Registered {} messages for topic {:?} (round: {}, set_id: {})",
-					round.votes.len(),
-					topic,
-					round.number,
-					set_id,
-				);
-			}
-		}
 
 		let (rebroadcast_job, neighbor_sender) = periodic::neighbor_packet_worker(service.clone());
-		let reporting_job = report_stream.consume(service.clone());
 
-		let bridge = NetworkBridge { service, validator, neighbor_sender };
+		let bridge = NetworkBridge { service, validator_arc, neighbor_sender };
 
 		let startup_work = futures::future::lazy(move || {
 			// lazily spawn these jobs onto their own tasks. the lazy future has access
@@ -667,7 +653,10 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 
 		(bridge, startup_work)
 	}
-
+pub  fn is_validator(&self) ->bool
+{
+	self.node.is_validator()
+}
 	/// Note the beginning of a new round to the `GossipValidator`.
 	pub(crate) fn note_round(
 		&self,

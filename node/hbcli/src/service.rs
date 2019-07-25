@@ -21,7 +21,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use aura::{import_queue, start_aura, AuraImportQueue, SlotDuration};
+use badger::{badger_import_queue, start_badger, BadgerImportQueue};
 use client::{self, LongestChain};
 use badger::{self, FinalityProofProvider as GrandpaFinalityProofProvider};
 use badger_primitives::{PublicKeyShareWrap,SecretKeyShareWrap,SecretKeyWrap, PublicKeyWrap, PublicKeySetWrap}
@@ -54,10 +54,10 @@ pub struct NodeConfig<F: substrate_service::ServiceFactory> {
 	pub grandpa_import_setup: Option<(grandpa::BlockImportForService<F>, grandpa::LinkHalfForService<F>)>,
 	inherent_data_providers: InherentDataProviders,
 	num_validators: usize,
-	num_faulty:usize,
 	secret_key_share: Option<SecretKeyShareWrap>,
 	node_key: SecretKeyWrap,
 	public_key_set: PublickeySetWrap,
+
 }
 
 impl<F> Default for NodeConfig<F> where F: substrate_service::ServiceFactory {
@@ -172,7 +172,7 @@ construct_service_factory! {
 
 				config.custom.grandpa_import_setup = Some((block_import.clone(), link_half));
 
-				import_queue::<_, _, AuraPair>(
+				badger_import_queue::<_, _, AuraPair>(
 					slot_duration,
 					Box::new(block_import),
 					Some(Box::new(justification_import)),

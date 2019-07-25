@@ -154,6 +154,7 @@ impl<C, A> consensus_common::Environment<<C as AuthoringApi>::Block> for Propose
 	}
 }
 
+/*
 /// Proposer factory.
 pub struct ProposerHoneyFactory<C, A> where A: txpool::ChainApi {
 	/// The client instance.
@@ -224,7 +225,7 @@ impl<C, A> consensus_common::Environment<<C as AuthoringApi>::Block> for Propose
 		Ok(proposer)
 	}
 }
-
+*/
 
 /// The proposer logic.
 pub struct Proposer<Block: BlockT, C, A: txpool::ChainApi> {

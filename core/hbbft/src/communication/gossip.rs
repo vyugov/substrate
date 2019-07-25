@@ -367,7 +367,10 @@ impl<N: Ord> Peers<N> {
 	fn new_peer(&mut self, who: PeerId) {
 		self.inner.insert(who, PeerInfo::new());
 	}
-
+    pub fn peer_list() ->Vec<PeerId>
+	{
+     self.inner.iter().map(|k,v | k).collect()
+	}
 	fn peer_disconnected(&mut self, who: &PeerId) {
 		self.inner.remove(who);
 	}

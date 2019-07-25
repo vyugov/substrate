@@ -24,8 +24,8 @@ extern crate alloc;
 #[cfg(feature = "std")]
 use serde::Serialize;
 
-#[cfg(feature = "std")]
-use serde::Deserialize;
+//#[cfg(feature = "std")]
+//use serde::Deserialize;
 
 
 use parity_codec::{Encode, Decode, Codec,Input};
@@ -86,7 +86,7 @@ use badger::crypto::PK_SIZE;
 use badger::crypto::SIG_SIZE;
 
 
-use badger::pairing::{CurveAffine, CurveProjective, EncodedPoint};
+//use badger::pairing::{CurveAffine, CurveProjective, EncodedPoint};
 
 impl parity_codec::Encode for PublicKeyWrap {
  
