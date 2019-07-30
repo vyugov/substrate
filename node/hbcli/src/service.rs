@@ -21,7 +21,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use badger::{badger_import_queue, start_badger, BadgerImportQueue};
+use badger::{badger_import_queue, start_badger, BadgerImportQueue,Config as BadgerConfig};
 use client::{self, LongestChain};
 use badger::{self, FinalityProofProvider as GrandpaFinalityProofProvider};
 use badger_primitives::{PublicKeyShareWrap,SecretKeyShareWrap,SecretKeyWrap, PublicKeyWrap, PublicKeySetWrap}
@@ -86,6 +86,18 @@ construct_service_factory! {
 				FullComponents::<Factory>::new(config) },
 		AuthoritySetup = {
 			|mut service: Self::FullService| {
+
+				    let client = service.client();
+                    let t_pool = service.transaction_pool();
+					let badger = start_badger(
+						client,
+						t_pool,
+						service.network(),
+                        BadgerConfig::from_json_file_with_name("/store/nodess.json",&service.config.name),
+						service.network(),
+					)?;
+
+
 				let (block_import, link_half) = service.config.custom.grandpa_import_setup.take()
 					.expect("Link Half and Block Import are present for Full Services or setup failed before. qed");
 
@@ -152,7 +164,7 @@ construct_service_factory! {
 							on_exit: service.on_exit(),
 							telemetry_on_connect: Some(telemetry_on_connect),
 						};
-						service.spawn_task(Box::new(grandpa::run_grandpa_voter(grandpa_config)?));
+						service.spawn_task(Box::new(grandpa::run_honey_badger(grandpa_config)?));
 					},
 				}
 

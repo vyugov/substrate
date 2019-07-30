@@ -77,30 +77,6 @@ impl<B, E, Block: BlockT<Hash=H256>, RA, PRA, SC> JustificationImport<Block>
 
 	fn on_start(&self) -> Vec<(Block::Hash, NumberFor<Block>)> {
 		let mut out = Vec::new();
-		let chain_info = self.inner.info().chain;
-
-		// request justifications for all pending changes for which change blocks have already been imported
-		let authorities = self.authority_set.inner().read();
-		for pending_change in authorities.pending_changes() {
-			if pending_change.delay_kind == DelayKind::Finalized &&
-				pending_change.effective_number() > chain_info.finalized_number &&
-				pending_change.effective_number() <= chain_info.best_number
-			{
-				let effective_block_hash = self.select_chain.finality_target(
-					pending_change.canon_hash,
-					Some(pending_change.effective_number()),
-				);
-
-				if let Ok(Some(hash)) = effective_block_hash {
-					if let Ok(Some(header)) = self.inner.header(&BlockId::Hash(hash)) {
-						if *header.number() == pending_change.effective_number() {
-							out.push((header.hash(), *header.number()));
-						}
-					}
-				}
-			}
-		}
-
 		out
 	}
 

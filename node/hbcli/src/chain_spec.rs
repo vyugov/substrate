@@ -21,14 +21,16 @@ use node_primitives::{AccountId, AuraId, Balance};
 use node_runtime::{
 	AuraConfig, BalancesConfig, ContractsConfig, CouncilSeatsConfig, DemocracyConfig,
 	GrandpaConfig, IndicesConfig, SessionConfig, StakingConfig, SudoConfig,
-	SystemConfig, TimestampConfig, WASM_BINARY, Perbill, SessionKeys, StakerStatus, DAYS, DOLLARS,
+	SystemConfig, TimestampConfig,BadgerConfig, WASM_BINARY, Perbill, SessionKeys, StakerStatus, DAYS, DOLLARS,
 	MILLICENTS, SECS_PER_BLOCK,
 };
 pub use node_runtime::GenesisConfig;
 use substrate_service;
 use hex_literal::hex;
 use substrate_telemetry::TelemetryEndpoints;
-use grandpa::AuthorityId as GrandpaId;
+//use grandpa::AuthorityId as GrandpaId;
+use badger::AuthorityId as BadgerId;
+
 
 const STAGING_TELEMETRY_URL: &str = "wss://telemetry.polkadot.io/submit/";
 
@@ -151,6 +153,9 @@ fn staging_testnet_config_genesis() -> GenesisConfig {
 		}),
 		grandpa: Some(GrandpaConfig {
 			authorities: initial_authorities.iter().map(|x| (x.3.clone(), 1)).collect(),
+		}),
+		badger: Some(BadgerConfig {
+
 		}),
 	}
 }

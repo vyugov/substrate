@@ -62,6 +62,355 @@ use substrate_telemetry::{telemetry, CONSENSUS_DEBUG};
 use log::{trace, debug, warn};
 use futures::prelude::*;
 use futures::sync::mpsc;
+use serde_json as json;
+use hex;
+/// Proposer factory.
+pub struct ProposerFactory<C, A> where A: txpool::ChainApi {
+	/// The client instance.
+	pub client: Arc<C>,
+	/// The transaction pool.
+	pub transaction_pool: Arc<TransactionPool<A>>,
+}
+
+impl<C, A> consensus_common::Environment<<C as AuthoringApi>::Block> for ProposerFactory<C, A> where
+	C: AuthoringApi,
+	<C as ProvideRuntimeApi>::Api: BlockBuilderApi<<C as AuthoringApi>::Block>,
+	A: txpool::ChainApi<Block=<C as AuthoringApi>::Block>,
+	client::error::Error: From<<C as AuthoringApi>::Error>,
+	Proposer<<C as AuthoringApi>::Block, C, A>: consensus_common::Proposer<<C as AuthoringApi>::Block>,
+{
+	type Proposer = Proposer<<C as AuthoringApi>::Block, C, A>;
+	type Error = error::Error;
+
+	fn init(
+		&self,
+		parent_header: &<<C as AuthoringApi>::Block as BlockT>::Header,
+	) -> Result<Self::Proposer, error::Error> {
+		let parent_hash = parent_header.hash();
+
+		let id = BlockId::hash(parent_hash);
+
+		info!("Starting consensus session on top of parent {:?}", parent_hash);
+
+		let proposer = Proposer {
+			client: self.client.clone(),
+			parent_hash,
+			parent_id: id,
+			parent_number: *parent_header.number(),
+			transaction_pool: self.transaction_pool.clone(),
+			now: Box::new(time::Instant::now),
+		};
+
+		Ok(proposer)
+	}
+}
+
+
+
+/// The proposer logic.
+pub struct Proposer<Block: BlockT, C, A: txpool::ChainApi> {
+	client: Arc<C>,
+	parent_hash: <Block as BlockT>::Hash,
+	parent_id: BlockId<Block>,
+	parent_number: <<Block as BlockT>::Header as HeaderT>::Number,
+	transaction_pool: Arc<TransactionPool<A>>,
+	now: Box<dyn Fn() -> time::Instant>,
+}
+
+impl<Block, C, A> consensus_common::Proposer<<C as AuthoringApi>::Block> for Proposer<Block, C, A> where
+	Block: BlockT,
+	C: AuthoringApi<Block=Block>,
+	<C as ProvideRuntimeApi>::Api: BlockBuilderApi<Block>,
+	A: txpool::ChainApi<Block=Block>,
+	client::error::Error: From<<C as AuthoringApi>::Error>
+{
+	type Create = Result<<C as AuthoringApi>::Block, error::Error>;
+	type Error = error::Error;
+
+	fn propose(
+		&self,
+		inherent_data: InherentData,
+		inherent_digests: DigestFor<Block>,
+		max_duration: time::Duration,
+	) -> Result<<C as AuthoringApi>::Block, error::Error>
+	{
+		// leave some time for evaluation and block finalization (33%)
+		let deadline = (self.now)() + max_duration - max_duration / 3;
+		self.propose_with(inherent_data, inherent_digests, deadline)
+	}
+}
+
+impl<Block, C, A> Proposer<Block, C, A>	where
+	Block: BlockT,
+	C: AuthoringApi<Block=Block>,
+	<C as ProvideRuntimeApi>::Api: BlockBuilderApi<Block>,
+	A: txpool::ChainApi<Block=Block>,
+	client::error::Error: From<<C as AuthoringApi>::Error>,
+{
+	fn propose_with(
+		&self,
+		inherent_data: InherentData,
+		inherent_digests: DigestFor<Block>,
+		deadline: time::Instant,
+	) -> Result<<C as AuthoringApi>::Block, error::Error>
+	{
+		use runtime_primitives::traits::BlakeTwo256;
+
+		/// If the block is full we will attempt to push at most
+		/// this number of transactions before quitting for real.
+		/// It allows us to increase block utilization.
+		const MAX_SKIPPED_TRANSACTIONS: usize = 8;
+
+		let block = self.client.build_block(
+			&self.parent_id,
+			inherent_data,
+			inherent_digests.clone(),
+			|block_builder| {
+				// proceed with transactions
+				let mut is_first = true;
+				let mut skipped = 0;
+				let mut unqueue_invalid = Vec::new();
+				let pending_iterator = self.transaction_pool.ready();
+
+				debug!("Attempting to push transactions from the pool.");
+				for pending in pending_iterator {
+					if (self.now)() > deadline {
+						debug!("Consensus deadline reached when pushing block transactions, proceeding with proposing.");
+						break;
+					}
+
+					trace!("[{:?}] Pushing to the block.", pending.hash);
+					match block_builder.push_extrinsic(pending.data.clone()) {
+						Ok(()) => {
+							debug!("[{:?}] Pushed to the block.", pending.hash);
+						}
+						Err(error::Error::ApplyExtrinsicFailed(ApplyError::FullBlock)) => {
+							if is_first {
+								debug!("[{:?}] Invalid transaction: FullBlock on empty block", pending.hash);
+								unqueue_invalid.push(pending.hash.clone());
+							} else if skipped < MAX_SKIPPED_TRANSACTIONS {
+								skipped += 1;
+								debug!(
+									"Block seems full, but will try {} more transactions before quitting.",
+									MAX_SKIPPED_TRANSACTIONS - skipped
+								);
+							} else {
+								debug!("Block is full, proceed with proposing.");
+								break;
+							}
+						}
+						Err(e) => {
+							debug!("[{:?}] Invalid transaction: {}", pending.hash, e);
+							unqueue_invalid.push(pending.hash.clone());
+						}
+					}
+
+					is_first = false;
+				}
+
+				self.transaction_pool.remove_invalid(&unqueue_invalid);
+			})?;
+
+		info!("Prepared block for proposing at {} [hash: {:?}; parent_hash: {}; extrinsics: [{}]]",
+			block.header().number(),
+			<<C as AuthoringApi>::Block as BlockT>::Hash::from(block.header().hash()),
+			block.header().parent_hash(),
+			block.extrinsics()
+				.iter()
+				.map(|xt| format!("{}", BlakeTwo256::hash_of(xt)))
+				.collect::<Vec<_>>()
+				.join(", ")
+		);
+		telemetry!(CONSENSUS_INFO; "prepared_block_for_proposing";
+			"number" => ?block.header().number(),
+			"hash" => ?<<C as AuthoringApi>::Block as BlockT>::Hash::from(block.header().hash()),
+		);
+
+		let substrate_block = Decode::decode(&mut block.encode().as_slice())
+			.expect("blocks are defined to serialize to substrate blocks correctly; qed");
+
+		assert!(evaluation::evaluate_initial(
+			&substrate_block,
+			&self.parent_hash,
+			self.parent_number,
+		).is_ok());
+
+		Ok(substrate_block)
+	}
+}/// Proposer factory.
+pub struct ProposerFactory<C, A> where A: txpool::ChainApi {
+	/// The client instance.
+	pub client: Arc<C>,
+	/// The transaction pool.
+	pub transaction_pool: Arc<TransactionPool<A>>,
+}
+
+impl<C, A> consensus_common::Environment<<C as AuthoringApi>::Block> for ProposerFactory<C, A> where
+	C: AuthoringApi,
+	<C as ProvideRuntimeApi>::Api: BlockBuilderApi<<C as AuthoringApi>::Block>,
+	A: txpool::ChainApi<Block=<C as AuthoringApi>::Block>,
+	client::error::Error: From<<C as AuthoringApi>::Error>,
+	Proposer<<C as AuthoringApi>::Block, C, A>: consensus_common::Proposer<<C as AuthoringApi>::Block>,
+{
+	type Proposer = Proposer<<C as AuthoringApi>::Block, C, A>;
+	type Error = error::Error;
+
+	fn init(
+		&self,
+		parent_header: &<<C as AuthoringApi>::Block as BlockT>::Header,
+	) -> Result<Self::Proposer, error::Error> {
+		let parent_hash = parent_header.hash();
+
+		let id = BlockId::hash(parent_hash);
+
+		info!("Starting consensus session on top of parent {:?}", parent_hash);
+
+		let proposer = Proposer {
+			client: self.client.clone(),
+			parent_hash,
+			parent_id: id,
+			parent_number: *parent_header.number(),
+			transaction_pool: self.transaction_pool.clone(),
+			now: Box::new(time::Instant::now),
+		};
+
+		Ok(proposer)
+	}
+}
+
+
+
+/// The proposer logic.
+pub struct Proposer<Block: BlockT, C, A: txpool::ChainApi> {
+	client: Arc<C>,
+	parent_hash: <Block as BlockT>::Hash,
+	parent_id: BlockId<Block>,
+	parent_number: <<Block as BlockT>::Header as HeaderT>::Number,
+	transaction_pool: Arc<TransactionPool<A>>,
+	now: Box<dyn Fn() -> time::Instant>,
+}
+
+impl<Block, C, A> consensus_common::Proposer<<C as AuthoringApi>::Block> for Proposer<Block, C, A> where
+	Block: BlockT,
+	C: AuthoringApi<Block=Block>,
+	<C as ProvideRuntimeApi>::Api: BlockBuilderApi<Block>,
+	A: txpool::ChainApi<Block=Block>,
+	client::error::Error: From<<C as AuthoringApi>::Error>
+{
+	type Create = Result<<C as AuthoringApi>::Block, error::Error>;
+	type Error = error::Error;
+
+	fn propose(
+		&self,
+		inherent_data: InherentData,
+		inherent_digests: DigestFor<Block>,
+		max_duration: time::Duration,
+	) -> Result<<C as AuthoringApi>::Block, error::Error>
+	{
+		// leave some time for evaluation and block finalization (33%)
+		let deadline = (self.now)() + max_duration - max_duration / 3;
+		self.propose_with(inherent_data, inherent_digests, deadline)
+	}
+}
+
+impl<Block, C, A> Proposer<Block, C, A>	where
+	Block: BlockT,
+	C: AuthoringApi<Block=Block>,
+	<C as ProvideRuntimeApi>::Api: BlockBuilderApi<Block>,
+	A: txpool::ChainApi<Block=Block>,
+	client::error::Error: From<<C as AuthoringApi>::Error>,
+{
+	fn propose_with(
+		&self,
+		inherent_data: InherentData,
+		inherent_digests: DigestFor<Block>,
+		deadline: time::Instant,
+	) -> Result<<C as AuthoringApi>::Block, error::Error>
+	{
+		use runtime_primitives::traits::BlakeTwo256;
+
+		/// If the block is full we will attempt to push at most
+		/// this number of transactions before quitting for real.
+		/// It allows us to increase block utilization.
+		const MAX_SKIPPED_TRANSACTIONS: usize = 8;
+
+		let block = self.client.build_block(
+			&self.parent_id,
+			inherent_data,
+			inherent_digests.clone(),
+			|block_builder| {
+				// proceed with transactions
+				let mut is_first = true;
+				let mut skipped = 0;
+				let mut unqueue_invalid = Vec::new();
+				let pending_iterator = self.transaction_pool.ready();
+
+				debug!("Attempting to push transactions from the pool.");
+				for pending in pending_iterator {
+					if (self.now)() > deadline {
+						debug!("Consensus deadline reached when pushing block transactions, proceeding with proposing.");
+						break;
+					}
+
+					trace!("[{:?}] Pushing to the block.", pending.hash);
+					match block_builder.push_extrinsic(pending.data.clone()) {
+						Ok(()) => {
+							debug!("[{:?}] Pushed to the block.", pending.hash);
+						}
+						Err(error::Error::ApplyExtrinsicFailed(ApplyError::FullBlock)) => {
+							if is_first {
+								debug!("[{:?}] Invalid transaction: FullBlock on empty block", pending.hash);
+								unqueue_invalid.push(pending.hash.clone());
+							} else if skipped < MAX_SKIPPED_TRANSACTIONS {
+								skipped += 1;
+								debug!(
+									"Block seems full, but will try {} more transactions before quitting.",
+									MAX_SKIPPED_TRANSACTIONS - skipped
+								);
+							} else {
+								debug!("Block is full, proceed with proposing.");
+								break;
+							}
+						}
+						Err(e) => {
+							debug!("[{:?}] Invalid transaction: {}", pending.hash, e);
+							unqueue_invalid.push(pending.hash.clone());
+						}
+					}
+
+					is_first = false;
+				}
+
+				self.transaction_pool.remove_invalid(&unqueue_invalid);
+			})?;
+
+		info!("Prepared block for proposing at {} [hash: {:?}; parent_hash: {}; extrinsics: [{}]]",
+			block.header().number(),
+			<<C as AuthoringApi>::Block as BlockT>::Hash::from(block.header().hash()),
+			block.header().parent_hash(),
+			block.extrinsics()
+				.iter()
+				.map(|xt| format!("{}", BlakeTwo256::hash_of(xt)))
+				.collect::<Vec<_>>()
+				.join(", ")
+		);
+		telemetry!(CONSENSUS_INFO; "prepared_block_for_proposing";
+			"number" => ?block.header().number(),
+			"hash" => ?<<C as AuthoringApi>::Block as BlockT>::Hash::from(block.header().hash()),
+		);
+
+		let substrate_block = Decode::decode(&mut block.encode().as_slice())
+			.expect("blocks are defined to serialize to substrate blocks correctly; qed");
+
+		assert!(evaluation::evaluate_initial(
+			&substrate_block,
+			&self.parent_hash,
+			self.parent_number,
+		).is_ok());
+
+		Ok(substrate_block)
+	}
+}
 
 
 // Aura (Authority-round) consensus in substrate.
@@ -143,21 +492,7 @@ fn slot_author<P: Pair>(slot_num: u64, authorities: &[AuthorityId<P>]) -> Option
 	Some(current_author)
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-struct AuraSlotCompatible;
 
-impl SlotCompatible for AuraSlotCompatible {
-	fn extract_timestamp_and_slot(
-		&self,
-		data: &InherentData
-	) -> Result<(TimestampInherent, AuraInherent, std::time::Duration), consensus_common::Error> {
-		data.timestamp_inherent_data()
-			.and_then(|t| data.aura_inherent_data().map(|a| (t, a)))
-			.map_err(Into::into)
-			.map_err(consensus_common::Error::InherentData)
-			.map(|(x, y)| (x, y, Default::default()))
-	}
-}
 
 pub fn start_slot_worker<B, C, W, T, SO, SC>(
 	slot_duration: SlotDuration<T>,
@@ -225,62 +560,61 @@ where
 	)
 }
 
-pub type AuraImportQueue<B> = BasicQueue<B>;
+pub type BadgerImportQueue<B> = BasicQueue<B>;
 
 /// Start the badger worker. The returned future should be run in a exec? runtime.
-pub fn start_badger<B, C, SC, E, I, P, SO, Error, H>(
-	local_key: Arc<P>,
-	client: Arc<C>,
-	select_chain: SC,
-	block_import: I,
-	env: Arc<E>,
-	sync_oracle: SO,
-	inherent_data_providers: InherentDataProviders,
-	force_authoring: bool,
-) -> Result<impl Future<Item=(), Error=()>, consensus_common::Error> where
-	B: Block<Header=H>,
-	C: ProvideRuntimeApi + ProvideCache<B> + AuxStore + Send + Sync,
-	C::Api: AuraApi<B, AuthorityId<P>>,
-	SC: SelectChain<B>,
-	E::Proposer: Proposer<B, Error=Error>,
-	<<E::Proposer as Proposer<B>>::Create as IntoFuture>::Future: Send + 'static,
-	P: Pair + Send + Sync + 'static,
-	P::Public: Hash + Member + Encode + Decode,
-	P::Signature: Hash + Member + Encode + Decode,
-	H: Header<Hash=B::Hash>,
-	E: Environment<B, Error=Error>,
-	I: BlockImport<B> + Send + Sync + 'static,
-	Error: ::std::error::Error + Send + From<::consensus_common::Error> + From<I::Error> + 'static,
+pub fn start_badger<Block, C,  E, I, P, SO, Error, H, A,N, X>(
+						client : Arc<C>,
+						t_pool: Arc<TransactionPool<A>>,
+						pub network: N,
+                        config: crate::Config,
+                        sync_oracle: SO, 
+					    on_exit: X,) -> ::client::error::Result<impl Future<Item=(),Error=()> + Send + 'static> where
+	A: txpool::ChainApi
+	Block::Hash: Ord,
 	SO: SyncOracle + Send + Sync + Clone,
+	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
+	Error: ::std::error::Error + Send + From<::consensus_common::Error> + From<I::Error> + 'static,
+	C: ProvideRuntimeApi + ProvideCache<B> + AuxStore + Send + Sync,
+	N: Network<Block> + Send + Sync + 'static,
 {
+	let (network_bridge, network_startup) = NetworkBridge::new(
+		network,
+		config.clone(),
+		on_exit.clone(),
+	);
+
+	let pending_iterator = self.transaction_pool.ready();
+	debug!("Attempting to push transactions from the pool.");
+	for pending in pending_iterator {}
+
 	let worker = BadgerWorker {
 		client: client.clone(),
-		block_import: Arc::new(Mutex::new(block_import)),
-		env,
-		local_key,
 		sync_oracle: sync_oracle.clone(),
-		force_authoring,
+		network: network_bridge,
+		transaction_pool: t_pool.clone()
 	};
 
-	Ok(slots::start_slot_worker::<_, _, _, _, _, AuraSlotCompatible>(
-		slot_duration.0,
-		select_chain,
-		worker,
-		sync_oracle,
-		inherent_data_providers,
-		AuraSlotCompatible,
-	))
+	Ok( worker)
 }
 
-struct BadgerWorker<C, E, I, P, SO> {
+struct BadgerWorker<C, E, I, P, SO,Inbound> {
 	client: Arc<C>,
 	block_import: Arc<Mutex<I>>,
-	env: Arc<E>,
-	local_key: Arc<P>,
+	network: NetworkBridge,
+	transaction_pool: Arc<TransactionPool<A>>,
 	sync_oracle: SO,
-	force_authoring: bool,
+	blocks_in:Inbound 
 }
+impl <> BadgerWorker 
+where
+Inbound: impl Stream<
+		Item = CommunicationInH<Block, H256>,
+		Error = CommandOrError<H256, NumberFor<Block>>,
+	>
+{
 
+}
 pub struct BadgerVerifier<C, P> {
 	client: Arc<C>,
 	phantom: PhantomData<P>,
@@ -964,14 +1298,13 @@ fn neighbor_topics<B: BlockT>(view: &View<NumberFor<B>>) -> Vec<B::Hash> {
 /// This is the root type that gets encoded and sent on the network.
 #[derive(Debug, Encode, Decode)]
 pub(super) enum GossipMessage<Block: BlockT> {
-	/// Grandpa message with round and set info.
 	Greeting(GreetingMessage),
 	/// Raw Badger data
 	BadgerData(Vec<u8>),
 
 	RequestGreeting(),
 	/// A neighbor packet. Not repropagated.
-//	Neighbor(VersionedNeighborPacket<NumberFor<Block>>),
+    //	Neighbor(VersionedNeighborPacket<NumberFor<Block>>),
 }
 
 
@@ -1632,8 +1965,6 @@ use serde_json;
 
 use srml_finality_tracker;
 
-use grandpa::Error as GrandpaError;
-use grandpa::{voter, round::State as RoundState, BlockNumberOps, voter_set::VoterSet};
 
 use std::fmt;
 use std::sync::Arc;
@@ -1697,12 +2028,7 @@ pub type SignedMessage<Block> = grandpa::SignedMessage<
 	AuthorityId,
 >;
 
-/// A primary propose message for this chain's block type.
-pub type PrimaryPropose<Block> = grandpa::PrimaryPropose<<Block as BlockT>::Hash, NumberFor<Block>>;
-/// A prevote message for this chain's block type.
-pub type Prevote<Block> = grandpa::Prevote<<Block as BlockT>::Hash, NumberFor<Block>>;
-/// A precommit message for this chain's block type.
-pub type Precommit<Block> = grandpa::Precommit<<Block as BlockT>::Hash, NumberFor<Block>>;
+
 /// A catch up message for this chain's block type.
 pub type CatchUp<Block> = grandpa::CatchUp<
 	<Block as BlockT>::Hash,
@@ -1744,12 +2070,9 @@ type CommunicationOutH<Block, H> = grandpa::voter::CommunicationOut<
 /// Configuration for the Badger service.
 #[derive(Clone)]
 pub struct Config {
-	/// The expected duration for a message to be gossiped across the network.
-	pub gossip_duration: Duration,
-
 	/// The local signing key.
 	pub local_key: Option<Arc<ed25519::Pair>>,
-	/// Some local identifier of the voter.
+	/// Some local identifier of the node.
 	pub name: Option<String>,
 	pub num_validators: usize,
 	pub secret_key_share: Option<Arc<SecretKeyShareWrap>>,
@@ -1763,6 +2086,49 @@ pub struct Config {
 impl Config {
 	fn name(&self) -> &str {
 		self.name.as_ref().map(|s| s.as_str()).unwrap_or("<unknown>")
+	}
+	pub fn from_json_file_with_name(path: PathBuf, name: &str) -> Result<Self, String> {
+		let file = File::open(&path).map_err(|e| format!("Error opening config file: {}", e))?;
+		let spec = json::from_reader(file).map_err(|e| format!("Error parsing spec file: {}", e))?;
+		let nodedata= match spec["nodes"]
+		   {
+           Object(map) =>
+		    {
+		      match map.get(name)
+			  {
+				  Some(dat) =>dat,
+				  None => return Err("Could not find node name"),
+			  }
+      
+		    }
+		    _: return Err("Nodes object should be present"),
+		   }  
+
+        let ret = Config
+		{
+         name: Some(name.clone());
+         num_validators: match spec["num_validators"]
+		   {
+			   Number(x) => x as usize,
+               String(st) => st.parse::<usize>()?;
+			   _ => return Err("Invalid num_validators");
+		   }
+		 secret_key_share: match nodedata["secret_key_share"]
+		            {
+                      String(st) => {
+						  let data=hex::decode(st)?
+						  match bincode::deserialize(&data)
+                              {
+ 							 Ok(val) => Some(SecretKeyShareWrap { 0: val}),
+	                          Err(_)  => return Err("secret key share binary invalid")
+                              }
+						   },
+					  _ => return Err("secret key share not string"),
+					}
+
+		}
+		//todo: finish parsing json? Peerid? 
+		ret
 	}
 }
 
@@ -1923,7 +2289,7 @@ where
 		<NumberFor<Block>>::zero(),
 		|| {
 			let genesis_authorities = api.runtime_api()
-				.grandpa_authorities(&BlockId::number(Zero::zero()))?;
+				.badger_authorities(&BlockId::number(Zero::zero()))?;
 			telemetry!(CONSENSUS_DEBUG; "afg.loading_authorities";
 				"authorities_len" => ?genesis_authorities.len()
 			);
@@ -1934,7 +2300,7 @@ where
 	let (voter_commands_tx, voter_commands_rx) = mpsc::unbounded();
 
 	Ok((
-		GrandpaBlockImport::new(
+		BadgerBlockImport::new(
 			client.clone(),
 			select_chain.clone(),
 			persistent_data.authority_set.clone(),
@@ -1984,11 +2350,11 @@ fn global_communication<Block: BlockT<Hash=H256>, B, E, N, RA>(
 	);
 
 	// block commit and catch up messages until relevant blocks are imported.
-	let global_in = UntilGlobalMessageBlocksImported::new(
+/*let global_in = UntilGlobalMessageBlocksImported::new(
 		client.import_notification_stream(),
 		client.clone(),
 		global_in,
-	);
+	);*/ //later
 
 	let global_in = global_in.map_err(CommandOrError::from);
 	let global_out = global_out.sink_map_err(CommandOrError::from);
@@ -1997,33 +2363,6 @@ fn global_communication<Block: BlockT<Hash=H256>, B, E, N, RA>(
 }
 
 
-/*
-fn register_finality_tracker_inherent_data_provider<B, E, Block: BlockT<Hash=H256>, RA>(
-	client: Arc<Client<B, E, Block, RA>>,
-	inherent_data_providers: &InherentDataProviders,
-) -> Result<(), consensus_common::Error> where
-	B: Backend<Block, Blake2Hasher> + 'static,
-	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
-	RA: Send + Sync + 'static,
-{
-	if !inherent_data_providers.has_provider(&srml_finality_tracker::INHERENT_IDENTIFIER) {
-		inherent_data_providers
-			.register_provider(srml_finality_tracker::InherentDataProvider::new(move || {
-				#[allow(deprecated)]
-				{
-					let info = client.backend().blockchain().info();
-					telemetry!(CONSENSUS_INFO; "afg.finalized";
-						"finalized_number" => ?info.finalized_number,
-						"finalized_hash" => ?info.finalized_hash,
-					);
-					Ok(info.finalized_number)
-				}
-			}))
-			.map_err(|err| consensus_common::Error::InherentData(err.into()))
-	} else {
-		Ok(())
-	}
-}*/
 
 /// Parameters used to run Grandpa.
 pub struct GrandpaParams<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X> {
@@ -2043,7 +2382,7 @@ pub struct GrandpaParams<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X> {
 
 /// Run a GRANDPA voter as a task. Provide configuration and a link to a
 /// block import worker that has already been instantiated with `block_import`.
-pub fn run_grandpa_voter<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X>(
+pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X>(
 	grandpa_params: GrandpaParams<B, E, Block, N, RA, SC, X>,
 ) -> ::client::error::Result<impl Future<Item=(),Error=()> + Send + 'static> where
 	Block::Hash: Ord,
@@ -2077,12 +2416,7 @@ pub fn run_grandpa_voter<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X>(
 
 	let PersistentData { authority_set, set_state, consensus_changes } = persistent_data;
 
-	let (network, network_startup) = NetworkBridge::new(
-		network,
-		config.clone(),
-		set_state.clone(),
-		on_exit.clone(),
-	);
+
 
 	register_finality_tracker_inherent_data_provider(client.clone(), &inherent_data_providers)?;
 
@@ -2122,30 +2456,7 @@ pub fn run_grandpa_voter<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X>(
 		voter_set_state: set_state.clone(),
 	});
 
-	initial_environment.update_voter_set_state(|voter_set_state| {
-		match voter_set_state {
-			VoterSetState::Live { current_round: HasVoted::Yes(id, _), completed_rounds } => {
-				let local_id = config.local_key.clone().map(|pair| pair.public());
-				let has_voted = match local_id {
-					Some(local_id) => if *id == local_id {
-						// keep the previous votes
-						return Ok(None);
-					} else {
-						HasVoted::No
-					},
-					_ => HasVoted::No,
-				};
 
-				// NOTE: only updated on disk when the voter first
-				// proposes/prevotes/precommits or completes a round.
-				Ok(Some(VoterSetState::Live {
-					current_round: has_voted,
-					completed_rounds: completed_rounds.clone(),
-				}))
-			},
-			_ => Ok(None),
-		}
-	}).expect("operation inside closure cannot fail; qed");
 
 	let initial_state = (initial_environment, voter_commands_rx.into_future());
 	let voter_work = future::loop_fn(initial_state, move |params| {
