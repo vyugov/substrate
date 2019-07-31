@@ -28,7 +28,7 @@ use client::{
 use parity_codec::{Encode, Decode};
 use consensus_common::{
 	import_queue::Verifier, well_known_cache_keys,
-	BlockOrigin, BlockImport, FinalityProofImport, ImportBlock, ImportResult, ImportedAux,
+	BlockOrigin, BlockImport, FinalityProofImport, BlockImportParams, ImportResult, ImportedAux,
 	Error as ConsensusError,
 };
 use network::config::{BoxFinalityProofRequestBuilder, FinalityProofRequestBuilder};
@@ -128,7 +128,7 @@ impl<B, E, Block: BlockT<Hash=H256>, RA> BlockImport<Block>
 
 	fn import_block(
 		&mut self,
-		block: ImportBlock<Block>,
+		block: BlockImportParams<Block>,
 		new_cache: HashMap<well_known_cache_keys::Id, Vec<u8>>,
 	) -> Result<ImportResult, Self::Error> {
 		do_import_block::<_, _, _, _, GrandpaJustification<Block>>(
@@ -230,7 +230,7 @@ impl<B: BlockT<Hash=H256>> FinalityProofRequestBuilder<B> for GrandpaFinalityPro
 fn do_import_block<B, E, Block: BlockT<Hash=H256>, RA, J>(
 	mut client: &Client<B, E, Block, RA>,
 	data: &mut LightImportData<Block>,
-	mut block: ImportBlock<Block>,
+	mut block: BlockImportParams<Block>,
 	new_cache: HashMap<well_known_cache_keys::Id, Vec<u8>>,
 ) -> Result<ImportResult, ConsensusError>
 	where
@@ -246,7 +246,7 @@ fn do_import_block<B, E, Block: BlockT<Hash=H256>, RA, J>(
 
 	// we don't want to finalize on `inner.import_block`
 	let justification = block.justification.take();
-	let enacts_consensus_change = !new_cache.is_empty();
+	let enacts_consensus_change = new_cache.contains_key(&well_known_cache_keys::AUTHORITIES);
 	let import_result = BlockImport::import_block(&mut client, block, new_cache);
 
 	let mut imported_aux = match import_result {
@@ -573,7 +573,7 @@ pub mod tests {
 
 		fn import_block(
 			&mut self,
-			mut block: ImportBlock<Block>,
+			mut block: BlockImportParams<Block>,
 			new_cache: HashMap<well_known_cache_keys::Id, Vec<u8>>,
 		) -> Result<ImportResult, Self::Error> {
 			block.justification.take();
@@ -640,7 +640,7 @@ pub mod tests {
 			authority_set: LightAuthoritySet::genesis(vec![(AuthorityId::from_raw([1; 32]), 1)]),
 			consensus_changes: ConsensusChanges::empty(),
 		};
-		let block = ImportBlock {
+		let block = BlockImportParams {
 			origin: BlockOrigin::Own,
 			header: Header {
 				number: 1,

@@ -269,17 +269,12 @@ impl<Block: BlockT,D: ConsensusProtocol,R: Rng> BadgerGossipValidator<Block,D,R>
 
 		val
 	}
-
-	/// Note that we've imported a commit finalizing a given block.
-	pub(super) fn note_commit_finalized<F>(&self, finalized: NumberFor<Block>, send_neighbor: F)
-		where F: FnOnce(Vec<PeerId>, NeighborPacket<NumberFor<Block>>)
+    /// collect outputs from 
+    pub fn pop_output(&mut self) -> Option<D::Output>
 	{
-		let maybe_msg = self.inner.write().note_commit_finalized(finalized);
-		if let Some((to, msg)) = maybe_msg {
-			send_neighbor(to, msg);
-		}
+      let locked = self.inner.write();
+	  locked.outputs.pop()
 	}
-
 	/// Note that we've processed a catch up message.
 	pub(super) fn note_catch_up_message_processed(&self)	{
 		self.inner.write().note_catch_up_message_processed();
@@ -1014,90 +1009,23 @@ impl<Block: BlockT, N: Network<Block>> Sink for OutgoingMessages<Block, N>
 	}
 }
 
-pub struct BadgerStream<Block,D :ConsensusProtocol>  {
-	validator:Arc<BadgerGossipValidator<Block>>,
+pub struct BadgerStream<Block,D :ConsensusProtocol, R:Rng>  {
+	validator:Arc<BadgerGossipValidator<Block,D,R>>,
 }
 
-impl Stream for NetworkStream {
-	type Item = network_gossip::TopicNotification;
+impl<Block,D,R> Stream for BadgerStream <Block,D :ConsensusProtocol, R:Rng>{
+	type Item = D::Output
 	type Error = ();
 
-	fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-		if let Some(ref mut inner) = self.inner {
-			return inner.poll();
-		}
-		match self.outer.poll() {
-			Ok(futures::Async::Ready(mut inner)) => {
-				let poll_result = inner.poll();
-				self.inner = Some(inner);
-				poll_result
-			},
-			Ok(futures::Async::NotReady) => Ok(futures::Async::NotReady),
-			Err(_) => Err(())
-		}
-	}
-}
-
-
-// checks a compact commit. returns the cost associated with processing it if
-// the commit was bad.
-fn check_compact_commit<Block: BlockT>(
-	msg: &CompactCommit<Block>,
-	voters: &VoterSet<AuthorityId>,
-	round: Round,
-	set_id: SetId,
-) -> Result<(), i32> {
-	// 4f + 1 = equivocations from f voters.
-	let f = voters.total_weight() - voters.threshold();
-	let full_threshold = voters.total_weight() + f;
-
-	// check total weight is not out of range.
-	let mut total_weight = 0;
-	for (_, ref id) in &msg.auth_data {
-		if let Some(weight) = voters.info(id).map(|info| info.weight()) {
-			total_weight += weight;
-			if total_weight > full_threshold {
-				return Err(cost::MALFORMED_COMMIT);
-			}
-		} else {
-			debug!(target: "afg", "Skipping commit containing unknown voter {}", id);
-			return Err(cost::MALFORMED_COMMIT);
-		}
-	}
-
-	if total_weight < voters.threshold() {
-		return Err(cost::MALFORMED_COMMIT);
-	}
-
-	// check signatures on all contained precommits.
-	for (i, (precommit, &(ref sig, ref id))) in msg.precommits.iter()
-		.zip(&msg.auth_data)
-		.enumerate()
+	fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> 
 	{
-		use crate::communication::gossip::Misbehavior;
-		use grandpa::Message as GrandpaMessage;
-
-		if let Err(()) = check_message_sig::<Block>(
-			&GrandpaMessage::Precommit(precommit.clone()),
-			id,
-			sig,
-			round.0,
-			set_id.0,
-		) {
-			debug!(target: "afg", "Bad commit message signature {}", id);
-			telemetry!(CONSENSUS_DEBUG; "afg.bad_commit_msg_signature"; "id" => ?id);
-			let cost = Misbehavior::BadCommitMessage {
-				signatures_checked: i as i32,
-				blocks_loaded: 0,
-				equivocations_caught: 0,
-			}.cost();
-
-			return Err(cost);
-		}
+		Ok(self.validator.pop_output())
+		
 	}
-
-	Ok(())
 }
+
+
+
 
 // checks a catch up. returns the cost associated with processing it if
 // the catch up was bad.
