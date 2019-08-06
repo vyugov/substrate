@@ -140,110 +140,7 @@ impl<Block, C, A> consensus_common::Proposer<<C as AuthoringApi>::Block> for Pro
 	}
 }
 
-impl<Block, C, A> Proposer<Block, C, A>	where
-	Block: BlockT,
-	C: AuthoringApi<Block=Block>,
-	<C as ProvideRuntimeApi>::Api: BlockBuilderApi<Block>,
-	A: txpool::ChainApi<Block=Block>,
-	client::error::Error: From<<C as AuthoringApi>::Error>,
-{
-	fn propose_with(
-		&self,
-		inherent_data: InherentData,
-		inherent_digests: DigestFor<Block>,
-		deadline: time::Instant,
-	) -> Result<<C as AuthoringApi>::Block, error::Error>
-	{
-		use runtime_primitives::traits::BlakeTwo256;
 
-		/// If the block is full we will attempt to push at most
-		/// this number of transactions before quitting for real.
-		/// It allows us to increase block utilization.
-		const MAX_SKIPPED_TRANSACTIONS: usize = 8;
-
-		let block = self.client.build_block(
-			&self.parent_id,
-			inherent_data,
-			inherent_digests.clone(),
-			|block_builder| {
-				// proceed with transactions
-				let mut is_first = true;
-				let mut skipped = 0;
-				let mut unqueue_invalid = Vec::new();
-				let pending_iterator = self.transaction_pool.ready();
-
-				debug!("Attempting to push transactions from the pool.");
-				for pending in pending_iterator {
-					if (self.now)() > deadline {
-						debug!("Consensus deadline reached when pushing block transactions, proceeding with proposing.");
-						break;
-					}
-
-					trace!("[{:?}] Pushing to the block.", pending.hash);
-					match block_builder.push_extrinsic(pending.data.clone()) {
-						Ok(()) => {
-							debug!("[{:?}] Pushed to the block.", pending.hash);
-						}
-						Err(error::Error::ApplyExtrinsicFailed(ApplyError::FullBlock)) => {
-							if is_first {
-								debug!("[{:?}] Invalid transaction: FullBlock on empty block", pending.hash);
-								unqueue_invalid.push(pending.hash.clone());
-							} else if skipped < MAX_SKIPPED_TRANSACTIONS {
-								skipped += 1;
-								debug!(
-									"Block seems full, but will try {} more transactions before quitting.",
-									MAX_SKIPPED_TRANSACTIONS - skipped
-								);
-							} else {
-								debug!("Block is full, proceed with proposing.");
-								break;
-							}
-						}
-						Err(e) => {
-							debug!("[{:?}] Invalid transaction: {}", pending.hash, e);
-							unqueue_invalid.push(pending.hash.clone());
-						}
-					}
-
-					is_first = false;
-				}
-
-				self.transaction_pool.remove_invalid(&unqueue_invalid);
-			})?;
-
-		info!("Prepared block for proposing at {} [hash: {:?}; parent_hash: {}; extrinsics: [{}]]",
-			block.header().number(),
-			<<C as AuthoringApi>::Block as BlockT>::Hash::from(block.header().hash()),
-			block.header().parent_hash(),
-			block.extrinsics()
-				.iter()
-				.map(|xt| format!("{}", BlakeTwo256::hash_of(xt)))
-				.collect::<Vec<_>>()
-				.join(", ")
-		);
-		telemetry!(CONSENSUS_INFO; "prepared_block_for_proposing";
-			"number" => ?block.header().number(),
-			"hash" => ?<<C as AuthoringApi>::Block as BlockT>::Hash::from(block.header().hash()),
-		);
-
-		let substrate_block = Decode::decode(&mut block.encode().as_slice())
-			.expect("blocks are defined to serialize to substrate blocks correctly; qed");
-
-		assert!(evaluation::evaluate_initial(
-			&substrate_block,
-			&self.parent_hash,
-			self.parent_number,
-		).is_ok());
-
-		Ok(substrate_block)
-	}
-}/// Proposer factory.
-pub struct ProposerFactory<C, A> where A: txpool::ChainApi {
-	/// The client instance.
-	pub client: Arc<C>,
-	/// The transaction pool.
-	pub transaction_pool: Arc<TransactionPool<A>>,
-}
 
 impl<C, A> consensus_common::Environment<<C as AuthoringApi>::Block> for ProposerFactory<C, A> where
 	C: AuthoringApi,
@@ -2319,19 +2216,12 @@ where
 
 fn global_communication<Block: BlockT<Hash=H256>, B, E, N, RA>(
 	local_key: Option<&Arc<AuthorityPair>>,
-	set_id: u64,
 	voters: &Arc<VoterSet<AuthorityId>>,
 	client: &Arc<Client<B, E, Block, RA>>,
 	network: &NetworkBridge<Block, N>,
 ) -> (
-	impl Stream<
-		Item = CommunicationInH<Block, H256>,
-		Error = CommandOrError<H256, NumberFor<Block>>,
-	>,
-	impl Sink<
-		SinkItem = CommunicationOutH<Block, H256>,
-		SinkError = CommandOrError<H256, NumberFor<Block>>,
-	>,
+		impl Stream<Item = D::Output, Error = Error>,
+		impl Sink<Item = TransactionSet, Error = Error>,
 ) where
 	B: Backend<Block, Blake2Hasher>,
 	E: CallExecutor<Block, Blake2Hasher> + Send + Sync,
@@ -2344,7 +2234,6 @@ fn global_communication<Block: BlockT<Hash=H256>, B, E, N, RA>(
 
 	// verification stream
 	let (global_in, global_out) = network.global_communication(
-		communication::SetId(set_id),
 		voters.clone(),
 		is_voter,
 	);
@@ -2356,16 +2245,13 @@ fn global_communication<Block: BlockT<Hash=H256>, B, E, N, RA>(
 		global_in,
 	);*/ //later
 
-	let global_in = global_in.map_err(CommandOrError::from);
-	let global_out = global_out.sink_map_err(CommandOrError::from);
-
 	(global_in, global_out)
 }
 
 
 
 /// Parameters used to run Grandpa.
-pub struct GrandpaParams<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X> {
+pub struct BadgerStartParams<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X> {
 	/// Configuration for the GRANDPA service.
 	pub config: Config,
 	/// A link to the block import worker.
@@ -2380,6 +2266,265 @@ pub struct GrandpaParams<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X> {
 	pub telemetry_on_connect: Option<TelemetryOnConnect>,
 }
 
+pub struct TxStream<A>
+{
+ pub transaction_pool: Arc<TransactionPool<A>>,
+}
+
+impl Stream for TxStream
+{
+	type Item=TransactionSet;
+	fn poll_next(
+        self: Pin<&mut Self>, 
+        cx: &mut Context
+    ) -> Poll<Option<Self::Item>>
+	{
+     let pending_iterator = self.transaction_pool.ready();
+	  let batch=pending_iterator.into_iter().collect();
+	  if batch.len()==0
+	  {
+		  return Poll::Pending;
+	  }
+	  Poll::Ready(Some(batch))
+	}
+}
+
+pub struct BadgerProposerWorker<D: ConsensusProtocol, S, N, Block, TF,C>
+where
+S : Stream<Item = D::Output, Error = Error> ,
+TF: Sink<Item = TransactionSet, Error = Error>,
+//N : Network<Block> + Send + Sync + 'static,
+NumberFor<Block>: BlockNumberOps,
+{
+ pub block_out: S,
+ pub transaction_in: TF,
+ pub transaction_pool: Arc<TransactionPool<A>>,
+ pub network: N,
+ pub client:C,
+
+}
+impl<D,S,N,Block,TF>   BadgerProposerWorker<D,S,N,Block,TF>
+{
+	pub fn make_sink(&'a mut self) -> SendAll<'a, Self, TxStream> 
+	{
+		self.transaction_in.send_all(TxStream{transaction_pool:self.transaction_pool.clone()})
+	}
+	pub fn make_block_spitter(&'a mut self) ->
+	{
+		self.block_out.for_each(move |batch|
+		  {
+           	const MAX_SKIPPED_TRANSACTIONS: usize = 8;
+
+		
+		  }
+		)
+		Box::new(proposal_work.map(move |b| {
+			// minor hack since we don't have access to the timestamp
+			// that is actually set by the proposer.
+			let slot_after_building = SignedDuration::default().slot_now(slot_duration);
+			if slot_after_building != slot_num {
+				info!(
+					"Discarding proposal for slot {}; block production took too long",
+					slot_num
+				);
+				telemetry!(CONSENSUS_INFO; "aura.discarding_proposal_took_too_long";
+					"slot" => slot_num
+				);
+				return
+			}
+
+			let (header, body) = b.deconstruct();
+			let pre_digest: Result<u64, String> = find_pre_digest::<B, P>(&header);
+			if let Err(e) = pre_digest {
+				error!(target: "aura", "FATAL ERROR: Invalid pre-digest: {}!", e);
+				return
+			} else {
+				trace!(target: "aura", "Got correct number of seals.  Good!")
+			};
+
+			let header_num = header.number().clone();
+			let parent_hash = header.parent_hash().clone();
+
+			// sign the pre-sealed hash of the block and then
+			// add it to a digest item.
+			let header_hash = header.hash();
+			let signature = pair.sign(header_hash.as_ref());
+			let signature_digest_item = <DigestItemFor<B> as CompatibleDigestItem<P>>::aura_seal(signature);
+
+			let import_block: ImportBlock<B> = ImportBlock {
+				origin: BlockOrigin::Own,
+				header,
+				justification: None,
+				post_digests: vec![signature_digest_item],
+				body: Some(body),
+				finalized: false,
+				auxiliary: Vec::new(),
+				fork_choice: ForkChoiceStrategy::LongestChain,
+			};
+
+			info!("Pre-sealed block for proposal at {}. Hash now {:?}, previously {:?}.",
+					header_num,
+					import_block.post_header().hash(),
+					header_hash
+			);
+			telemetry!(CONSENSUS_INFO; "aura.pre_sealed_block";
+				"header_num" => ?header_num,
+				"hash_now" => ?import_block.post_header().hash(),
+				"hash_previously" => ?header_hash
+			);
+
+			if let Err(e) = block_import.lock().import_block(import_block, Default::default()) {
+				warn!(target: "aura", "Error with block built on {:?}: {:?}",
+						parent_hash, e);
+				telemetry!(CONSENSUS_WARN; "aura.err_with_block_built_on";
+					"hash" => ?parent_hash, "err" => ?e
+				);
+			}
+		}).map_err(|e| consensus_common::Error::ClientImport(format!("{:?}", e)).into()))
+	}
+
+
+	pub fn propose_with(
+		&self,
+		batch: &D::Output
+		inherent_data: InherentData,
+		inherent_digests: DigestFor<Block>,
+	) -> Result<Vec<ImportBlock<Block>>, error::Error> {
+
+		 info!("Processing batch with epoch {:?} of {:?} transactions into blocks",batch.epoch,batch.contributions.len())
+         let mut ret=Vec::new();
+   		let mut chain_head = match client.best_chain() {
+				Ok(x) => x,
+				Err(e) => {
+					warn!(target: "slots", "Unable to author block. \
+					no best block header: {:?}", e);
+					return Err(())
+				}
+			};
+        let mut parent_hash = chain_head.hash();
+		let mut pnumber= chain_head.number();
+		let mut parent_id=BlockId::hash(parent_hash);
+		let mut block_builder = self.client.new_block_at(&parent_id, inherent_digests)?;
+
+		// We don't check the API versions any further here since the dispatch compatibility
+		// check should be enough. 
+		// do this only once? 
+		for extrinsic in self.client.runtime_api()
+			.inherent_extrinsics_with_context(
+				&parent_id,
+				ExecutionContext::BlockConstruction,
+				inherent_data
+			)?
+		{
+			block_builder.push(extrinsic)?;
+		}
+
+		// proceed with transactions
+		let mut is_first = true;
+		let mut skipped = 0;
+		let mut unqueue_invalid = Vec::new();
+		let mut unqueue_valid = Vec::new();
+		let pending_iterator = self.transaction_pool.ready();
+
+		debug!("Attempting to push transactions from the batch.");
+		for (nid , pending) in batch.contributions.into_iter() {
+
+			trace!("[{:?}] Pushing to the block.", pending.hash);
+			match client::block_builder::BlockBuilder::push(&mut block_builder, *pending.data.clone()) {
+				Ok(()) => {
+					debug!("[{:?}] Pushed to the block.", pending.hash);
+				}
+				Err(error::Error::ApplyExtrinsicFailed(ApplyError::FullBlock)) => {
+					if is_first {
+						debug!("[{:?}] Invalid transaction: FullBlock on empty block", pending.hash);
+						unqueue_invalid.push(pending.hash.clone());
+					  }  else 
+					   {
+						debug!("Block is full, proceed with proposing.");
+                        let block = block_builder.bake()?;
+						info!("Prepared block for proposing at {} [hash: {:?}; parent_hash: {}; extrinsics: [{}]]",
+							block.header().number(),
+							<Block as BlockT>::Hash::from(block.header().hash()),
+							block.header().parent_hash(),
+							block.extrinsics()
+								.iter()
+								.map(|xt| format!("{}", BlakeTwo256::hash_of(xt)))
+								.collect::<Vec<_>>()
+								.join(", ")
+						);
+						telemetry!(CONSENSUS_INFO; "prepared_block_for_proposing";
+							"number" => ?block.header().number(),
+							"hash" => ?<Block as BlockT>::Hash::from(block.header().hash()),
+							);
+						if Decode::decode(&mut block.encode().as_slice()).as_ref() != Some(&block) 
+						 {
+    	                	error!("Failed to verify block encoding/decoding");
+		                    }
+
+						if let Err(err) = evaluation::evaluate_initial(&block, &parent_hash, pnumber) {
+							error!("Failed to evaluate authored block: {:?}", err);
+						}
+						let (header, body) = block.deconstruct();
+
+						let header_num = header.number().clone();
+						let parent_hash = header.parent_hash().clone();
+
+						// sign the pre-sealed hash of the block and then
+						// add it to a digest item.
+						let header_hash = header.hash();
+
+						let import_block: ImportBlock<B> = ImportBlock {
+							origin: BlockOrigin::Own,
+							header,
+							justification: None,
+							post_digests: vec![],
+							body: Some(body),
+							finalized: true,
+							auxiliary: Vec::new(),
+							fork_choice: ForkChoiceStrategy::LongestChain,
+						};
+
+						info!("Pre-sealed block for proposal at {}. Hash now {:?}, previously {:?}.",
+								header_num,
+								import_block.post_header().hash(),
+								header_hash
+						);
+						telemetry!(CONSENSUS_INFO; "badger.pre_sealed_block";
+							"header_num" => ?header_num,
+							"hash_now" => ?import_block.post_header().hash(),
+							"hash_previously" => ?header_hash
+						);
+							parent_hash = import_block.post_header().hash();
+							pnumber = import_block.post_header().number();
+							parent_id = BlockId::hash(parent_hash);
+							// go on to next block
+							ret.push(import_block)
+							block_builder = self.client.new_block_at(&parent_id, inherent_digests)?;
+							is_first=true;
+							continue;
+					//	break;
+					}
+				}
+				Err(e) => {
+					debug!("[{:?}] Invalid transaction: {}", pending.hash, e);
+					unqueue_invalid.push(pending.hash.clone());
+				}
+			}
+
+			is_first = false;
+		}
+
+		self.transaction_pool.remove_invalid(&unqueue_invalid);
+
+
+
+
+		Ok(ret)
+	}
+
+
+
+}
 /// Run a GRANDPA voter as a task. Provide configuration and a link to a
 /// block import worker that has already been instantiated with `block_import`.
 pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X>(
@@ -2396,7 +2541,7 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X>(
 	RA: Send + Sync + 'static,
 	X: Future<Item=(),Error=()> + Clone + Send + 'static,
 {
-	let GrandpaParams {
+	let BadgerStartParams {
 		config,
 		link,
 		network,
@@ -2420,26 +2565,7 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X>(
 
 	register_finality_tracker_inherent_data_provider(client.clone(), &inherent_data_providers)?;
 
-	let telemetry_task = if let Some(telemetry_on_connect) = telemetry_on_connect {
-		let authorities = authority_set.clone();
-		let events = telemetry_on_connect.telemetry_connection_sinks
-			.for_each(move |_| {
-				telemetry!(CONSENSUS_INFO; "afg.authority_set";
-					 "authority_set_id" => ?authorities.set_id(),
-					 "authorities" => {
-						let curr = authorities.current_authorities();
-						let voters = curr.voters();
-						let authorities: Vec<String> =
-							voters.iter().map(|(id, _)| id.to_string()).collect();
-						serde_json::to_string(&authorities)
-							.expect("authorities is always at least an empty vector; elements are always of type string")
-					 }
-				);
-				Ok(())
-			})
-			.then(|_| -> Result<(), ()> { Ok(()) });
-		futures::future::Either::A(events)
-	} else {
+	let telemetry_task =  {
 		futures::future::Either::B(futures::future::empty())
 	};
 
@@ -2476,8 +2602,6 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X>(
 				);
 
 				let global_comms = global_communication(
-					config.local_key.as_ref(),
-					env.set_id,
 					&env.voters,
 					&client,
 					&network,

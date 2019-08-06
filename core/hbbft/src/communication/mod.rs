@@ -205,7 +205,7 @@ impl<B: BlockT,D: ConsensusProtocol,R: Rng> BadgerNode<B,D,R>
                     message: ser_msg,
                 }
             }).collect();
-		let outputs = step
+	 let outputs = output
             .output
             .into_iter()
             .map(|out| (Duration::default(), out)).collect();
@@ -285,7 +285,34 @@ impl<Block: BlockT,D: ConsensusProtocol,R: Rng> BadgerGossipValidator<Block,D,R>
 		let rd = self.inner.read();
 		read.is_authority(&read.id)
 	}
+    pub fn push_transaction<T:Contribution>(tx: T) ->Result<(),Error>
+	{
+       let locked=self.inner.write();
+	   match locked.algo.push_transaction(tx,locked.main_rng)
+	   {
+		   Ok(step) => {
+			let out_msgs: Vec<_> = step
+             .messages
+             .into_iter()
+             .map(|mmsg| {
+                let ser_msg = bincode::serialize(&mmsg.message).expect("serialize");
+                (mmsg.target, ser_msg)
+                }).collect();
+		    locked.outputs.extend(step.output.into_iter());	
+			    for (target, message) in out_msgs 
+				{
+                 locked.out_queue.push_back(SourcedMessage {
+                   sender_id: self.id.clone(),
+                   target,
+                   message,});
+				}
+				//send messages out
+				self.flush_messages();
+		   },
+		   Err(e) => return e
+	   }
 
+	}
 
 	pub(super) fn do_validate(&self, who: &PeerId, mut data: &[u8])
 		-> (Action<Block::Hash>,  Option<GossipMessage<Block>>)
@@ -328,7 +355,7 @@ impl<Block: BlockT,D: ConsensusProtocol,R: Rng> BadgerGossipValidator<Block,D,R>
 						{
 							Ok(_) => 
 							{
-                            //send is handled separately. trigger propose?
+                            //send is handled separately. trigger propose? or leave it for stream
                             if locked.outputs.len()>0 
 						 	 {
 							  
@@ -395,20 +422,9 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
 	{
 		self.inner.write().peers.peer_disconnected(who);
 	}
-
-	fn validate(&self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, data: &[u8])
-		-> network_gossip::ValidationResult<Block::Hash>
-	{
-		let (action,  peer_reply) = self.do_validate(who, data);
-        let topic = badger_topic::<Block>();
-		// not with lock held!
-		if let Some(msg) = peer_reply {
-			context.send_message(who, msg.encode());
-		}
-		context.send_topic(who, topic, false);
-
-		{
-         let locked= self.inner.write();    
+   fn flush_messages(&self)
+   {
+    let locked= self.inner.write();    
 		 for msg in locked.out_msgs.drain()
 		 {
 			 let vdata=GossipMessage::BadgerData(msg.message).encode()
@@ -432,6 +448,20 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
 			 }
 			
 		 }
+   }
+	fn validate(&self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, data: &[u8])
+		-> network_gossip::ValidationResult<Block::Hash>
+	{
+		let (action,  peer_reply) = self.do_validate(who, data);
+        let topic = badger_topic::<Block>();
+		// not with lock held!
+		if let Some(msg) = peer_reply {
+			context.send_message(who, msg.encode());
+		}
+		context.send_topic(who, topic, false);
+
+		{
+        self.flush_messages();
 		}
 		
 		match action {
@@ -586,23 +616,24 @@ pub struct NetworkStream {
 	inner: Option<mpsc::UnboundedReceiver<network_gossip::TopicNotification>>,
 	outer: oneshot::Receiver<mpsc::UnboundedReceiver<network_gossip::TopicNotification>>
 }
+use std::{pin::Pin, task::Context, task::Poll};
 
 impl Stream for NetworkStream {
 	type Item = network_gossip::TopicNotification;
 	type Error = ();
 
-	fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> 
+	{
 		if let Some(ref mut inner) = self.inner {
-			return inner.poll();
+			return inner.poll_next(cx);
 		}
-		match self.outer.poll() {
-			Ok(futures::Async::Ready(mut inner)) => {
-				let poll_result = inner.poll();
+		match self.outer.poll_next(cx) {
+		     futures::Poll::Ready(mut inner) => {
+				let poll_result = inner.poll_next(cx);
 				self.inner = Some(inner);
 				poll_result
 			},
-			Ok(futures::Async::NotReady) => Ok(futures::Async::NotReady),
-			Err(_) => Err(())
+			futures::Poll::Pending => futures::Poll::Pending,
 		}
 	}
 }
@@ -681,210 +712,38 @@ pub  fn is_validator(&self) ->bool
 		);
 	}
 
-	/// Get the round messages for a round in the current set ID. These are signature-checked.
-	pub(crate) fn round_communication(
-		&self,
-		round: Round,
-		set_id: SetId,
-		voters: Arc<VoterSet<AuthorityId>>,
-		local_key: Option<Arc<ed25519::Pair>>,
-		has_voted: HasVoted<B>,
-	) -> (
-		impl Stream<Item=SignedMessage<B>,Error=Error>,
-		impl Sink<SinkItem=Message<B>,SinkError=Error>,
-	) {
-		self.note_round(
-			round,
-			set_id,
-			&*voters,
-		);
-
-		let locals = local_key.and_then(|pair| {
-			let public = pair.public();
-			let id = AuthorityId(public.0);
-			if voters.contains_key(&id) {
-				Some((pair, id))
-			} else {
-				None
-			}
-		});
-
-		let topic = badger_topic::<Block>();
-		let incoming = self.service.messages_for(topic)
-			.filter_map(|notification| {
-				let decoded = GossipMessage::<B>::decode(&mut &notification.message[..]);
-				if decoded.is_none() {
-					debug!(target: "afg", "Skipping malformed message {:?}", notification);
-				}
-				decoded
-			})
-			.and_then(move |msg| {
-				match msg {
-					GossipMessage::VoteOrPrecommit(msg) => {
-						// check signature.
-						if !voters.contains_key(&msg.message.id) {
-							debug!(target: "afg", "Skipping message from unknown voter {}", msg.message.id);
-							return Ok(None);
-						}
-
-						match &msg.message.message {
-							PrimaryPropose(propose) => {
-								telemetry!(CONSENSUS_INFO; "afg.received_propose";
-									"voter" => ?format!("{}", msg.message.id),
-									"target_number" => ?propose.target_number,
-									"target_hash" => ?propose.target_hash,
-								);
-							},
-							Prevote(prevote) => {
-								telemetry!(CONSENSUS_INFO; "afg.received_prevote";
-									"voter" => ?format!("{}", msg.message.id),
-									"target_number" => ?prevote.target_number,
-									"target_hash" => ?prevote.target_hash,
-								);
-							},
-							Precommit(precommit) => {
-								telemetry!(CONSENSUS_INFO; "afg.received_precommit";
-									"voter" => ?format!("{}", msg.message.id),
-									"target_number" => ?precommit.target_number,
-									"target_hash" => ?precommit.target_hash,
-								);
-							},
-						};
-
-						Ok(Some(msg.message))
-					}
-					_ => {
-						debug!(target: "afg", "Skipping unknown message type");
-						return Ok(None);
-					}
-				}
-			})
-			.filter_map(|x| x)
-			.map_err(|()| Error::Network(format!("Failed to receive message on unbounded stream")));
-
-		let (tx, out_rx) = mpsc::unbounded();
-		let outgoing = OutgoingMessages::<B, N> {
-			round: round.0,
-			set_id: set_id.0,
-			network: self.service.clone(),
-			locals,
-			sender: tx,
-			has_voted,
-		};
-
-		let out_rx = out_rx.map_err(move |()| Error::Network(
-			format!("Failed to receive on unbounded receiver for round {}", round.0)
-		));
-
-		let incoming = incoming.select(out_rx);
-
-		(incoming, outgoing)
-	}
-
-	/// Set up the global communication streams.
+	/// Set up the global communication streams. blocks out transaction in. Maybe reverse of grandpa... 
 	pub(crate) fn global_communication<D: ConsensusProtocol>(
 		&self,
-		set_id: SetId,
 		voters: Arc<VoterSet<AuthorityId>>,
 		is_voter: bool,
 	) -> (
 		impl Stream<Item = D::Output, Error = Error>,
-		impl Sink<SinkItem = TransactionSet, SinkError = Error>,
+		impl Sink<Item = TransactionSet, Error = Error>,
 	)
 	 {
-		self.validator.note_set(
-			set_id,
-			voters.voters().iter().map(|(v, _)| v.clone()).collect(),
-			|to, neighbor| self.service.send_message(to, GossipMessage::<B>::from(neighbor).encode()),
-		);
+
 
 		let service = self.service.clone();
 		let topic = badger_topic::<Block>();
-		let incoming = incoming_global(service, topic, voters, self.validator.clone());
+		let incoming = incoming_global( self.validator.clone());
 
-		let outgoing = CommitsOut::<B, N>::new(
+		let outgoing = TransactionFeed::<B, N,D,R>::new(
 			self.service.clone(),
-			set_id.0,
 			is_voter,
 			self.validator.clone(),
 		);
 
-		let outgoing = outgoing.with(|out| {
-			let voter::CommunicationOut::Commit(round, commit) = out;
-			Ok((round, commit))
-		});
-
+	
 		(incoming, outgoing)
 	}
 }
 
 fn incoming_global<B: BlockT, N: Network<B>,D: ConsensusProtocol, R: Rng>(
-	mut service: N,
-	topic: B::Hash,
 	gossip_validator: Arc<BadgerGossipValidator<B,D,R>>,
 ) -> impl Stream<Item = D::Output, Error = Error> 
 {
-	
-	let process_catch_up = move |
-		msg: FullCatchUpMessage<B>,
-		mut notification: network_gossip::TopicNotification,
-		service: &mut N,
-		gossip_validator: &Arc<GossipValidator<B>>,
-		voters: &VoterSet<AuthorityId>,
-	| {
-		let gossip_validator = gossip_validator.clone();
-		let service = service.clone();
-
-		if let Err(cost) = check_catch_up::<B>(
-			&msg.message,
-			voters,
-			msg.set_id,
-		) {
-			if let Some(who) = notification.sender {
-				service.report(who, cost);
-			}
-
-			return None;
-		}
-
-		let cb = move |outcome| {
-			if let voter::CatchUpProcessingOutcome::Bad(_) = outcome {
-				// report peer
-				if let Some(who) = notification.sender.take() {
-					service.report(who, cost::INVALID_CATCH_UP);
-				}
-			}
-
-			gossip_validator.note_catch_up_message_processed();
-		};
-
-		let cb = voter::Callback::Work(Box::new(cb));
-
-		Some(voter::CommunicationIn::CatchUp(msg.message, cb))
-	};
-
-	service.messages_for(topic)
-		.filter_map(|notification| {
-			// this could be optimized by decoding piecewise.
-			let decoded = GossipMessage::<B>::decode(&mut &notification.message[..]);
-			if decoded.is_none() {
-				trace!(target: "afg", "Skipping malformed commit message {:?}", notification);
-			}
-			decoded.map(move |d| (notification, d))
-		})
-		.filter_map(move |(notification, msg)| {
-			match msg {
-				GossipMessage::Commit(msg) =>
-					process_commit(msg, notification, &mut service, &gossip_validator, &*voters),
-				GossipMessage::CatchUp(msg) =>
-					process_catch_up(msg, notification, &mut service, &gossip_validator, &*voters),
-				_ => {
-					debug!(target: "afg", "Skipping unknown message type");
-					return None;
-				}
-			}
-		})
-		.map_err(|()| Error::Network(format!("Failed to receive message on unbounded stream")))
+	BadgerStream::new(gossip_validator.clone())
 }
 
 impl<B: BlockT, N: Network<B>> Clone for NetworkBridge<B, N> {
@@ -1013,203 +872,96 @@ pub struct BadgerStream<Block,D :ConsensusProtocol, R:Rng>  {
 	validator:Arc<BadgerGossipValidator<Block,D,R>>,
 }
 
+
+impl<Block,D :ConsensusProtocol, R:Rng> BadgerStream<B,D,R>
+{
+  fn new( gossip_validator: Arc<BadgerGossipValidator<Block,D,R>>) ->Self
+  {
+	  BadgerStream{
+		validator:gossip_validator,
+	  }
+
+  }
+}
+
 impl<Block,D,R> Stream for BadgerStream <Block,D :ConsensusProtocol, R:Rng>{
 	type Item = D::Output
 	type Error = ();
 
-	fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> 
+	fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>>
 	{
-		Ok(self.validator.pop_output())
+		match self.validator.pop_output()
+		{
+			Some(data) => Poll::Ready(Some(data)),
+			None => Poll::Pending
+		}
 		
 	}
 }
 
 
-
-
-// checks a catch up. returns the cost associated with processing it if
-// the catch up was bad.
-fn check_catch_up<Block: BlockT>(
-	msg: &CatchUp<Block>,
-	voters: &VoterSet<AuthorityId>,
-	set_id: SetId,
-) -> Result<(), i32> {
-	// 4f + 1 = equivocations from f voters.
-	let f = voters.total_weight() - voters.threshold();
-	let full_threshold = voters.total_weight() + f;
-
-	// check total weight is not out of range for a set of votes.
-	fn check_weight<'a>(
-		voters: &'a VoterSet<AuthorityId>,
-		votes: impl Iterator<Item=&'a AuthorityId>,
-		full_threshold: u64,
-	) -> Result<(), i32> {
-		let mut total_weight = 0;
-
-		for id in votes {
-			if let Some(weight) = voters.info(&id).map(|info| info.weight()) {
-				total_weight += weight;
-				if total_weight > full_threshold {
-					return Err(cost::MALFORMED_CATCH_UP);
-				}
-			} else {
-				debug!(target: "afg", "Skipping catch up message containing unknown voter {}", id);
-				return Err(cost::MALFORMED_CATCH_UP);
-			}
-		}
-
-		if total_weight < voters.threshold() {
-			return Err(cost::MALFORMED_CATCH_UP);
-		}
-
-		Ok(())
-	};
-
-	check_weight(
-		voters,
-		msg.prevotes.iter().map(|vote| &vote.id),
-		full_threshold,
-	)?;
-
-	check_weight(
-		voters,
-		msg.precommits.iter().map(|vote| &vote.id),
-		full_threshold,
-	)?;
-
-	fn check_signatures<'a, B, I>(
-		messages: I,
-		round: u64,
-		set_id: u64,
-		mut signatures_checked: usize,
-	) -> Result<usize, i32> where
-		B: BlockT,
-		I: Iterator<Item=(Message<B>, &'a AuthorityId, &'a AuthoritySignature)>,
-	{
-		use crate::communication::gossip::Misbehavior;
-
-		for (msg, id, sig) in messages {
-			signatures_checked += 1;
-
-			if let Err(()) = check_message_sig::<B>(
-				&msg,
-				id,
-				sig,
-				round,
-				set_id,
-			) {
-				debug!(target: "afg", "Bad catch up message signature {}", id);
-				telemetry!(CONSENSUS_DEBUG; "afg.bad_catch_up_msg_signature"; "id" => ?id);
-
-				let cost = Misbehavior::BadCatchUpMessage {
-					signatures_checked: signatures_checked as i32,
-				}.cost();
-
-				return Err(cost);
-			}
-		}
-
-		Ok(signatures_checked)
-	}
-
-	// check signatures on all contained prevotes.
-	let signatures_checked = check_signatures::<Block, _>(
-		msg.prevotes.iter().map(|vote| {
-			(grandpa::Message::Prevote(vote.prevote.clone()), &vote.id, &vote.signature)
-		}),
-		msg.round_number,
-		set_id.0,
-		0,
-	)?;
-
-	// check signatures on all contained precommits.
-	let _ = check_signatures::<Block, _>(
-		msg.precommits.iter().map(|vote| {
-			(grandpa::Message::Precommit(vote.precommit.clone()), &vote.id, &vote.signature)
-		}),
-		msg.round_number,
-		set_id.0,
-		signatures_checked,
-	)?;
-
-	Ok(())
-}
-
 /// An output sink for commit messages.
-struct CommitsOut<Block: BlockT, N: Network<Block>> {
+struct TransactionFeed<Block: BlockT, N: Network<Block>,D :ConsensusProtocol, R:Rng> {
 	network: N,
-	set_id: SetId,
 	is_voter: bool,
-	gossip_validator: Arc<GossipValidator<Block>>,
+	gossip_validator: Arc<BadgerGossipValidator<Block,D,R>>,
 }
 
-impl<Block: BlockT, N: Network<Block>> CommitsOut<Block, N> {
+impl<Block: BlockT, N: Network<Block>,D :ConsensusProtocol, R:Rng> TransactionFeed<Block, N,D,R> {
 	/// Create a new commit output stream.
 	pub(crate) fn new(
 		network: N,
-		set_id: u64,
 		is_voter: bool,
-		gossip_validator: Arc<GossipValidator<Block>>,
+		gossip_validator: Arc<BadgerGossipValidator<Block,D,R>>,
 	) -> Self {
-		CommitsOut {
+		TransactionFeed {
 			network,
-			set_id: SetId(set_id),
 			is_voter,
 			gossip_validator,
 		}
 	}
 }
 
-impl<Block: BlockT, N: Network<Block>> Sink for CommitsOut<Block, N> {
-	type SinkItem = (u64, Commit<Block>);
-	type SinkError = Error;
-
-	fn start_send(&mut self, input: (u64, Commit<Block>)) -> StartSend<Self::SinkItem, Error> {
-		if !self.is_voter {
-			return Ok(AsyncSink::Ready);
-		}
-
-		let (round, commit) = input;
-		let round = Round(round);
-
-		telemetry!(CONSENSUS_DEBUG; "afg.commit_issued";
-			"target_number" => ?commit.target_number, "target_hash" => ?commit.target_hash,
-		);
-		let (precommits, auth_data) = commit.precommits.into_iter()
-			.map(|signed| (signed.precommit, (signed.signature, signed.id)))
-			.unzip();
-
-		let compact_commit = CompactCommit::<Block> {
-			target_hash: commit.target_hash,
-			target_number: commit.target_number,
-			precommits,
-			auth_data
-		};
-
-		let message = GossipMessage::Commit(FullCommitMessage::<Block> {
-			round: round,
-			set_id: self.set_id,
-			message: compact_commit,
-		});
-
-		let topic = global_topic::<Block>(self.set_id.0);
-
-		// the gossip validator needs to be made aware of the best commit-height we know of
-		// before gossiping
-		self.gossip_validator.note_commit_finalized(
-			commit.target_number,
-			|to, neighbor| self.network.send_message(
-				to,
-				GossipMessage::<Block>::from(neighbor).encode(),
-			),
-		);
-		self.network.gossip_message(topic, message.encode(), false);
-
-		Ok(AsyncSink::Ready)
+impl<Block: BlockT, N: Network<Block>,D :ConsensusProtocol, R:Rng, Item: iter::IntoIterator> Sink<Item> for TransactionFeed<Block, N,D,R> 
+where 
+  Item::IntoIterator::Item: badger::Contribution 
+{
+	type Error = Error;
+     
+    fn poll_ready( self: Pin<&mut Self>,  cx: &mut Context) -> Poll<Result<(), Self::Error>>
+	{
+		 Poll::Ready(Ok(()))
 	}
 
-	fn close(&mut self) -> Poll<(), Error> { Ok(Async::Ready(())) }
-	fn poll_complete(&mut self) -> Poll<(), Error> { Ok(Async::Ready(())) }
+	fn start_send(self: Pin<&mut Self>, input:Item) ->  Result<(), Self::Error>
+	{
+		
+       for tx in input.into_iter().enumerate()
+	   {
+        let locked=self.gossip_validator.inner.write();
+        match locked.push_transaction(tx)
+		{
+			Ok(_) => {}
+			Err(e) return Err(e)
+		}
+	   }
+	   Ok(())
+	}
+ fn poll_flush(
+        self: Pin<&mut Self>, 
+        cx: &mut Context
+    ) -> Poll<Result<(), Self::Error>>
+	{
+		Ok(())
+	}
+    fn poll_close(
+        self: Pin<&mut Self>, 
+        cx: &mut Context
+    ) -> Poll<Result<(), Self::Error>>
+	{
+	Ok(())
+	}
+
 }
 
 
