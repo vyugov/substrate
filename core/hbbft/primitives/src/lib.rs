@@ -32,7 +32,7 @@ use parity_codec::{Encode, Decode, Codec,Input};
 use sr_primitives::{ConsensusEngineId, traits::{DigestFor, NumberFor}};
 use client::decl_runtime_apis;
 use rstd::vec::Vec;
-use badger::crypto::{self, PublicKey, PublicKeySet, PublicKeyShare, SecretKey, SecretKeyShare,Signature, Fr, FrRepr};
+use badger::crypto::{ PublicKey, PublicKeySet, PublicKeyShare, SecretKey, SecretKeyShare,Signature,};
 /// The hbbft crypto scheme defined via the keypair type.
 #[cfg(feature = "std")]
 pub type AuthorityPair = (PublicKey,SecretKey);
@@ -59,18 +59,19 @@ impl parity_codec::Encode for SecretKeyWrap {
 	}
 }
 impl parity_codec::Decode for SecretKeyWrap {
-  fn decode<I: Input>(value: &mut I) -> Option<Self>
+  fn decode<I: Input>(value: &mut I) -> Result<Self,parity_codec::Error>
   {
 	   let mut mt:[u8; SK_SIZE]= [0;SK_SIZE ];
-	  let rd=value.read(&mut mt);
-        if rd!=SK_SIZE
-		{
-        return None
+	  match value.read(&mut mt)
+	  {
+		  Ok(_) => {},
+		  Err(_) => return Err( "Error decoding field SecretKeyWrap".into())
 		}
+
    match bincode::deserialize(&mt)
    {
-	   Ok(val) => Some(Self { 0: val}),
-	   Err(_)  => None
+	   Ok(val) => Ok(Self { 0: val}),
+	   Err(_)  => Err( "Error decoding field SecretKeyWrap".into())
    }
   }
 }
@@ -99,18 +100,18 @@ impl parity_codec::Encode for PublicKeyWrap {
 	}
 }
 impl parity_codec::Decode for PublicKeyWrap {
-  fn decode<I: Input>(value: &mut I) -> Option<Self>
+  fn decode<I: Input>(value: &mut I) -> Result<Self,parity_codec::Error>
   {
 	  let mut mt:[u8; PK_SIZE]= [0;PK_SIZE ];
-	  let rd=value.read(&mut mt);
-        if rd!=PK_SIZE
-		{
-        return None
+	  match value.read(&mut mt)
+	  {
+		  Ok(_) => {},
+		  Err(_) => return Err( "Error decoding field SecretKeyWrap".into())
 		}
 		match PublicKey::from_bytes(&mt) 
 		{
-        Ok(pk) => Some(Self { 0: pk}),
-        Err(_) => None
+        Ok(pk) => Ok(Self { 0: pk}),
+        Err(_) =>  Err( "Error decoding field PublicKeyWrap".into())
 		}
   
   }
@@ -131,18 +132,18 @@ impl parity_codec::Encode for PublicKeyShareWrap {
 	}
 }
 impl parity_codec::Decode for PublicKeyShareWrap {
-  fn decode<I: Input>(value: &mut I) -> Option<Self>
+  fn decode<I: Input>(value: &mut I) -> Result<Self,parity_codec::Error>
   {
 	  let mut mt:[u8; PK_SIZE]= [0;PK_SIZE ];
-	  let rd=value.read(&mut mt);
-        if rd!=PK_SIZE
-		{
-        return None
+	  match value.read(&mut mt)
+	  {
+		  Ok(_) => {},
+		  Err(_) => return Err( "Error decoding field SecretKeyWrap".into())
 		}
 		match PublicKeyShare::from_bytes(&mt) 
 		{
-        Ok(pk) => Some(Self { 0: pk}),
-        Err(_) => None
+        Ok(pk) => Ok(Self { 0: pk}),
+        Err(_) => Err( "Error decoding field PublicKeyShareWrap".into())
 		}
   
   }
@@ -162,18 +163,18 @@ impl parity_codec::Encode for SecretKeyShareWrap
 	}
 }
 impl parity_codec::Decode for SecretKeyShareWrap {
-  fn decode<I: Input>(value: &mut I) -> Option<Self>
+  fn decode<I: Input>(value: &mut I) -> Result<Self,parity_codec::Error>
   {
 	let mut mt:[u8; SK_SIZE]= [0;SK_SIZE ];
-	  let rd=value.read(&mut mt);
-        if rd!=SK_SIZE
-		{
-        return None
+	  match value.read(&mut mt)
+	  {
+		  Ok(_) => {},
+		  Err(_) => return Err( "Error decoding field SecretKeyWrap".into())
 		}
    match bincode::deserialize(&mt)
    {
-	   Ok(val) => Some(Self { 0: val}),
-	   Err(_)  => None
+	   Ok(val) => Ok(Self { 0: val}),
+	   Err(_)  => Err( "Error decoding field SecretKeyShareWrap".into())
    }
   
   }
@@ -198,18 +199,18 @@ impl parity_codec::Encode for SignatureWrap {
 	}
 }
 impl parity_codec::Decode for SignatureWrap {
-  fn decode<I: Input>(value: &mut I) -> Option<Self>
+  fn decode<I: Input>(value: &mut I) -> Result<Self,parity_codec::Error>
   {
 	  let mut mt:[u8; SIG_SIZE]= [0;SIG_SIZE ];
-	  let rd=value.read(&mut mt);
-        if rd!=SIG_SIZE
-		{
-        return None
+	  match value.read(&mut mt)
+	  {
+		  Ok(_) => {},
+		  Err(_) => return Err( "Error decoding field SecretKeyWrap".into())
 		}
 		match Signature::from_bytes(&mt) 
 		{
-        Ok(pk) => Some(Self { 0: pk}),
-        Err(_) => None
+        Ok(pk) => Ok(Self { 0: pk}),
+        Err(_) => Err( "Error decoding field SignatureWrap".into())
 		}
   
   }
