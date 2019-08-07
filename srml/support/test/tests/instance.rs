@@ -18,7 +18,7 @@
 use runtime_io::{with_externalities, Blake2Hasher};
 use srml_support::{
 	Parameter, traits::Get, parameter_types,
-	runtime_primitives::{generic, BuildStorage, traits::{BlakeTwo256, Block as _, Verify}},
+	sr_primitives::{generic, BuildStorage, traits::{BlakeTwo256, Block as _, Verify}},
 	metadata::{
 		DecodeDifferent, StorageMetadata, StorageEntryModifier, StorageEntryType, DefaultByteGetter,
 		StorageEntryMetadata, StorageHasher
@@ -45,7 +45,7 @@ mod module1 {
 		type Event: From<Event<Self, I>> + Into<<Self as system::Trait>::Event>;
 		type Origin: From<Origin<Self, I>>;
 		type SomeParameter: Get<u32>;
-		type GenericType: Default + Clone + parity_codec::Codec;
+		type GenericType: Default + Clone + codec::Codec;
 	}
 
 	srml_support::decl_module! {

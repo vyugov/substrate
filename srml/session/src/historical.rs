@@ -26,15 +26,15 @@
 //! Afterwards, the proofs can be fed to a consensus module when reporting misbehavior.
 
 use rstd::prelude::*;
-use parity_codec::{Encode, Decode};
-use primitives::KeyTypeId;
-use primitives::traits::{Convert, OpaqueKeys, Hash as HashT};
+use codec::{Encode, Decode};
+use sr_primitives::KeyTypeId;
+use sr_primitives::traits::{Convert, OpaqueKeys, Hash as HashT};
 use srml_support::{
 	StorageValue, StorageMap, decl_module, decl_storage,
 };
 use srml_support::{Parameter, print};
-use substrate_trie::{MemoryDB, Trie, TrieMut, TrieDBMut, TrieDB, Recorder};
-
+use substrate_trie::{MemoryDB, Trie, TrieMut, Recorder, EMPTY_PREFIX};
+use substrate_trie::trie_types::{TrieDBMut, TrieDB};
 use super::{SessionIndex, Module as SessionModule};
 
 /// Trait necessary for the historical module.
@@ -219,7 +219,7 @@ impl<T: Trait> ProvingTrie<T> {
 
 		let mut memory_db = MemoryDB::default();
 		for node in nodes {
-			HashDBT::insert(&mut memory_db, &[], &node[..]);
+			HashDBT::insert(&mut memory_db, EMPTY_PREFIX, &node[..]);
 		}
 
 		ProvingTrie {
@@ -235,13 +235,13 @@ impl<T: Trait> ProvingTrie<T> {
 		let val_idx = (key_id, key_data).using_encoded(|s| {
 			trie.get_with(s, &mut recorder)
 				.ok()?
-				.and_then(|raw| u32::decode(&mut &*raw))
+				.and_then(|raw| u32::decode(&mut &*raw).ok())
 		})?;
 
 		val_idx.using_encoded(|s| {
 			trie.get_with(s, &mut recorder)
 				.ok()?
-				.and_then(|raw| <IdentificationTuple<T>>::decode(&mut &*raw))
+				.and_then(|raw| <IdentificationTuple<T>>::decode(&mut &*raw).ok())
 		})?;
 
 		Some(recorder.drain().into_iter().map(|r| r.data).collect())
@@ -258,11 +258,11 @@ impl<T: Trait> ProvingTrie<T> {
 		let trie = TrieDB::new(&self.db, &self.root).ok()?;
 		let val_idx = (key_id, key_data).using_encoded(|s| trie.get(s))
 			.ok()?
-			.and_then(|raw| u32::decode(&mut &*raw))?;
+			.and_then(|raw| u32::decode(&mut &*raw).ok())?;
 
 		val_idx.using_encoded(|s| trie.get(s))
 			.ok()?
-			.and_then(|raw| <IdentificationTuple<T>>::decode(&mut &*raw))
+			.and_then(|raw| <IdentificationTuple<T>>::decode(&mut &*raw).ok())
 	}
 
 }
@@ -312,8 +312,8 @@ impl<T: Trait, D: AsRef<[u8]>> srml_support::traits::KeyOwnerProofSystem<(KeyTyp
 mod tests {
 	use super::*;
 	use runtime_io::with_externalities;
-	use substrate_primitives::Blake2Hasher;
-	use primitives::{
+	use primitives::Blake2Hasher;
+	use sr_primitives::{
 		traits::OnInitialize,
 		testing::{UintAuthorityId, UINT_DUMMY_KEY},
 	};
