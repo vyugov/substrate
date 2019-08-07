@@ -475,11 +475,7 @@ pub fn start_badger<Block, C,  E, I, P, SO, Error, H, A,N, X>(
 	C: ProvideRuntimeApi + ProvideCache<B> + AuxStore + Send + Sync,
 	N: Network<Block> + Send + Sync + 'static,
 {
-	let (network_bridge, network_startup) = NetworkBridge::new(
-		network,
-		config.clone(),
-		on_exit.clone(),
-	);
+
 
 	let pending_iterator = self.transaction_pool.ready();
 	debug!("Attempting to push transactions from the pool.");
@@ -503,15 +499,7 @@ struct BadgerWorker<C, E, I, P, SO,Inbound> {
 	sync_oracle: SO,
 	blocks_in:Inbound 
 }
-impl <> BadgerWorker 
-where
-Inbound: impl Stream<
-		Item = CommunicationInH<Block, H256>,
-		Error = CommandOrError<H256, NumberFor<Block>>,
-	>
-{
 
-}
 pub struct BadgerVerifier<C, P> {
 	client: Arc<C>,
 	phantom: PhantomData<P>,
@@ -2215,8 +2203,6 @@ where
 }
 
 fn global_communication<Block: BlockT<Hash=H256>, B, E, N, RA>(
-	local_key: Option<&Arc<AuthorityPair>>,
-	voters: &Arc<VoterSet<AuthorityId>>,
 	client: &Arc<Client<B, E, Block, RA>>,
 	network: &NetworkBridge<Block, N>,
 ) -> (
@@ -2301,7 +2287,8 @@ NumberFor<Block>: BlockNumberOps,
  pub transaction_pool: Arc<TransactionPool<A>>,
  pub network: N,
  pub client:C,
-
+ pub block_import: Arc<Mutex<I>>,
+ pub inherent_data_providers: InherentDataProviders,
 }
 impl<D,S,N,Block,TF>   BadgerProposerWorker<D,S,N,Block,TF>
 {
@@ -2311,80 +2298,35 @@ impl<D,S,N,Block,TF>   BadgerProposerWorker<D,S,N,Block,TF>
 	}
 	pub fn make_block_spitter(&'a mut self) ->
 	{
-		self.block_out.for_each(move |batch|
+		Box::pin( self.block_out.for_each(move |batch|
 		  {
-           	const MAX_SKIPPED_TRANSACTIONS: usize = 8;
-
-		
-		  }
-		)
-		Box::new(proposal_work.map(move |b| {
-			// minor hack since we don't have access to the timestamp
-			// that is actually set by the proposer.
-			let slot_after_building = SignedDuration::default().slot_now(slot_duration);
-			if slot_after_building != slot_num {
-				info!(
-					"Discarding proposal for slot {}; block production took too long",
-					slot_num
-				);
-				telemetry!(CONSENSUS_INFO; "aura.discarding_proposal_took_too_long";
-					"slot" => slot_num
-				);
-				return
-			}
-
-			let (header, body) = b.deconstruct();
-			let pre_digest: Result<u64, String> = find_pre_digest::<B, P>(&header);
-			if let Err(e) = pre_digest {
-				error!(target: "aura", "FATAL ERROR: Invalid pre-digest: {}!", e);
-				return
-			} else {
-				trace!(target: "aura", "Got correct number of seals.  Good!")
+			let inherent_data = match self.inherent_data_providers.create_inherent_data() {
+				Ok(id) => id,
+				Err(err) => return Err(()),
 			};
-
-			let header_num = header.number().clone();
-			let parent_hash = header.parent_hash().clone();
-
-			// sign the pre-sealed hash of the block and then
-			// add it to a digest item.
-			let header_hash = header.hash();
-			let signature = pair.sign(header_hash.as_ref());
-			let signature_digest_item = <DigestItemFor<B> as CompatibleDigestItem<P>>::aura_seal(signature);
-
-			let import_block: ImportBlock<B> = ImportBlock {
-				origin: BlockOrigin::Own,
-				header,
-				justification: None,
-				post_digests: vec![signature_digest_item],
-				body: Some(body),
-				finalized: false,
-				auxiliary: Vec::new(),
-				fork_choice: ForkChoiceStrategy::LongestChain,
-			};
-
-			info!("Pre-sealed block for proposal at {}. Hash now {:?}, previously {:?}.",
-					header_num,
-					import_block.post_header().hash(),
-					header_hash
-			);
-			telemetry!(CONSENSUS_INFO; "aura.pre_sealed_block";
-				"header_num" => ?header_num,
-				"hash_now" => ?import_block.post_header().hash(),
-				"hash_previously" => ?header_hash
-			);
-
-			if let Err(e) = block_import.lock().import_block(import_block, Default::default()) {
-				warn!(target: "aura", "Error with block built on {:?}: {:?}",
+			//empty for now?
+			let inherent_digests= generic::Digest {
+							logs: vec![],
+						}
+           	let imp_blocks=self.make_import_blocks(batch, inherent_data,inherent_digests);
+			  for import_block in imp_blocks.into_iter().drain()
+			  { 
+			if let Err(e) = self.block_import.lock().import_block(import_block, Default::default()) {
+				warn!(target: "badger", "Error with block built on {:?}: {:?}",
 						parent_hash, e);
-				telemetry!(CONSENSUS_WARN; "aura.err_with_block_built_on";
+				telemetry!(CONSENSUS_WARN; "mushroom.err_with_block_built_on";
 					"hash" => ?parent_hash, "err" => ?e
 				);
 			}
-		}).map_err(|e| consensus_common::Error::ClientImport(format!("{:?}", e)).into()))
+			  } 
+		
+		  }
+		).map_err(|e| consensus_common::Error::ClientImport(format!("{:?}", e)).into())  )
+	
 	}
 
 
-	pub fn propose_with(
+	pub fn make_import_blocks(
 		&self,
 		batch: &D::Output
 		inherent_data: InherentData,
@@ -2516,9 +2458,6 @@ impl<D,S,N,Block,TF>   BadgerProposerWorker<D,S,N,Block,TF>
 
 		self.transaction_pool.remove_invalid(&unqueue_invalid);
 
-
-
-
 		Ok(ret)
 	}
 
@@ -2527,8 +2466,14 @@ impl<D,S,N,Block,TF>   BadgerProposerWorker<D,S,N,Block,TF>
 }
 /// Run a GRANDPA voter as a task. Provide configuration and a link to a
 /// block import worker that has already been instantiated with `block_import`.
-pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X>(
-	grandpa_params: GrandpaParams<B, E, Block, N, RA, SC, X>,
+pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I>(
+	client : Arc<C>,
+	t_pool: Arc<TransactionPool<A>>,
+	config: Config,
+    network:N,
+    on_exit: X,
+	block_import: Arc<Mutex<I>,
+	inherent_data_providers: InherentDataProviders,
 ) -> ::client::error::Result<impl Future<Item=(),Error=()> + Send + 'static> where
 	Block::Hash: Ord,
 	B: Backend<Block, Blake2Hasher> + 'static,
@@ -2541,211 +2486,48 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X>(
 	RA: Send + Sync + 'static,
 	X: Future<Item=(),Error=()> + Clone + Send + 'static,
 {
-	let BadgerStartParams {
-		config,
-		link,
+	let (network_bridge, network_startup) = NetworkBridge::new(
 		network,
-		inherent_data_providers,
-		on_exit,
-		telemetry_on_connect,
-	} = grandpa_params;
+		config.clone(),
+		on_exit.clone(),
+	);
 
 	use futures::future::{self, Loop as FutureLoop};
 
-	let LinkHalf {
-		client,
-		select_chain,
-		persistent_data,
-		voter_commands_rx,
-	} = link;
+
 
 	let PersistentData { authority_set, set_state, consensus_changes } = persistent_data;
 
 
 
 	register_finality_tracker_inherent_data_provider(client.clone(), &inherent_data_providers)?;
-
-	let telemetry_task =  {
-		futures::future::Either::B(futures::future::empty())
-	};
-
-	let voters = authority_set.current_authorities();
-	let initial_environment = Arc::new(Environment {
-		inner: client.clone(),
-		config: config.clone(),
-		select_chain: select_chain.clone(),
-		voters: Arc::new(voters),
-		network: network.clone(),
-		set_id: authority_set.set_id(),
-		authority_set: authority_set.clone(),
-		consensus_changes: consensus_changes.clone(),
-		voter_set_state: set_state.clone(),
-	});
-
-
-
-	let initial_state = (initial_environment, voter_commands_rx.into_future());
-	let voter_work = future::loop_fn(initial_state, move |params| {
-		let (env, voter_commands_rx) = params;
-		debug!(target: "afg", "{}: Starting new voter with set ID {}", config.name(), env.set_id);
-		telemetry!(CONSENSUS_DEBUG; "afg.starting_new_voter";
-			"name" => ?config.name(), "set_id" => ?env.set_id
-		);
-
-		let mut maybe_voter = match &*env.voter_set_state.read() {
-			VoterSetState::Live { completed_rounds, .. } => {
-				let chain_info = client.info();
-
-				let last_finalized = (
-					chain_info.chain.finalized_hash,
-					chain_info.chain.finalized_number,
-				);
-
-				let global_comms = global_communication(
-					&env.voters,
+	let (blk_out,tx_in) = global_communication(
 					&client,
 					&network,
 				);
 
-				let voters = (*env.voters).clone();
 
-				let last_completed_round = completed_rounds.last();
-
-				Some(voter::Voter::new(
-					env.clone(),
-					voters,
-					global_comms,
-					last_completed_round.number,
-					last_completed_round.state.clone(),
-					last_finalized,
-				))
-			},
-			VoterSetState::Paused { .. } => None,
-		};
-
-		// needs to be combined with another future otherwise it can deadlock.
-		let poll_voter = future::poll_fn(move || match maybe_voter {
-			Some(ref mut voter) => voter.poll(),
-			None => Ok(Async::NotReady),
+    let bworker= BadgerProposerWorker
+                {
+                 block_out: blk_out,
+                 transaction_in: tx_in,
+                 transaction_pool: t_pool.clone(),
+                 network: network,
+                 client: c.clone(),
+                 block_import: block_import.clone(),
+                 inherent_data_providers: inherent_data_providers,
+                };
+    let  aggregate=bworker.make_sink().select(bworker.make_block_spitter()).map(|_| ()).map_err(|e| 
+	    {
+			warn!("BADGER failed: {:?}", e);
+			telemetry!(CONSENSUS_WARN; "afg.badger_failed"; "e" => ?e);
 		});
 
-		let client = client.clone();
-		let config = config.clone();
-		let network = network.clone();
-		let select_chain = select_chain.clone();
-		let authority_set = authority_set.clone();
-		let consensus_changes = consensus_changes.clone();
-
-		let handle_voter_command = move |command: VoterCommand<_, _>, voter_commands_rx| {
-			match command {
-				VoterCommand::ChangeAuthorities(new) => {
-					let voters: Vec<String> = new.authorities.iter().map(move |(a, _)| {
-						format!("{}", a)
-					}).collect();
-					telemetry!(CONSENSUS_INFO; "afg.voter_command_change_authorities";
-						"number" => ?new.canon_number,
-						"hash" => ?new.canon_hash,
-						"voters" => ?voters,
-						"set_id" => ?new.set_id,
-					);
-
-					// start the new authority set using the block where the
-					// set changed (not where the signal happened!) as the base.
-					let genesis_state = RoundState::genesis((new.canon_hash, new.canon_number));
-
-					let set_state = VoterSetState::Live {
-						// always start at round 0 when changing sets.
-						completed_rounds: CompletedRounds::new(
-							CompletedRound {
-								number: 0,
-								state: genesis_state,
-								base: (new.canon_hash, new.canon_number),
-								votes: Vec::new(),
-							},
-							new.set_id,
-							&*authority_set.inner().read(),
-						),
-						current_round: HasVoted::No,
-					};
-
-					#[allow(deprecated)]
-					aux_schema::write_voter_set_state(&**client.backend(), &set_state)?;
-
-					let set_state: SharedVoterSetState<_> = set_state.into();
-
-					let env = Arc::new(Environment {
-						inner: client,
-						select_chain,
-						config,
-						voters: Arc::new(new.authorities.into_iter().collect()),
-						set_id: new.set_id,
-						network,
-						authority_set,
-						consensus_changes,
-						voter_set_state: set_state,
-					});
-
-					Ok(FutureLoop::Continue((env, voter_commands_rx)))
-				}
-				VoterCommand::Pause(reason) => {
-					info!(target: "afg", "Pausing old validator set: {}", reason);
-
-					// not racing because old voter is shut down.
-					env.update_voter_set_state(|voter_set_state| {
-						let completed_rounds = voter_set_state.completed_rounds();
-						let set_state = VoterSetState::Paused { completed_rounds };
-
-						#[allow(deprecated)]
-						aux_schema::write_voter_set_state(&**client.backend(), &set_state)?;
-						Ok(Some(set_state))
-					})?;
-
-					Ok(FutureLoop::Continue((env, voter_commands_rx)))
-				},
-			}
-		};
-
-		poll_voter.select2(voter_commands_rx).then(move |res| match res {
-			Ok(future::Either::A(((), _))) => {
-				// voters don't conclude naturally; this could reasonably be an error.
-				Ok(FutureLoop::Break(()))
-			},
-			Err(future::Either::B(_)) => {
-				// the `voter_commands_rx` stream should not fail.
-				Ok(FutureLoop::Break(()))
-			},
-			Ok(future::Either::B(((None, _), _))) => {
-				// the `voter_commands_rx` stream should never conclude since it's never closed.
-				Ok(FutureLoop::Break(()))
-			},
-			Err(future::Either::A((CommandOrError::Error(e), _))) => {
-				// return inner voter error
-				Err(e)
-			}
-			Ok(future::Either::B(((Some(command), voter_commands_rx), _))) => {
-				// some command issued externally.
-				handle_voter_command(command, voter_commands_rx.into_future())
-			}
-			Err(future::Either::A((CommandOrError::VoterCommand(command), voter_commands_rx))) => {
-				// some command issued internally.
-				handle_voter_command(command, voter_commands_rx)
-			},
-		})
-	});
-
-	let voter_work = voter_work
-		.map(|_| ())
-		.map_err(|e| {
-			warn!("GRANDPA Voter failed: {:?}", e);
-			telemetry!(CONSENSUS_WARN; "afg.voter_failed"; "e" => ?e);
-		});
-
-	let voter_work = network_startup.and_then(move |()| voter_work);
+	let with_start = network_startup.and_then(move |()| aggregate);
 
 	// Make sure that `telemetry_task` doesn't accidentally finish and kill grandpa.
-	let telemetry_task = telemetry_task
-		.then(|_| futures::future::empty::<(), ()>());
 
-	Ok(voter_work.select(on_exit).select2(telemetry_task).then(|_| Ok(())))
+	Ok(with_start.select(on_exit).then(|_| Ok(())))
+
 }
 
