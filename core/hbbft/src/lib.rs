@@ -29,10 +29,6 @@
 //! must pass through this wrapper, otherwise consensus is likely to break in
 //! unexpected ways.
 //!
-//! Next, use the `LinkHalf` and a local configuration to `run_grandpa_voter`.
-//! This requires a `Network` implementation. The returned future should be
-//! driven to completion and will finalize blocks in the background.
-//!
 //! # Changing authority sets
 //!
 //! The rough idea behind changing authority sets in GRANDPA is that at some point,
@@ -64,251 +60,6 @@ use futures::prelude::*;
 use futures::sync::mpsc;
 use serde_json as json;
 use hex;
-/// Proposer factory.
-pub struct ProposerFactory<C, A> where A: txpool::ChainApi {
-	/// The client instance.
-	pub client: Arc<C>,
-	/// The transaction pool.
-	pub transaction_pool: Arc<TransactionPool<A>>,
-}
-
-impl<C, A> consensus_common::Environment<<C as AuthoringApi>::Block> for ProposerFactory<C, A> where
-	C: AuthoringApi,
-	<C as ProvideRuntimeApi>::Api: BlockBuilderApi<<C as AuthoringApi>::Block>,
-	A: txpool::ChainApi<Block=<C as AuthoringApi>::Block>,
-	client::error::Error: From<<C as AuthoringApi>::Error>,
-	Proposer<<C as AuthoringApi>::Block, C, A>: consensus_common::Proposer<<C as AuthoringApi>::Block>,
-{
-	type Proposer = Proposer<<C as AuthoringApi>::Block, C, A>;
-	type Error = error::Error;
-
-	fn init(
-		&self,
-		parent_header: &<<C as AuthoringApi>::Block as BlockT>::Header,
-	) -> Result<Self::Proposer, error::Error> {
-		let parent_hash = parent_header.hash();
-
-		let id = BlockId::hash(parent_hash);
-
-		info!("Starting consensus session on top of parent {:?}", parent_hash);
-
-		let proposer = Proposer {
-			client: self.client.clone(),
-			parent_hash,
-			parent_id: id,
-			parent_number: *parent_header.number(),
-			transaction_pool: self.transaction_pool.clone(),
-			now: Box::new(time::Instant::now),
-		};
-
-		Ok(proposer)
-	}
-}
-
-
-
-/// The proposer logic.
-pub struct Proposer<Block: BlockT, C, A: txpool::ChainApi> {
-	client: Arc<C>,
-	parent_hash: <Block as BlockT>::Hash,
-	parent_id: BlockId<Block>,
-	parent_number: <<Block as BlockT>::Header as HeaderT>::Number,
-	transaction_pool: Arc<TransactionPool<A>>,
-	now: Box<dyn Fn() -> time::Instant>,
-}
-
-impl<Block, C, A> consensus_common::Proposer<<C as AuthoringApi>::Block> for Proposer<Block, C, A> where
-	Block: BlockT,
-	C: AuthoringApi<Block=Block>,
-	<C as ProvideRuntimeApi>::Api: BlockBuilderApi<Block>,
-	A: txpool::ChainApi<Block=Block>,
-	client::error::Error: From<<C as AuthoringApi>::Error>
-{
-	type Create = Result<<C as AuthoringApi>::Block, error::Error>;
-	type Error = error::Error;
-
-	fn propose(
-		&self,
-		inherent_data: InherentData,
-		inherent_digests: DigestFor<Block>,
-		max_duration: time::Duration,
-	) -> Result<<C as AuthoringApi>::Block, error::Error>
-	{
-		// leave some time for evaluation and block finalization (33%)
-		let deadline = (self.now)() + max_duration - max_duration / 3;
-		self.propose_with(inherent_data, inherent_digests, deadline)
-	}
-}
-
-
-
-impl<C, A> consensus_common::Environment<<C as AuthoringApi>::Block> for ProposerFactory<C, A> where
-	C: AuthoringApi,
-	<C as ProvideRuntimeApi>::Api: BlockBuilderApi<<C as AuthoringApi>::Block>,
-	A: txpool::ChainApi<Block=<C as AuthoringApi>::Block>,
-	client::error::Error: From<<C as AuthoringApi>::Error>,
-	Proposer<<C as AuthoringApi>::Block, C, A>: consensus_common::Proposer<<C as AuthoringApi>::Block>,
-{
-	type Proposer = Proposer<<C as AuthoringApi>::Block, C, A>;
-	type Error = error::Error;
-
-	fn init(
-		&self,
-		parent_header: &<<C as AuthoringApi>::Block as BlockT>::Header,
-	) -> Result<Self::Proposer, error::Error> {
-		let parent_hash = parent_header.hash();
-
-		let id = BlockId::hash(parent_hash);
-
-		info!("Starting consensus session on top of parent {:?}", parent_hash);
-
-		let proposer = Proposer {
-			client: self.client.clone(),
-			parent_hash,
-			parent_id: id,
-			parent_number: *parent_header.number(),
-			transaction_pool: self.transaction_pool.clone(),
-			now: Box::new(time::Instant::now),
-		};
-
-		Ok(proposer)
-	}
-}
-
-
-
-/// The proposer logic.
-pub struct Proposer<Block: BlockT, C, A: txpool::ChainApi> {
-	client: Arc<C>,
-	parent_hash: <Block as BlockT>::Hash,
-	parent_id: BlockId<Block>,
-	parent_number: <<Block as BlockT>::Header as HeaderT>::Number,
-	transaction_pool: Arc<TransactionPool<A>>,
-	now: Box<dyn Fn() -> time::Instant>,
-}
-
-impl<Block, C, A> consensus_common::Proposer<<C as AuthoringApi>::Block> for Proposer<Block, C, A> where
-	Block: BlockT,
-	C: AuthoringApi<Block=Block>,
-	<C as ProvideRuntimeApi>::Api: BlockBuilderApi<Block>,
-	A: txpool::ChainApi<Block=Block>,
-	client::error::Error: From<<C as AuthoringApi>::Error>
-{
-	type Create = Result<<C as AuthoringApi>::Block, error::Error>;
-	type Error = error::Error;
-
-	fn propose(
-		&self,
-		inherent_data: InherentData,
-		inherent_digests: DigestFor<Block>,
-		max_duration: time::Duration,
-	) -> Result<<C as AuthoringApi>::Block, error::Error>
-	{
-		// leave some time for evaluation and block finalization (33%)
-		let deadline = (self.now)() + max_duration - max_duration / 3;
-		self.propose_with(inherent_data, inherent_digests, deadline)
-	}
-}
-
-impl<Block, C, A> Proposer<Block, C, A>	where
-	Block: BlockT,
-	C: AuthoringApi<Block=Block>,
-	<C as ProvideRuntimeApi>::Api: BlockBuilderApi<Block>,
-	A: txpool::ChainApi<Block=Block>,
-	client::error::Error: From<<C as AuthoringApi>::Error>,
-{
-	fn propose_with(
-		&self,
-		inherent_data: InherentData,
-		inherent_digests: DigestFor<Block>,
-		deadline: time::Instant,
-	) -> Result<<C as AuthoringApi>::Block, error::Error>
-	{
-		use runtime_primitives::traits::BlakeTwo256;
-
-		/// If the block is full we will attempt to push at most
-		/// this number of transactions before quitting for real.
-		/// It allows us to increase block utilization.
-		const MAX_SKIPPED_TRANSACTIONS: usize = 8;
-
-		let block = self.client.build_block(
-			&self.parent_id,
-			inherent_data,
-			inherent_digests.clone(),
-			|block_builder| {
-				// proceed with transactions
-				let mut is_first = true;
-				let mut skipped = 0;
-				let mut unqueue_invalid = Vec::new();
-				let pending_iterator = self.transaction_pool.ready();
-
-				debug!("Attempting to push transactions from the pool.");
-				for pending in pending_iterator {
-					if (self.now)() > deadline {
-						debug!("Consensus deadline reached when pushing block transactions, proceeding with proposing.");
-						break;
-					}
-
-					trace!("[{:?}] Pushing to the block.", pending.hash);
-					match block_builder.push_extrinsic(pending.data.clone()) {
-						Ok(()) => {
-							debug!("[{:?}] Pushed to the block.", pending.hash);
-						}
-						Err(error::Error::ApplyExtrinsicFailed(ApplyError::FullBlock)) => {
-							if is_first {
-								debug!("[{:?}] Invalid transaction: FullBlock on empty block", pending.hash);
-								unqueue_invalid.push(pending.hash.clone());
-							} else if skipped < MAX_SKIPPED_TRANSACTIONS {
-								skipped += 1;
-								debug!(
-									"Block seems full, but will try {} more transactions before quitting.",
-									MAX_SKIPPED_TRANSACTIONS - skipped
-								);
-							} else {
-								debug!("Block is full, proceed with proposing.");
-								break;
-							}
-						}
-						Err(e) => {
-							debug!("[{:?}] Invalid transaction: {}", pending.hash, e);
-							unqueue_invalid.push(pending.hash.clone());
-						}
-					}
-
-					is_first = false;
-				}
-
-				self.transaction_pool.remove_invalid(&unqueue_invalid);
-			})?;
-
-		info!("Prepared block for proposing at {} [hash: {:?}; parent_hash: {}; extrinsics: [{}]]",
-			block.header().number(),
-			<<C as AuthoringApi>::Block as BlockT>::Hash::from(block.header().hash()),
-			block.header().parent_hash(),
-			block.extrinsics()
-				.iter()
-				.map(|xt| format!("{}", BlakeTwo256::hash_of(xt)))
-				.collect::<Vec<_>>()
-				.join(", ")
-		);
-		telemetry!(CONSENSUS_INFO; "prepared_block_for_proposing";
-			"number" => ?block.header().number(),
-			"hash" => ?<<C as AuthoringApi>::Block as BlockT>::Hash::from(block.header().hash()),
-		);
-
-		let substrate_block = Decode::decode(&mut block.encode().as_slice())
-			.expect("blocks are defined to serialize to substrate blocks correctly; qed");
-
-		assert!(evaluation::evaluate_initial(
-			&substrate_block,
-			&self.parent_hash,
-			self.parent_number,
-		).is_ok());
-
-		Ok(substrate_block)
-	}
-}
-
 
 // Aura (Authority-round) consensus in substrate.
 //
@@ -459,37 +210,7 @@ where
 
 pub type BadgerImportQueue<B> = BasicQueue<B>;
 
-/// Start the badger worker. The returned future should be run in a exec? runtime.
-pub fn start_badger<Block, C,  E, I, P, SO, Error, H, A,N, X>(
-						client : Arc<C>,
-						t_pool: Arc<TransactionPool<A>>,
-						pub network: N,
-                        config: crate::Config,
-                        sync_oracle: SO, 
-					    on_exit: X,) -> ::client::error::Result<impl Future<Item=(),Error=()> + Send + 'static> where
-	A: txpool::ChainApi
-	Block::Hash: Ord,
-	SO: SyncOracle + Send + Sync + Clone,
-	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
-	Error: ::std::error::Error + Send + From<::consensus_common::Error> + From<I::Error> + 'static,
-	C: ProvideRuntimeApi + ProvideCache<B> + AuxStore + Send + Sync,
-	N: Network<Block> + Send + Sync + 'static,
-{
 
-
-	let pending_iterator = self.transaction_pool.ready();
-	debug!("Attempting to push transactions from the pool.");
-	for pending in pending_iterator {}
-
-	let worker = BadgerWorker {
-		client: client.clone(),
-		sync_oracle: sync_oracle.clone(),
-		network: network_bridge,
-		transaction_pool: t_pool.clone()
-	};
-
-	Ok( worker)
-}
 
 struct BadgerWorker<C, E, I, P, SO,Inbound> {
 	client: Arc<C>,
@@ -1188,7 +909,7 @@ pub(super) enum GossipMessage<Block: BlockT> {
 	BadgerData(Vec<u8>),
 
 	RequestGreeting(),
-	/// A neighbor packet. Not repropagated.
+	// A neighbor packet. Not repropagated.
     //	Neighbor(VersionedNeighborPacket<NumberFor<Block>>),
 }
 
@@ -1392,442 +1113,8 @@ enum PendingCatchUp {
 }
 
 
-struct PeerReport {
-	who: PeerId,
-	cost_benefit: i32,
-}
 
-// wrapper around a stream of reports.
-#[must_use = "The report stream must be consumed"]
-pub(super) struct ReportStream {
-	reports: mpsc::UnboundedReceiver<PeerReport>,
-}
 
-impl ReportStream {
-	/// Consume the report stream, converting it into a future that
-	/// handles all reports.
-	pub(super) fn consume<B, N>(self, net: N)
-		-> impl Future<Item=(),Error=()> + Send + 'static
-	where
-		B: BlockT,
-		N: super::Network<B> + Send + 'static,
-	{
-		ReportingTask {
-			reports: self.reports,
-			net,
-			_marker: Default::default(),
-		}
-	}
-}
-
-/// A future for reporting peers.
-#[must_use = "Futures do nothing unless polled"]
-struct ReportingTask<B, N> {
-	reports: mpsc::UnboundedReceiver<PeerReport>,
-	net: N,
-	_marker: std::marker::PhantomData<B>,
-}
-
-impl<B: BlockT, N: super::Network<B>> Future for ReportingTask<B, N> {
-	type Item = ();
-	type Error = ();
-
-	fn poll(&mut self) -> Poll<(), ()> {
-		loop {
-			match self.reports.poll() {
-				Err(_) => {
-					warn!(target: "afg", "Report stream terminated unexpectedly");
-					return Ok(Async::Ready(()))
-				}
-				Ok(Async::Ready(None)) => return Ok(Async::Ready(())),
-				Ok(Async::Ready(Some(PeerReport { who, cost_benefit }))) =>
-					self.net.report(who, cost_benefit),
-				Ok(Async::NotReady) => return Ok(Async::NotReady),
-			}
-		}
-	}
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-	use super::environment::SharedVoterSetState;
-	use network_gossip::Validator as GossipValidatorT;
-	use network::test::Block;
-
-	// some random config (not really needed)
-	fn config() -> crate::Config {
-		crate::Config {
-			gossip_duration: Duration::from_millis(10),
-			justification_period: 256,
-			local_key: None,
-			name: None,
-		}
-	}
-
-	// dummy voter set state
-	fn voter_set_state() -> SharedVoterSetState<Block> {
-		use crate::authorities::AuthoritySet;
-		use crate::environment::{CompletedRound, CompletedRounds, HasVoted, VoterSetState};
-		use grandpa::round::State as RoundState;
-		use substrate_primitives::H256;
-
-		let state = RoundState::genesis((H256::zero(), 0));
-		let base = state.prevote_ghost.unwrap();
-		let voters = AuthoritySet::genesis(Vec::new());
-		let set_state = VoterSetState::Live {
-			completed_rounds: CompletedRounds::new(
-				CompletedRound {
-					state,
-					number: 0,
-					votes: Vec::new(),
-					base,
-				},
-				0,
-				&voters,
-			),
-			current_round: HasVoted::No,
-		};
-
-		set_state.into()
-	}
-
-	#[test]
-	fn view_vote_rules() {
-		let view = View { round: Round(100), set_id: SetId(1), last_commit: Some(1000u64) };
-
-		assert_eq!(view.consider_vote(Round(98), SetId(1)), Consider::RejectPast);
-		assert_eq!(view.consider_vote(Round(1), SetId(0)), Consider::RejectPast);
-		assert_eq!(view.consider_vote(Round(1000), SetId(0)), Consider::RejectPast);
-
-		assert_eq!(view.consider_vote(Round(99), SetId(1)), Consider::Accept);
-		assert_eq!(view.consider_vote(Round(100), SetId(1)), Consider::Accept);
-		assert_eq!(view.consider_vote(Round(101), SetId(1)), Consider::Accept);
-
-		assert_eq!(view.consider_vote(Round(102), SetId(1)), Consider::RejectFuture);
-		assert_eq!(view.consider_vote(Round(1), SetId(2)), Consider::RejectFuture);
-		assert_eq!(view.consider_vote(Round(1000), SetId(2)), Consider::RejectFuture);
-	}
-
-	#[test]
-	fn view_global_message_rules() {
-		let view = View { round: Round(100), set_id: SetId(2), last_commit: Some(1000u64) };
-
-		assert_eq!(view.consider_global(SetId(3), 1), Consider::RejectFuture);
-		assert_eq!(view.consider_global(SetId(3), 1000), Consider::RejectFuture);
-		assert_eq!(view.consider_global(SetId(3), 10000), Consider::RejectFuture);
-
-		assert_eq!(view.consider_global(SetId(1), 1), Consider::RejectPast);
-		assert_eq!(view.consider_global(SetId(1), 1000), Consider::RejectPast);
-		assert_eq!(view.consider_global(SetId(1), 10000), Consider::RejectPast);
-
-		assert_eq!(view.consider_global(SetId(2), 1), Consider::RejectPast);
-		assert_eq!(view.consider_global(SetId(2), 1000), Consider::RejectPast);
-		assert_eq!(view.consider_global(SetId(2), 1001), Consider::Accept);
-		assert_eq!(view.consider_global(SetId(2), 10000), Consider::Accept);
-	}
-
-	#[test]
-	fn unknown_peer_cannot_be_updated() {
-		let mut peers = Peers::default();
-		let id = PeerId::random();
-
-		let update = NeighborPacket {
-			round: Round(5),
-			set_id: SetId(10),
-			commit_finalized_height: 50,
-		};
-
-		let res = peers.update_peer_state(&id, update.clone());
-		assert!(res.unwrap().is_none());
-
-		// connect & disconnect.
-		peers.new_peer(id.clone());
-		peers.peer_disconnected(&id);
-
-		let res = peers.update_peer_state(&id, update.clone());
-		assert!(res.unwrap().is_none());
-	}
-
-	#[test]
-	fn update_peer_state() {
-		let update1 = NeighborPacket {
-			round: Round(5),
-			set_id: SetId(10),
-			commit_finalized_height: 50u32,
-		};
-
-		let update2 = NeighborPacket {
-			round: Round(6),
-			set_id: SetId(10),
-			commit_finalized_height: 60,
-		};
-
-		let update3 = NeighborPacket {
-			round: Round(2),
-			set_id: SetId(11),
-			commit_finalized_height: 61,
-		};
-
-		let update4 = NeighborPacket {
-			round: Round(3),
-			set_id: SetId(11),
-			commit_finalized_height: 80,
-		};
-
-		let mut peers = Peers::default();
-		let id = PeerId::random();
-
-		peers.new_peer(id.clone());
-
-		let mut check_update = move |update: NeighborPacket<_>| {
-			let view = peers.update_peer_state(&id, update.clone()).unwrap().unwrap();
-			assert_eq!(view.round, update.round);
-			assert_eq!(view.set_id, update.set_id);
-			assert_eq!(view.last_commit, Some(update.commit_finalized_height));
-		};
-
-		check_update(update1);
-		check_update(update2);
-		check_update(update3);
-		check_update(update4);
-	}
-
-	#[test]
-	fn invalid_view_change() {
-		let mut peers = Peers::default();
-
-		let id = PeerId::random();
-		peers.new_peer(id.clone());
-
-		peers.update_peer_state(&id, NeighborPacket {
-			round: Round(10),
-			set_id: SetId(10),
-			commit_finalized_height: 10,
-		}).unwrap().unwrap();
-
-		let mut check_update = move |update: NeighborPacket<_>| {
-			let err = peers.update_peer_state(&id, update.clone()).unwrap_err();
-			assert_eq!(err, Misbehavior::InvalidViewChange);
-		};
-
-		// round moves backwards.
-		check_update(NeighborPacket {
-			round: Round(9),
-			set_id: SetId(10),
-			commit_finalized_height: 10,
-		});
-		// commit finalized height moves backwards.
-		check_update(NeighborPacket {
-			round: Round(10),
-			set_id: SetId(10),
-			commit_finalized_height: 9,
-		});
-		// set ID moves backwards.
-		check_update(NeighborPacket {
-			round: Round(10),
-			set_id: SetId(9),
-			commit_finalized_height: 10,
-		});
-	}
-
-	#[test]
-	fn messages_not_expired_immediately() {
-		let (val, _) = GossipValidator::<Block>::new(
-			config(),
-			voter_set_state(),
-		);
-
-		let set_id = 1;
-
-		val.note_set(SetId(set_id), Vec::new(), |_, _| {});
-
-		for round_num in 1u64..10 {
-			val.note_round(Round(round_num), |_, _| {});
-		}
-
-		{
-			let mut is_expired = val.message_expired();
-			let last_kept_round = 10u64 - KEEP_RECENT_ROUNDS as u64 - 1;
-
-			// messages from old rounds are expired.
-			for round_num in 1u64..last_kept_round {
-				let topic = crate::communication::round_topic::<Block>(round_num, 1);
-				assert!(is_expired(topic, &[1, 2, 3]));
-			}
-
-			// messages from not-too-old rounds are not expired.
-			for round_num in last_kept_round..10 {
-				let topic = crate::communication::round_topic::<Block>(round_num, 1);
-				assert!(!is_expired(topic, &[1, 2, 3]));
-			}
-		}
-	}
-
-	#[test]
-	fn message_from_unknown_authority_discarded() {
-		assert!(cost::UNKNOWN_VOTER != cost::BAD_SIGNATURE);
-
-		let (val, _) = GossipValidator::<Block>::new(
-			config(),
-			voter_set_state(),
-		);
-		let set_id = 1;
-		let auth = AuthorityId::from_raw([1u8; 32]);
-		let peer = PeerId::random();
-
-		val.note_set(SetId(set_id), vec![auth.clone()], |_, _| {});
-		val.note_round(Round(0), |_, _| {});
-
-		let inner = val.inner.read();
-		let unknown_voter = inner.validate_round_message(&peer, &VoteOrPrecommitMessage {
-			round: Round(0),
-			set_id: SetId(set_id),
-			message: SignedMessage::<Block> {
-				message: grandpa::Message::Prevote(grandpa::Prevote {
-					target_hash: Default::default(),
-					target_number: 10,
-				}),
-				signature: Default::default(),
-				id: AuthorityId::from_raw([2u8; 32]),
-			}
-		});
-
-		let bad_sig = inner.validate_round_message(&peer, &VoteOrPrecommitMessage {
-			round: Round(0),
-			set_id: SetId(set_id),
-			message: SignedMessage::<Block> {
-				message: grandpa::Message::Prevote(grandpa::Prevote {
-					target_hash: Default::default(),
-					target_number: 10,
-				}),
-				signature: Default::default(),
-				id: auth.clone(),
-			}
-		});
-
-		assert_eq!(unknown_voter, Action::Discard(cost::UNKNOWN_VOTER));
-		assert_eq!(bad_sig, Action::Discard(cost::BAD_SIGNATURE));
-	}
-
-	#[test]
-	fn unsolicited_catch_up_messages_discarded() {
-		let (val, _) = GossipValidator::<Block>::new(
-			config(),
-			voter_set_state(),
-		);
-
-		let set_id = 1;
-		let auth = AuthorityId::from_raw([1u8; 32]);
-		let peer = PeerId::random();
-
-		val.note_set(SetId(set_id), vec![auth.clone()], |_, _| {});
-		val.note_round(Round(0), |_, _| {});
-
-		let validate_catch_up = || {
-			let mut inner = val.inner.write();
-			inner.validate_catch_up_message(&peer, &FullCatchUpMessage {
-				set_id: SetId(set_id),
-				message: grandpa::CatchUp {
-					round_number: 10,
-					prevotes: Default::default(),
-					precommits: Default::default(),
-					base_hash: Default::default(),
-					base_number: Default::default(),
-				}
-			})
-		};
-
-		// the catch up is discarded because we have no pending request
-		assert_eq!(validate_catch_up(), Action::Discard(cost::OUT_OF_SCOPE_MESSAGE));
-
-		let noted = val.inner.write().note_catch_up_request(
-			&peer,
-			&CatchUpRequestMessage {
-				set_id: SetId(set_id),
-				round: Round(10),
-			}
-		);
-
-		assert!(noted.0);
-
-		// catch up is allowed because we have requested it, but it's rejected
-		// because it's malformed (empty prevotes and precommits)
-		assert_eq!(validate_catch_up(), Action::Discard(cost::MALFORMED_CATCH_UP));
-	}
-
-	#[test]
-	fn unanswerable_catch_up_requests_discarded() {
-		// create voter set state with round 1 completed
-		let set_state: SharedVoterSetState<Block> = {
-			let mut completed_rounds = voter_set_state().read().completed_rounds();
-
-			assert!(completed_rounds.push(environment::CompletedRound {
-				number: 1,
-				state: grandpa::round::State::genesis(Default::default()),
-				base: Default::default(),
-				votes: Default::default(),
-			}));
-
-			let set_state = environment::VoterSetState::<Block>::Live {
-				completed_rounds,
-				current_round: environment::HasVoted::No,
-			};
-
-			set_state.into()
-		};
-
-		let (val, _) = GossipValidator::<Block>::new(
-			config(),
-			set_state.clone(),
-		);
-
-		let set_id = 1;
-		let auth = AuthorityId::from_raw([1u8; 32]);
-		let peer = PeerId::random();
-
-		val.note_set(SetId(set_id), vec![auth.clone()], |_, _| {});
-		val.note_round(Round(2), |_, _| {});
-
-		// add the peer making the request to the validator,
-		// otherwise it is discarded
-		let mut inner = val.inner.write();
-		inner.peers.new_peer(peer.clone());
-
-		let res = inner.handle_catch_up_request(
-			&peer,
-			CatchUpRequestMessage {
-				set_id: SetId(set_id),
-				round: Round(10),
-			},
-			&set_state,
-		);
-
-		// we're at round 2, a catch up request for round 10 is out of scope
-		assert!(res.0.is_none());
-		assert_eq!(res.1, Action::Discard(cost::OUT_OF_SCOPE_MESSAGE));
-
-		let res = inner.handle_catch_up_request(
-			&peer,
-			CatchUpRequestMessage {
-				set_id: SetId(set_id),
-				round: Round(1),
-			},
-			&set_state,
-		);
-
-		// a catch up request for round 1 should be answered successfully
-		match res.0.unwrap() {
-			GossipMessage::CatchUp(catch_up) => {
-				assert_eq!(catch_up.set_id, SetId(set_id));
-				assert_eq!(catch_up.message.round_number, 1);
-
-				assert_eq!(res.1, Action::Discard(cost::CATCH_UP_REPLY));
-			},
-			_ => panic!("expected catch up message"),
-		};
-	}
-}
 
 use futures::prelude::*;
 use log::{debug, info, warn};
@@ -1839,7 +1126,7 @@ use runtime_primitives::traits::{
 	NumberFor, Block as BlockT, DigestFor, ProvideRuntimeApi,
 };
 use fg_primitives::HbbftApi;
-use fg_primitives::{SecretKeyShareWrap,SecretKeyWrap,PublickeySetWrap};
+use fg_primitives::{SecretKeyShareWrap,SecretKeyWrap,PublicKeySetWrap};
 
 use inherents::InherentDataProviders;
 use runtime_primitives::generic::BlockId;
@@ -1874,7 +1161,6 @@ pub use service_integration::{LinkHalfForService, BlockImportForService, BlockIm
 pub use communication::Network;
 pub use finality_proof::FinalityProofProvider;
 pub use light_import::light_block_import;
-pub use observer::run_grandpa_observer;
 
 use aux_schema::PersistentData;
 use environment::{CompletedRound, CompletedRounds, Environment, HasVoted, SharedVoterSetState, VoterSetState};
@@ -1886,21 +1172,6 @@ use fg_primitives::AuthoritySignature;
 
 // Re-export these two because it's just so damn convenient.
 pub use fg_primitives::{AuthorityId, AuthorityPair,ScheduledChange};
-
-#[cfg(test)]
-mod tests;
-
-pub enum Message<H, N> {
-	/// A prevote message.
-	#[cfg_attr(feature = "derive-codec", codec(index = "0"))]
-	Prevote(Prevote<H, N>),
-	/// A precommit message.
-	#[cfg_attr(feature = "derive-codec", codec(index = "1"))]
-	Precommit(Precommit<H, N>),
-	// Primary proposed block.
-	#[cfg_attr(feature = "derive-codec", codec(index = "2"))]
-	PrimaryPropose(PrimaryPropose<H, N>),
-}
 
 
 /// A GRANDPA message for a substrate chain.
@@ -1914,60 +1185,38 @@ pub type SignedMessage<Block> = grandpa::SignedMessage<
 >;
 
 
-/// A catch up message for this chain's block type.
-pub type CatchUp<Block> = grandpa::CatchUp<
-	<Block as BlockT>::Hash,
-	NumberFor<Block>,
-	AuthoritySignature,
-	AuthorityId,
->;
 
-
-/// Global communication input stream for commits and catch up messages, with
-/// the hash type not being derived from the block, useful for forcing the hash
-/// to some type (e.g. `H256`) when the compiler can't do the inference.
-type CommunicationInH<Block, H> = grandpa::voter::CommunicationIn<
-	H,
-	NumberFor<Block>,
-	AuthoritySignature,
-	AuthorityId,
->;
-
-/// A global communication sink for commits. Not exposed publicly, used
-/// internally to simplify types in the communication layer.
-type CommunicationOut<Block> = grandpa::voter::CommunicationOut<
-	<Block as BlockT>::Hash,
-	NumberFor<Block>,
-	AuthoritySignature,
-	AuthorityId,
->;
-
-/// Global communication sink for commits with the hash type not being derived
-/// from the block, useful for forcing the hash to some type (e.g. `H256`) when
-/// the compiler can't do the inference.
-type CommunicationOutH<Block, H> = grandpa::voter::CommunicationOut<
-	H,
-	NumberFor<Block>,
-	AuthoritySignature,
-	AuthorityId,
->;
 
 /// Configuration for the Badger service.
 #[derive(Clone)]
 pub struct Config {
-	/// The local signing key.
-	pub local_key: Option<Arc<ed25519::Pair>>,
 	/// Some local identifier of the node.
 	pub name: Option<String>,
 	pub num_validators: usize,
 	pub secret_key_share: Option<Arc<SecretKeyShareWrap>>,
 	pub node_id: Arc<AuthorityPair>,
-	pub public_key_set: Arc<PublickeySetWrap>,
-    pub initial_validators:  BTreeMap<PeerId, AuthorityId>,
+	pub public_key_set: Arc<PublicKeySetWrap>,
 	pub batch_size:u32,
 
 }
-
+fn secret_share_from_string(st:&str) ->Result<SecretKeyShareWrap,Error>
+{
+let data=hex::decode(st)?;
+match bincode::deserialize(&data)
+ {
+  Ok(val) => Ok(SecretKeyShareWrap { 0: val}),
+  Err(_)  => return Err("secret key share binary invalid")
+ }
+}
+fn secret_from_string(st:&str) ->Result<SecretKeyWrap,Error>
+{
+let data=hex::decode(st)?;
+match bincode::deserialize(&data)
+ {
+  Ok(val) => Ok(SecretKeyWrap { 0: val}),
+  Err(_)  => return Err("secret key binary invalid")
+ }
+}
 impl Config {
 	fn name(&self) -> &str {
 		self.name.as_ref().map(|s| s.as_str()).unwrap_or("<unknown>")
@@ -1986,33 +1235,79 @@ impl Config {
 			  }
       
 		    }
-		    _: return Err("Nodes object should be present"),
-		   }  
+		    _ =>  return Err("Nodes object should be present"),
+		   };  
 
         let ret = Config
 		{
-         name: Some(name.clone());
+         name: Some(name.clone()),
          num_validators: match spec["num_validators"]
 		   {
 			   Number(x) => x as usize,
-               String(st) => st.parse::<usize>()?;
-			   _ => return Err("Invalid num_validators");
-		   }
+               String(st) => st.parse::<usize>()?,
+			   _ => return Err("Invalid num_validators")
+		   },
 		 secret_key_share: match nodedata["secret_key_share"]
 		            {
                       String(st) => {
-						  let data=hex::decode(st)?
-						  match bincode::deserialize(&data)
-                              {
- 							 Ok(val) => Some(SecretKeyShareWrap { 0: val}),
-	                          Err(_)  => return Err("secret key share binary invalid")
-                              }
+						    Some(Arc::new(secret_share_from_string(&st)?))
 						   },
-					  _ => return Err("secret key share not string"),
-					}
+					  _ =>  None,
+					}, 
+		 node_id: match nodedata["node_id"]
+                  {
+					  Object(nid) => {
+						  let pub_key:PublicKey=match nid["pub"]
+						           {
+                                    String(st) => 
+									{
+									let data=hex::decode(st)?;
+									match bincode::deserialize(&data)
+									{
+									Ok(val) => val,
+									Err(_)  => return Err("public key binary invalid")
+									}
+									}
+									_ => return Err("pub key not string"),
+								   };
+						 let sec_key:SecretKey=match nid["priv"]
+						           {
+                                    String(st) => 
+									{
+									 let data=hex::decode(st)?;
+									 match bincode::deserialize(&data)
+									 {
+									 Ok(val) => val,
+									 Err(_)  => return Err("secret key binary invalid")
+									 }
+									}
+									_ => return Err("priv key not string"),
+								   };
+								   Arc::new((pub_key,sec_key))
+					  },
+					  _ => return Err("node id not pub/priv object")
 
-		}
-		//todo: finish parsing json? Peerid? 
+				  },
+		public_key_set: match spec["public_key_set"]
+		                {
+                           String(st) => 
+									{
+									let data=hex::decode(st)?;
+									match bincode::deserialize(&data)
+									{
+									Ok(val) => Arc::new(PublicKeySetWrap{0: val}),
+									Err(_)  => return Err("public key set binary invalid")
+									}
+									}
+									_ => return Err("pub key set not string"),
+						},
+		batch_size : 	match spec["batch_size"]
+		   {
+			   Number(x) => x as usize,
+               String(st) => st.parse::<usize>()?,
+			   _ => return Err("Invalid batch_size"),
+		   },				  
+		};
 		ret
 	}
 }
@@ -2296,7 +1591,8 @@ impl<D,S,N,Block,TF>   BadgerProposerWorker<D,S,N,Block,TF>
 	{
 		self.transaction_in.send_all(TxStream{transaction_pool:self.transaction_pool.clone()})
 	}
-	pub fn make_block_spitter(&'a mut self) ->
+
+	pub fn make_block_spitter(&'a mut self) 
 	{
 		Box::pin( self.block_out.for_each(move |batch|
 		  {
@@ -2307,7 +1603,7 @@ impl<D,S,N,Block,TF>   BadgerProposerWorker<D,S,N,Block,TF>
 			//empty for now?
 			let inherent_digests= generic::Digest {
 							logs: vec![],
-						}
+						};
            	let imp_blocks=self.make_import_blocks(batch, inherent_data,inherent_digests);
 			  for import_block in imp_blocks.into_iter().drain()
 			  { 
@@ -2328,12 +1624,12 @@ impl<D,S,N,Block,TF>   BadgerProposerWorker<D,S,N,Block,TF>
 
 	pub fn make_import_blocks(
 		&self,
-		batch: &D::Output
+		batch: &D::Output,
 		inherent_data: InherentData,
 		inherent_digests: DigestFor<Block>,
 	) -> Result<Vec<ImportBlock<Block>>, error::Error> {
 
-		 info!("Processing batch with epoch {:?} of {:?} transactions into blocks",batch.epoch,batch.contributions.len())
+		 info!("Processing batch with epoch {:?} of {:?} transactions into blocks",batch.epoch,batch.contributions.len());
          let mut ret=Vec::new();
    		let mut chain_head = match client.best_chain() {
 				Ok(x) => x,
@@ -2440,7 +1736,7 @@ impl<D,S,N,Block,TF>   BadgerProposerWorker<D,S,N,Block,TF>
 							pnumber = import_block.post_header().number();
 							parent_id = BlockId::hash(parent_hash);
 							// go on to next block
-							ret.push(import_block)
+							ret.push(import_block);
 							block_builder = self.client.new_block_at(&parent_id, inherent_digests)?;
 							is_first=true;
 							continue;
@@ -2472,7 +1768,7 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I>(
 	config: Config,
     network:N,
     on_exit: X,
-	block_import: Arc<Mutex<I>,
+	block_import: Arc<Mutex<I>>,
 	inherent_data_providers: InherentDataProviders,
 ) -> ::client::error::Result<impl Future<Item=(),Error=()> + Send + 'static> where
 	Block::Hash: Ord,

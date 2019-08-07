@@ -240,7 +240,7 @@ pub(super) enum GossipMessage<Block: BlockT> {
 	BadgerData(Vec<u8>),
 
 	RequestGreeting(),
-	/// A neighbor packet. Not repropagated.
+	// A neighbor packet. Not repropagated.
 //	Neighbor(VersionedNeighborPacket<NumberFor<Block>>),
 }
 
