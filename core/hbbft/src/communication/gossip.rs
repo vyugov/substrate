@@ -82,19 +82,19 @@
 //!
 //! We only send polite messages to peers,
 
-use runtime_primitives::traits::{NumberFor, Block as BlockT, Zero};
-use network::consensus_gossip::{self as network_gossip, MessageIntent, ValidatorContext};
-use network::{config::Roles, PeerId};
+use runtime_primitives::traits::{NumberFor, Block as BlockT, };
+//use network::consensus_gossip::{self as network_gossip, MessageIntent, ValidatorContext};
+use network::{ PeerId};//config::Roles,
 use parity_codec::{Encode, Decode};
 use fg_primitives::{AuthorityId,AuthoritySignature};
 
-use substrate_telemetry::{telemetry, CONSENSUS_DEBUG};
-use log::{trace, debug, warn};
+//use substrate_telemetry::{telemetry, CONSENSUS_DEBUG};
+//use log::{trace, debug, warn};
 use futures03::prelude::*;
-use futures03::channel::mpsc;
+//use futures03::channel::mpsc;
 
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, };
 use std::time::{Duration, Instant};
 
 const REBROADCAST_AFTER: Duration = Duration::from_secs(60 * 5);
@@ -142,12 +142,12 @@ impl<Block: BlockT> From<GreetingMessage> for GossipMessage<Block> {
 }
 
 
-struct PeerInfo<N> {
+struct PeerInfo {
 	//view: View<N>,
 	id: Option<AuthorityId> //public key
 }
 
-impl<N> PeerInfo<N> {
+impl PeerInfo {
 	fn new() -> Self {
 		PeerInfo {
 			id: None,
@@ -161,17 +161,17 @@ impl<N> PeerInfo<N> {
 }
 
 /// The peers we're connected do in gossip.
-pub struct Peers<N> {
-	inner: HashMap<PeerId, PeerInfo<N>>,
+pub struct Peers {
+	inner: HashMap<PeerId, PeerInfo>,
 }
 
-impl<N> Default for Peers<N> {
+impl Default for Peers {
 	fn default() -> Self {
 		Peers { inner: HashMap::new() }
 	}
 }
 
-impl<N: Ord> Peers<N> {
+impl Peers {
 	pub fn new_peer(&mut self, who: PeerId) {
 		self.inner.insert(who, PeerInfo::new());
 	}
@@ -197,7 +197,7 @@ impl<N: Ord> Peers<N> {
         peer.id=Some(authId);
 	}
 
-	pub fn peer<'a>(&'a self, who: &PeerId) -> Option<&'a PeerInfo<N>> {
+	pub fn peer<'a>(&'a self, who: &PeerId) -> Option<&'a PeerInfo> {
 		self.inner.get(who)
 	}
 }
@@ -214,9 +214,9 @@ pub(super) enum Action<H>  {
 
 
 
-struct Inner<Block: BlockT> {
+struct Inner {
 	//local_view: Option<View<NumberFor<Block>>>,
-	peers: Peers<NumberFor<Block>>,
+	peers: Peers,
 	authorities: Vec<AuthorityId>,
 	config: crate::Config,
 	next_rebroadcast: Instant,

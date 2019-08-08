@@ -48,8 +48,8 @@
 //! number (this is num(signal) + N). When finalizing a block, we either apply
 //! or prune any signaled changes based on whether the signaling block is
 //! included in the newly-finalized chain.
-use runtime_primitives::traits::{NumberFor, Block as BlockT, Zero, Member,Header, DigestItemFor, ProvideRuntimeApi,BlakeTwo256,};
-use runtime_primitives::{generic::{self, BlockId, OpaqueDigestItemId}, Justification,ApplyError};
+use runtime_primitives::traits::{NumberFor, Block as BlockT, Header,  ProvideRuntimeApi,BlakeTwo256,};
+use runtime_primitives::{generic::{self, BlockId}, Justification,ApplyError};
 //use runtime_primitives::{
 	//traits::{Block as BlockT, Hash as HashT, Header as HeaderT, ProvideRuntimeApi, DigestFor, },
 	//generic::BlockId,
@@ -57,38 +57,38 @@ use runtime_primitives::{generic::{self, BlockId, OpaqueDigestItemId}, Justifica
 //};
 use consensus_common::{evaluation};
 //mod aux_schema;
-use inherents::{RuntimeString, InherentIdentifier,  ProvideInherent, MakeFatalError};
+use inherents::{ InherentIdentifier,  };
 mod communication;
 use communication::NetworkBridge;
 use communication::TransactionSet;
-use network::consensus_gossip::{self as network_gossip, MessageIntent, ValidatorContext};
-use network::{config::Roles, PeerId};
-use substrate_telemetry::{telemetry, CONSENSUS_TRACE, CONSENSUS_DEBUG, CONSENSUS_WARN, CONSENSUS_INFO};
+//use network::consensus_gossip::{self as network_gossip, MessageIntent, ValidatorContext};
+use network::{PeerId};//config::Roles, 
+use substrate_telemetry::{telemetry, CONSENSUS_WARN, CONSENSUS_INFO};//CONSENSUS_TRACE, CONSENSUS_DEBUG, 
 use futures03::prelude::*;
-use futures03::channel::mpsc;
+//use futures03::channel::mpsc;
 use futures03::task::Poll;
 use futures03::sink::SendAll;
 use serde_json as json;
 use hex;
 use transaction_pool::txpool::{self, Pool as TransactionPool};
 use network::config::BoxFinalityProofRequestBuilder;
-use std::{sync::Arc, time::Duration, time::Instant, thread, marker::PhantomData, hash::Hash, fmt::Debug};
-use client::error::{Error as ClientError, Result as ClientResult};
+use std::{sync::Arc, time::Duration,  marker::PhantomData, hash::Hash, fmt::Debug};//time::Instant, thread,
+use client::error::{Error as ClientError, };
 use runtime_primitives::traits::DigestFor;
 use service::TelemetryOnConnect;
 
-use badger::crypto::{ PublicKey, PublicKeySet, PublicKeyShare, SecretKey, SecretKeyShare,Signature,};
+use badger::crypto::{ PublicKey,   SecretKey, };//PublicKeySet,PublicKeyShare,SecretKeyShare,Signature,
 use client::Client;
 use client::CallExecutor;
 use client::backend::Backend;
 //use client::blockchain::Backend;
 
 
-use parity_codec::{Encode, Decode, Codec};
-use consensus_common::{self, BlockImport, Environment, Proposer,
-	ForkChoiceStrategy, BlockImportParams, BlockOrigin, Error as ConsensusError,
-	SelectChain, well_known_cache_keys::{self, Id as CacheKeyId}
-};
+use parity_codec::{Encode, Decode, };
+use consensus_common::{self, BlockImport, 
+	ForkChoiceStrategy, BlockImportParams, BlockOrigin, 
+	SelectChain, well_known_cache_keys::{ Id as CacheKeyId}
+};//Environment, Proposer,Error as ConsensusError,self,
 use consensus_common::import_queue::{
 	Verifier, BasicQueue, BoxBlockImport, BoxJustificationImport, BoxFinalityProofImport,
 };
@@ -97,9 +97,9 @@ use futures03::core_reexport::pin::Pin;
 use client::{
 	block_builder::api::BlockBuilder as BlockBuilderApi,
 	blockchain::ProvideCache,
-	runtime_api::ApiExt,
+	//runtime_api::ApiExt,
 	error,
-	error::Result as CResult,
+	//error::Result as CResult,
 	backend::AuxStore,
 };
 
@@ -113,7 +113,7 @@ use std::path::PathBuf;
 use fg_primitives::AuthorityId;
 use fg_primitives::HbbftApi;
 use fg_primitives::AuthorityPair;
-use fg_primitives::AuthoritySignature;
+//use fg_primitives::AuthoritySignature;
 use serde_json::Value::Object;
 use serde_json::Value::Number;
 use serde_json::Value;
@@ -121,8 +121,8 @@ use serde_json::Value;
 use std::fs::File;
 use inherents::{InherentDataProviders, InherentData};
 use bincode;
-use std::fmt; 
-use futures03::{Future};
+//use std::fmt; 
+use futures03::{future::Future};
 use parking_lot::Mutex;
 //use tokio_timer::Timeout;
 use log::{error, warn, debug, info, trace};
@@ -130,8 +130,7 @@ use log::{error, warn, debug, info, trace};
 pub use consensus_common::SyncOracle;
 
 use substrate_primitives::{
-	Blake2Hasher, H256, ChangesTrieConfiguration, convert_hash,
-	NeverNativeValue, ExecutionContext
+	Blake2Hasher, H256, ExecutionContext
 };
 
 
@@ -268,7 +267,7 @@ pub fn badger_import_queue<B, C, Pub,Sig>(
 	))
 }
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, };
 
 
 const REBROADCAST_AFTER: Duration = Duration::from_secs(60 * 5);
@@ -597,9 +596,9 @@ where
 	))
 } */
 
-fn global_communication<Block: BlockT<Hash=H256>, B, E, N, RA,D>(
+fn global_communication<Block: BlockT<Hash=H256>, B, E, N, RA,D, R>(
 	client: &Arc<Client<B, E, Block, RA>>,
-	network: &NetworkBridge<Block, N>,
+	network: &NetworkBridge<Block, N,D,R>,
 ) -> (
 		impl Stream<Item = D::Output, Error = Error>,
 		impl Sink<Item = TransactionSet, Error = Error>,
@@ -610,6 +609,7 @@ fn global_communication<Block: BlockT<Hash=H256>, B, E, N, RA,D>(
 	RA: Send + Sync,
 	NumberFor<Block>: BlockNumberOps,
 	D: ConsensusProtocol,
+	R: Rng,
 {
 
 	let is_voter = network.is_validator();
@@ -654,7 +654,7 @@ where A: txpool::ChainApi
  pub transaction_pool: Arc<TransactionPool<A>>,
 }
 
-impl Stream for TxStream
+impl<A> Stream for TxStream<A>
 {
 	type Item=TransactionSet;
 	fn poll_next(
@@ -674,8 +674,8 @@ impl Stream for TxStream
 
 pub struct BadgerProposerWorker<D: ConsensusProtocol, S, N, Block, TF,C,A,I>
 where
-S : Stream<Item = D::Output, Error = Error> ,
-TF: Sink<Item = TransactionSet, Error = Error>,
+S : Stream<Item = D::Output> ,
+TF: Sink<TransactionSet>,
 A: txpool::ChainApi,
 //N : Network<Block> + Send + Sync + 'static,
 NumberFor<Block>: BlockNumberOps,
@@ -688,9 +688,9 @@ NumberFor<Block>: BlockNumberOps,
  pub block_import: Arc<Mutex<I>>,
  pub inherent_data_providers: InherentDataProviders,
 }
-impl<D,S,N,Block,TF>   BadgerProposerWorker<D,S,N,Block,TF>
+impl<D:ConsensusProtocol,S,N,Block,TF,C,A,I>   BadgerProposerWorker<D,S,N,Block,TF,C,A,I>
 {
-	pub fn make_sink(& mut self) -> SendAll<Self, TxStream> 
+	pub fn make_sink(& mut self) -> SendAll<Self, TxStream<A>> 
 	{
 		self.transaction_in.send_all(TxStream{transaction_pool:self.transaction_pool.clone()})
 	}
@@ -873,7 +873,7 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I, C, A>(
     on_exit: X,
 	block_import: Arc<Mutex<I>>,
 	inherent_data_providers: InherentDataProviders,
-) -> ::client::error::Result<impl Future<Item=(),Error=()> + Send + 'static> where
+) -> ::client::error::Result<impl Future<Output=()> + Send + 'static> where
 	Block::Hash: Ord,
 	B: Backend<Block, Blake2Hasher> + 'static,
 	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
@@ -883,7 +883,7 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I, C, A>(
 	NumberFor<Block>: BlockNumberOps,
 	DigestFor<Block>: Encode,
 	RA: Send + Sync + 'static,
-	X: Future<Item=(),Error=()> + Clone + Send + 'static,
+	X: Future<Output=()> + Clone + Send,
 	A: txpool::ChainApi,
 {
 	let (network_bridge, network_startup) = NetworkBridge::new(
