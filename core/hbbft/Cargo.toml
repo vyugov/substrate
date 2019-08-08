@@ -29,7 +29,7 @@ badger = { package= "hbbft", path="../../../hbbft" }
 bincode = "1.0.1"
 transaction_pool = { package = "substrate-transaction-pool", path = "../../core/transaction-pool" }
 num = { package = "num-traits", version = "0.2", default-features = false }
-
+libp2p = { version = "0.11.0", default-features = false, features = ["secp256k1", "libp2p-websocket"] }
 [dev-dependencies]
 grandpa = { package = "finality-grandpa", version = "0.8.1", features = ["derive-codec", "test-helpers"] }
 network = { package = "substrate-network", path = "../network", features = ["test-helpers"] }

@@ -30,8 +30,10 @@ use network::consensus_gossip::ValidatorContext;
 use std::sync::Arc;
 use std::iter;
 use std::collections::{VecDeque};
+use futures03::core_reexport::marker::PhantomData;
 use std::time::{Duration, Instant};
 use network::consensus_gossip:: MessageIntent;
+use libp2p::swarm::{ PollParameters};
 //use runtime_primitives::traits::NumberFor;
 use badger::dynamic_honey_badger::DynamicHoneyBadger;
 use badger::queueing_honey_badger::{ QueueingHoneyBadger};
@@ -39,6 +41,7 @@ use badger::sender_queue::{Message as BMessage, SenderQueue};
 use badger::{ConsensusProtocol, CpStep, NetworkInfo,  Target,Contribution};
 use rand::{rngs::OsRng, Rng};
 use network::PeerId;
+use fg_primitives::{SignatureWrap,PublicKeyWrap};
 //use grandpa::{voter, voter_set::VoterSet};
 //use grandpa::Message::{Prevote, Precommit, PrimaryPropose};
 use futures03::prelude::*;
@@ -68,7 +71,6 @@ const REBROADCAST_AFTER: Duration = Duration::from_secs(60 * 5);
 
 #[cfg(test)]
 mod tests;
-
 pub use fg_primitives::HBBFT_ENGINE_ID;
 //use badger::{SourcedMessage as BSM,  TargetedMessage};
 // cost scalars for reporting peers.
@@ -132,9 +134,47 @@ struct SourcedMessage<D: ConsensusProtocol> {
 }
 
 
+#[derive(Clone,Debug,Hash)]
+pub struct PeerIdW( pub PeerId);
+
+impl From<PeerId> for PeerIdW {
+    fn from(id: PeerId) -> Self {
+       PeerIdW(id)
+    }
+}
+
+impl Into<PeerId> for PeerIdW {
+    fn into(self) -> PeerId {
+        self.0
+    }
+}
+impl std::cmp::PartialOrd for PeerIdW
+{
+	fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl std::cmp::PartialEq for PeerIdW {
+    fn eq(&self, other: &Self) -> bool {
+        self.0==other.0
+    }
+}
+
+impl std::cmp::Eq for PeerIdW {}
+
+impl std::cmp::Ord for PeerIdW
+{
+	fn  cmp(&self, other: &Self) -> std::cmp::Ordering
+	{
+     self.0.to_base58().cmp(other.0.to_base58())
+	}
+}
+
+
 pub struct BadgerNode<B: BlockT,D,R: Rng> 
 where 
-D: ConsensusProtocol<NodeId=PeerId> //specialize to avoid some of the confusion
+D: ConsensusProtocol<NodeId=PeerIdW> //specialize to avoid some of the confusion
 {
     /// This node's own ID.
     id: PeerId,
@@ -153,10 +193,12 @@ D: ConsensusProtocol<NodeId=PeerId> //specialize to avoid some of the confusion
     out_queue: VecDeque<SourcedMessage<D>>,
     /// The values this node has output so far, with timestamps.
     outputs: Vec<D::Output>,
+	phantom: PhantomData<B>
 
 }
 
-impl<B: BlockT,D: ConsensusProtocol,R: Rng> BadgerNode<B,D,R>
+impl<B: BlockT,D: ConsensusProtocol<NodeId=PeerIdW> ,R: Rng> BadgerNode<B,D,R>
+
 {
 fn register_peer_public_key(&mut self,who :&PeerId, auth:AuthorityId)
  {
@@ -181,7 +223,7 @@ fn register_peer_public_key(&mut self,who :&PeerId, auth:AuthorityId)
 
 pub type BadgerNodeStepResult<D> = CpStep<D>;
 pub type TransactionSet = Vec<Vec<u8>>; //agnostic?
-impl<B: BlockT,D: ConsensusProtocol,R: Rng> BadgerNode<B,D,R>
+impl<B: BlockT,D: ConsensusProtocol<NodeId=PeerIdW> ,R: Rng> BadgerNode<B,D,R>
 {
 	pub fn new(config: crate::Config, self_id:PeerId) -> BadgerNode<B,D,R>
 	{
@@ -222,7 +264,8 @@ impl<B: BlockT,D: ConsensusProtocol,R: Rng> BadgerNode<B,D,R>
 		 config: config.clone(),
          in_queue:  VecDeque::new(),
 		    out_queue: out_queue,
-			outputs:outputs
+			outputs:outputs,
+			phantom: PhantomData
 	 };
 	 	for (k,v) in config.initial_validators.clone()
 		 {
@@ -259,10 +302,10 @@ impl<B: BlockT,D: ConsensusProtocol,R: Rng> BadgerNode<B,D,R>
 	}
 }
 
-pub(super) struct BadgerGossipValidator<Block: BlockT,D: ConsensusProtocol,R: Rng> {
+pub(super) struct BadgerGossipValidator<Block: BlockT,D: ConsensusProtocol<NodeId=PeerIdW> ,R: Rng> {
 	inner: parking_lot::RwLock<BadgerNode<Block,D,R>>,
 }
-impl<Block: BlockT,D: ConsensusProtocol,R: Rng> BadgerGossipValidator<Block,D,R> {
+impl<Block: BlockT,D: ConsensusProtocol<NodeId=PeerIdW> ,R: Rng> BadgerGossipValidator<Block,D,R> {
 	   fn flush_messages(&self,context: &mut dyn ValidatorContext<Block>)
    {
     let locked= self.inner.write();
@@ -348,14 +391,14 @@ impl<Block: BlockT,D: ConsensusProtocol,R: Rng> BadgerGossipValidator<Block,D,R>
 	}
 
 	pub(super) fn do_validate(&self, who: &PeerId, mut data: &[u8])
-		-> (Action<Block::Hash>,  Option<GossipMessage<Block>>)
+		-> (Action<Block::Hash>,  Option<GossipMessage>)
 	{
 
 		let mut peer_reply = None;
 
 
 		let action = {
-			match GossipMessage::<Block>::decode(&mut data) {
+			match GossipMessage::decode(&mut data) {
 					Some(GossipMessage::Greeting(msg))  =>
 					{
 						if msg.mySig.verify(msg.myId.to_bytes()) 
@@ -388,11 +431,7 @@ impl<Block: BlockT,D: ConsensusProtocol,R: Rng> BadgerGossipValidator<Block,D,R>
 							Ok(_) => 
 							{
                             //send is handled separately. trigger propose? or leave it for stream
-                            if locked.outputs.len()>0 
-						 	 {
-							  
-
-							 }
+                            Action::ProcessAndDiscard
 							}
 							Err(e) =>
 							{
@@ -427,7 +466,10 @@ impl<Block: BlockT,D: ConsensusProtocol,R: Rng> BadgerGossipValidator<Block,D,R>
 }
 
 
-impl<Block: BlockT,D:ConsensusProtocol,R:Rng> network_gossip::Validator<Block> for BadgerGossipValidator<Block,D,R> {
+impl<Block: BlockT,D:ConsensusProtocol<NodeId=PeerIdW> ,R:Rng+Send+Sync> network_gossip::Validator<Block> for BadgerGossipValidator<Block,D,R> 
+where
+D::Output: Send+Sync
+{
 	fn new_peer(&self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, _roles: Roles) 
 	{
 		{
@@ -439,15 +481,15 @@ impl<Block: BlockT,D:ConsensusProtocol,R:Rng> network_gossip::Validator<Block> f
 			inner.peers.new_peer(who.clone());
             GreetingMessage
 			{
-				myId: self.inner.config.node_id.0,
-				mySig: self.inner.config.node_id.1.sign(self.inner.config.node_id.0.clone())
+				myId: PublicKeyWrap{ 0 : inner.config.node_id.0},
+				mySig: SignatureWrap {0: inner.config.node_id.1.sign(self.inner.config.node_id.0.clone())}
 			}
 		};
 
-		if let Some(packet) = packet {
-			let packet_data = GossipMessage::<Block>::from(packet).encode();
+		//if let Some(packet) = packet {
+			let packet_data = GossipMessage::from(packet).encode();
 			context.send_message(who, packet_data);
-		}
+		//}
 	}
 
 	fn peer_disconnected(&self, _context: &mut dyn ValidatorContext<Block>, who: &PeerId) 
@@ -467,7 +509,7 @@ impl<Block: BlockT,D:ConsensusProtocol,R:Rng> network_gossip::Validator<Block> f
 		context.send_topic(who, topic, false);
 
 		{
-        self.flush_messages();
+        self.flush_messages(context);
 		}
 		
 		match action {
@@ -480,8 +522,8 @@ impl<Block: BlockT,D:ConsensusProtocol,R:Rng> network_gossip::Validator<Block> f
 				network_gossip::ValidationResult::ProcessAndDiscard(topic)
 			}
 			Action::Discard(cb) => {
-				self.report(who.clone(), cb);
-				network_gossip::ValidationResult::Discard(0)
+				//self.report(who.clone(), cb);
+				network_gossip::ValidationResult::Discard
 			}
 		}
 	}
@@ -523,12 +565,12 @@ impl<Block: BlockT,D:ConsensusProtocol,R:Rng> network_gossip::Validator<Block> f
 			// do not send.
 	
 			match GossipMessage::<Block>::decode(&mut data) {
-				None => false,
-				Some(GossipMessage::BadgerData(_)) => {
+				Err(_) => false,
+				Ok(GossipMessage::BadgerData(_)) => {
 					return  false
 				}
-				Some(GossipMessage::Greeting(_)) => true,
-				Some(GossipMessage::RequestGreeting) => false,
+				Ok(GossipMessage::Greeting(_)) => true,
+				Ok(GossipMessage::RequestGreeting) => false,
 			}
 		})
 	}
@@ -544,10 +586,10 @@ impl<Block: BlockT,D:ConsensusProtocol,R:Rng> network_gossip::Validator<Block> f
 			}
 
 			match GossipMessage::<Block>::decode(&mut data) {
-				None => true,
-				Some(GossipMessage::Greeting(_))
+				Err(_) => true,
+				Ok(GossipMessage::Greeting(_))
 					=> false,
-				Some(_) => true,
+				Ok(_) => true,
 			}
 		})
 	}
@@ -563,7 +605,7 @@ impl<B, S, H> Network<B> for Arc<NetworkService<B, S, H>> where
 	type In = NetworkStream;
 
 	fn messages_for(&self, topic: B::Hash) -> Self::In {
-		let (tx, rx) = oneshot::channel();
+		let (tx, rx) = futures03::channel::oneshot::channel();
 		self.with_gossip(move |gossip, _| {
 			let inner_rx = gossip.messages_for(HBBFT_ENGINE_ID, topic);
 			let _ = tx.send(inner_rx);
@@ -620,7 +662,7 @@ impl<B, S, H> Network<B> for Arc<NetworkService<B, S, H>> where
 /// A stream used by NetworkBridge in its implementation of Network.
 pub struct NetworkStream {
 	inner: Option<mpsc::UnboundedReceiver<network_gossip::TopicNotification>>,
-	outer: oneshot::Receiver<mpsc::UnboundedReceiver<network_gossip::TopicNotification>>
+	outer: oneshot::Receiver<futures03::channel::mpsc::UnboundedReceiver<network_gossip::TopicNotification>>
 }
 use std::{pin::Pin, task::Context, task::Poll};
 
@@ -630,9 +672,9 @@ impl Stream for NetworkStream {
 	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> 
 	{
 		if let Some(ref mut inner) = self.inner {
-			return inner.poll_next(cx);
+			return Some(inner.poll(cx));
 		}
-		match self.outer.poll_next(cx) {
+		match self.outer.poll(cx) {
 		     futures03::Poll::Ready(mut inner) => {
 				let poll_result = inner.poll_next(cx);
 				self.inner = Some(inner);
@@ -644,12 +686,15 @@ impl Stream for NetworkStream {
 }
 
 /// Bridge between the underlying network service, gossiping consensus messages and Grandpa
-pub(crate) struct NetworkBridge<B: BlockT, N: Network<B>,D: ConsensusProtocol, R: Rng> {
+pub(crate) struct NetworkBridge<B: BlockT, N: Network<B>,D: ConsensusProtocol<NodeId=PeerIdW>, R: Rng> {
 	service: N,
 	node: Arc<BadgerGossipValidator<B,D,R>>,
 }
 
-impl<B: BlockT, N: Network<B>,D: ConsensusProtocol<NodeId=PeerId>, R: Rng> NetworkBridge<B, N, D,R> {
+impl<B: BlockT, N: PollParameters + Network<B>,D: ConsensusProtocol<NodeId=PeerIdW>, R: Rng+Send+Sync> NetworkBridge<B, N, D,R> 
+where
+  D::Output: Send+Sync
+{
 	/// Create a new NetworkBridge to the given NetworkService. Returns the service
 	/// handle and a future that must be polled to completion to finish startup.
 	/// If a voter set state is given it registers previous round votes with the
@@ -657,10 +702,10 @@ impl<B: BlockT, N: Network<B>,D: ConsensusProtocol<NodeId=PeerId>, R: Rng> Netwo
 	pub(crate) fn new(
 		service: N,
 		config: crate::Config,
-		on_exit:  impl Future<Output = ()> + Clone + Send + 'static,
+		on_exit:  impl Future<Output = ()> + Clone + Send +Unpin,
 	) -> (
 		Self,
-		impl futures03::future::Future<Output = ()> + Send + 'static,
+		impl futures03::future::Future<Output = ()> + Send + Unpin,
 	) {
 
 		let validator= BadgerGossipValidator::new(config, service.local_peer_id().clone());
@@ -670,15 +715,15 @@ impl<B: BlockT, N: Network<B>,D: ConsensusProtocol<NodeId=PeerId>, R: Rng> Netwo
 
 
 	
-		let bridge = NetworkBridge { service, validator_arc };
+		let bridge = NetworkBridge { service, node:validator_arc };
 
-		let startup_work = futures03::future::lazy(move || {
+		let startup_work = futures03::future::lazy(move |_| {
 			// lazily spawn these jobs onto their own tasks. the lazy future has access
 			// to tokio globals, which aren't available outside.
 		//	let mut executor = tokio_executor::DefaultExecutor::current();
 		//	executor.spawn(Box::new(reporting_job.select(on_exit.clone()).then(|_| Ok(()))))
 		//		.expect("failed to spawn grandpa reporting job task");
-			Ok(())
+			()
 		});
 
 		(bridge, startup_work)
@@ -690,24 +735,24 @@ pub  fn is_validator(&self) ->bool
 
 
 	/// Set up the global communication streams. blocks out transaction in. Maybe reverse of grandpa... 
-	pub(crate) fn global_communication<D: ConsensusProtocol>(
+	pub(crate) fn global_communication(
 		&self,
 		is_voter: bool,
 	) -> (
-		impl Stream<Item = D::Output, Error = Error>,
-		impl Sink<Item = TransactionSet, Error = Error>,
+		impl Stream<Item = D::Output>,
+		impl Sink<TransactionSet>,
 	)
 	 {
 
 
 		let service = self.service.clone();
 		let topic = badger_topic::<B>();
-		let incoming = incoming_global( self.validator.clone());
+		let incoming = incoming_global::<B,N,D,R>( self.node.clone());
 
 		let outgoing = TransactionFeed::<B, N,D,R>::new(
 			self.service.clone(),
 			is_voter,
-			self.validator.clone(),
+			self.node.clone(),
 		);
 
 	
@@ -715,31 +760,30 @@ pub  fn is_validator(&self) ->bool
 	}
 }
 
-fn incoming_global<B: BlockT, N: Network<B>,D: ConsensusProtocol, R: Rng>(
+fn incoming_global<B: BlockT, N: Network<B>,D: ConsensusProtocol<NodeId=PeerIdW>, R: Rng>(
 	gossip_validator: Arc<BadgerGossipValidator<B,D,R>>,
-) -> impl Stream<Item = D::Output, Error = Error> 
+) -> impl Stream<Item = D::Output> 
 {
 	BadgerStream::new(gossip_validator.clone())
 }
 
-impl<B: BlockT, N: Network<B>,D:ConsensusProtocol,R:Rng> Clone for NetworkBridge<B, N,D,R> {
+impl<B: BlockT, N: Network<B>,D:ConsensusProtocol<NodeId=PeerIdW>,R:Rng> Clone for NetworkBridge<B, N,D,R> {
 	fn clone(&self) -> Self {
 		NetworkBridge {
 			service: self.service.clone(),
-			validator: Arc::clone(&self.validator),
-			neighbor_sender: self.neighbor_sender.clone(),
+			validator: Arc::clone(&self.node),
 		}
 	}
 }
 
 
 
-pub struct BadgerStream<Block,D :ConsensusProtocol, R:Rng>  {
+pub struct BadgerStream<Block: BlockT,D :ConsensusProtocol<NodeId=PeerIdW>, R:Rng>  {
 	validator:Arc<BadgerGossipValidator<Block,D,R>>,
 }
 
 
-impl<Block,D :ConsensusProtocol, R:Rng> BadgerStream<Block,D,R>
+impl<Block:BlockT,D :ConsensusProtocol<NodeId=PeerIdW>, R:Rng> BadgerStream<Block,D,R>
 {
   fn new( gossip_validator: Arc<BadgerGossipValidator<Block,D,R>>) ->Self
   {
@@ -750,7 +794,7 @@ impl<Block,D :ConsensusProtocol, R:Rng> BadgerStream<Block,D,R>
   }
 }
 
-impl<Block,D:ConsensusProtocol ,R:Rng> Stream for BadgerStream <Block,D , R>{
+impl<Block:BlockT,D:ConsensusProtocol<NodeId=PeerIdW> ,R:Rng> Stream for BadgerStream <Block,D , R>{
 	type Item = D::Output;
 	
 	fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>>
@@ -766,13 +810,13 @@ impl<Block,D:ConsensusProtocol ,R:Rng> Stream for BadgerStream <Block,D , R>{
 
 
 /// An output sink for commit messages.
-struct TransactionFeed<Block: BlockT, N: Network<Block>,D :ConsensusProtocol, R:Rng> {
+struct TransactionFeed<Block: BlockT, N: Network<Block>,D :ConsensusProtocol<NodeId=PeerIdW>, R:Rng> {
 	network: N,
 	is_voter: bool,
 	gossip_validator: Arc<BadgerGossipValidator<Block,D,R>>,
 }
 
-impl<Block: BlockT, N: Network<Block>,D :ConsensusProtocol, R:Rng> TransactionFeed<Block, N,D,R> {
+impl<Block: BlockT, N: Network<Block>,D :ConsensusProtocol<NodeId=PeerIdW>, R:Rng> TransactionFeed<Block, N,D,R> {
 	/// Create a new commit output stream.
 	pub(crate) fn new(
 		network: N,
@@ -787,7 +831,7 @@ impl<Block: BlockT, N: Network<Block>,D :ConsensusProtocol, R:Rng> TransactionFe
 	}
 }
 
-impl<Block: BlockT, N: Network<Block>,D :ConsensusProtocol, R:Rng, Item: iter::IntoIterator> Sink<Item> for TransactionFeed<Block, N,D,R> 
+impl<Block: BlockT, N: Network<Block>,D :ConsensusProtocol<NodeId=PeerIdW>, R:Rng, Item: iter::IntoIterator> Sink<Item> for TransactionFeed<Block, N,D,R> 
 where 
   <Item as IntoIterator>::Item: badger::Contribution 
 {
@@ -803,7 +847,7 @@ where
 		
        for tx in input.into_iter().enumerate()
 	   {
-        let locked=self.gossip_validator.inner.write();
+        let locked=self.gossip_validator;
         match locked.push_transaction(tx)
 		{
 			Ok(_) => {},
@@ -817,14 +861,14 @@ where
         cx: &mut Context
     ) -> Poll<Result<(), Self::Error>>
 	{
-		Ok(())
+		  Poll::Ready(Ok(()))
 	}
     fn poll_close(
         self: Pin<&mut Self>, 
         cx: &mut Context
     ) -> Poll<Result<(), Self::Error>>
 	{
-	Ok(())
+    Poll::Ready(Ok(()))
 	}
 
 }

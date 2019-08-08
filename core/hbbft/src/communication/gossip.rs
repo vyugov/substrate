@@ -82,7 +82,7 @@
 //!
 //! We only send polite messages to peers,
 
-use runtime_primitives::traits::{NumberFor, Block as BlockT, };
+use runtime_primitives::traits::{ Block as BlockT, };
 //use network::consensus_gossip::{self as network_gossip, MessageIntent, ValidatorContext};
 use network::{ PeerId};//config::Roles,
 use parity_codec::{Encode, Decode};
@@ -114,7 +114,7 @@ const BADGER_TOPIC: &str = "itsasnake";
 /// HB gossip message type.
 /// This is the root type that gets encoded and sent on the network.
 #[derive(Debug, Encode, Decode)]
-pub enum GossipMessage<Block: BlockT> {
+pub enum GossipMessage {
 	/// Grandpa message with round and set info.
 	Greeting(GreetingMessage),
 	/// Raw Badger data
@@ -135,7 +135,7 @@ pub(super) struct GreetingMessage {
 
 }
 
-impl<Block: BlockT> From<GreetingMessage> for GossipMessage<Block> {
+impl From<GreetingMessage> for GossipMessage {
 	fn from(greet: GreetingMessage) -> Self {
 		GossipMessage::Greeting(greet)
 	}
@@ -177,7 +177,7 @@ impl Peers {
 	}
     pub fn peer_list(&self) ->Vec<PeerId>
 	{
-     self.inner.iter().map(|k,v | k).collect()
+     self.inner.iter().map(|(k,_) | k.clone()).collect()
 	}
 	pub fn peer_disconnected(&mut self, who: &PeerId) {
 		self.inner.remove(who);
@@ -189,7 +189,7 @@ impl Peers {
 	pub fn update_id(&mut self, who: &PeerId, authId: AuthorityId)  {
 		let peer = match self.inner.get_mut(who) {
 		    None =>  {
-				 self.inner.insert(who, PeerInfo::new_id(authId));
+				 self.inner.insert(who.clone(), PeerInfo::new_id(authId));
 				 return
 			     }
 			Some(p) => p,
@@ -210,6 +210,7 @@ pub(super) enum Action<H>  {
 	ProcessAndDiscard(),
 	// discard
 	Discard(i32),
+	Useless(H),
 }
 
 
