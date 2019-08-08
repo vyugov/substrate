@@ -22,7 +22,7 @@ use parity_codec::{Encode, Decode};
 use client::backend::AuxStore;
 use client::error::{Result as ClientResult, Error as ClientError};
 use fork_tree::ForkTree;
-use grandpa::round::State as RoundState;
+
 use runtime_primitives::traits::{Block as BlockT, NumberFor};
 use log::{info, warn};
 use substrate_telemetry::{telemetry, CONSENSUS_INFO};
@@ -33,10 +33,10 @@ use crate::consensus_changes::{SharedConsensusChanges, ConsensusChanges};
 use crate::environment::{CompletedRound, CompletedRounds, HasVoted, SharedVoterSetState, VoterSetState};
 use crate::NewAuthoritySet;
 
-const VERSION_KEY: &[u8] = b"grandpa_schema_version";
-const SET_STATE_KEY: &[u8] = b"grandpa_completed_round";
-const AUTHORITY_SET_KEY: &[u8] = b"grandpa_voters";
-const CONSENSUS_CHANGES_KEY: &[u8] = b"grandpa_consensus_changes";
+const VERSION_KEY: &[u8] = b"badger_schema_version";
+const SET_STATE_KEY: &[u8] = b"badger_completed_round";
+const AUTHORITY_SET_KEY: &[u8] = b"badger_auths";
+const CONSENSUS_CHANGES_KEY: &[u8] = b"badger_consensus_changes";
 
 const CURRENT_VERSION: u32 = 2;
 

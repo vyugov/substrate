@@ -37,6 +37,8 @@ use badger::crypto::{ PublicKey, PublicKeySet, PublicKeyShare, SecretKey, Secret
 #[cfg(feature = "std")]
 pub type AuthorityPair = (PublicKey,SecretKey);
 
+
+
 use bincode;
 use threshold_crypto::serde_impl::SerdeSecret;
 

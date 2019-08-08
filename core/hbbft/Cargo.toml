@@ -24,9 +24,11 @@ network = { package = "substrate-network", path = "../network" }
 service = { package = "substrate-service", path = "../service", optional = true }
 srml-finality-tracker = { path = "../../srml/finality-tracker" }
 fg_primitives = { package = "substrate-badger-primitives", path = "primitives" }
-grandpa = { package = "finality-grandpa", version = "0.8.1", features = ["derive-codec"] }
-
+hex = "0.3.2"
 badger = { package= "hbbft", path="../../../hbbft" }
+bincode = "1.0.1"
+transaction_pool = { package = "substrate-transaction-pool", path = "../../core/transaction-pool" }
+num = { package = "num-traits", version = "0.2", default-features = false }
 
 [dev-dependencies]
 grandpa = { package = "finality-grandpa", version = "0.8.1", features = ["derive-codec", "test-helpers"] }
