@@ -41,6 +41,7 @@ use badger::sender_queue::{Message as BMessage, SenderQueue};
 use badger::{ConsensusProtocol, CpStep, NetworkInfo,  Target,Contribution};
 use rand::{rngs::OsRng, Rng};
 use network::PeerId;
+use ::unsigned_varint::{decode, encode};
 use fg_primitives::{SignatureWrap,PublicKeyWrap};
 //use grandpa::{voter, voter_set::VoterSet};
 //use grandpa::Message::{Prevote, Precommit, PrimaryPropose};
@@ -55,6 +56,11 @@ use network::{consensus_gossip as network_gossip, NetworkService};
 use network_gossip::ConsensusMessage;
 use crate::communication::gossip::GreetingMessage;
 
+use libp2p::multihash;
+use libp2p::multihash::Multihash;
+#[macro_use]
+use ::serde::{Serialize, Deserialize};
+use ::serde::de::DeserializeOwned;
 use gossip::GossipMessage;
 use gossip::Peers;
 use gossip::Action;
@@ -134,8 +140,34 @@ struct SourcedMessage<D: ConsensusProtocol> {
 }
 
 
-#[derive(Clone,Debug,Hash)]
+#[derive(Clone,Debug,Hash,Serialize,Deserialize)]
 pub struct PeerIdW( pub PeerId);
+
+impl rand::distributions::Distribution<PeerIdW> for PeerIdW
+{
+	fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> PeerIdW
+	{
+		let hash=multihash::Hash::SHA2256;
+	let mut buf = encode::u16_buffer();
+        let code = encode::u16(hash.code(), &mut buf);
+
+        let header_len = code.len() + 1;
+        let size = hash.size();
+
+        let mut output = Vec::new();
+        output.resize(header_len + size as usize, 0);
+        output[..code.len()].copy_from_slice(code);
+        output[code.len()] = size;
+
+        for b in output[header_len..].iter_mut() {
+            *b = rng.gen();
+        }
+
+        let mhash= Multihash {
+            bytes: output,}	;
+		PeerIdW {0:PeerId {multihash:mhash}}	
+	}
+}
 
 impl From<PeerId> for PeerIdW {
     fn from(id: PeerId) -> Self {
@@ -171,10 +203,13 @@ impl std::cmp::Ord for PeerIdW
 	}
 }
 
+pub type BadgerTransaction = Vec<u8>;
+pub type QHB = SenderQueue<QueueingHoneyBadger<Transaction, NodeId, Vec<Transaction>>>;
 
 pub struct BadgerNode<B: BlockT,D,R: Rng> 
 where 
-D: ConsensusProtocol<NodeId=PeerIdW> //specialize to avoid some of the confusion
+D: ConsensusProtocol<NodeId=PeerIdW>, //specialize to avoid some of the confusion
+D::Message: Serialize + DeserializeOwned,
 {
     /// This node's own ID.
     id: PeerId,
@@ -198,7 +233,7 @@ D: ConsensusProtocol<NodeId=PeerIdW> //specialize to avoid some of the confusion
 }
 
 impl<B: BlockT,D: ConsensusProtocol<NodeId=PeerIdW> ,R: Rng> BadgerNode<B,D,R>
-
+where D::Message: serde::Serialize + DeserializeOwned
 {
 fn register_peer_public_key(&mut self,who :&PeerId, auth:AuthorityId)
  {
@@ -224,11 +259,17 @@ fn register_peer_public_key(&mut self,who :&PeerId, auth:AuthorityId)
 pub type BadgerNodeStepResult<D> = CpStep<D>;
 pub type TransactionSet = Vec<Vec<u8>>; //agnostic?
 impl<B: BlockT,D: ConsensusProtocol<NodeId=PeerIdW> ,R: Rng> BadgerNode<B,D,R>
+where D::Message: serde::Serialize + DeserializeOwned
 {
 	pub fn new(config: crate::Config, self_id:PeerId) -> BadgerNode<B,D,R>
 	{
-	let rng=OsRng::new();
-	let ni=NetworkInfo::<D::NodeId>::new(self_id.clone(),config.secret_key_share,config.public_key_set,config.node_id.1.clone(),config.initial_validators.clone());
+	let rng=OsRng::new().unwrap();
+	let secr=match config.secret_key_share
+	{
+		Some(wrap) => Some(wrap.0),
+		None => None
+	};
+	let ni=NetworkInfo::<D::NodeId>::new(PeerIdW{ 0: self_id.clone() },secr,config.public_key_set.0.clone(),config.node_id.1.clone(),config.initial_validators.clone());
     let dhb = DynamicHoneyBadger::builder().build(ni);
 	let (qhb, qhb_step) = QueueingHoneyBadger::builder(dhb)
             .batch_size(config.batch_size)
@@ -273,9 +314,9 @@ impl<B: BlockT,D: ConsensusProtocol<NodeId=PeerIdW> ,R: Rng> BadgerNode<B,D,R>
 		 }
 		 node 
 	}
-	pub fn  handle_message(&mut self, who: AuthorityId, msg:  D::Message) -> Result<(),&'static str>
+	pub fn  handle_message(&mut self, who: &PeerIdW, msg:  D::Message) -> Result<(),&'static str>
 	{
-		match   self.algo.handle_message(&who, msg, &self.main_rng) 
+		match   self.algo.handle_message(who, msg, &self.main_rng) 
 		{
 			Some(step) => 
 			 {
@@ -290,7 +331,7 @@ impl<B: BlockT,D: ConsensusProtocol<NodeId=PeerIdW> ,R: Rng> BadgerNode<B,D,R>
 			    for (target, message) in out_msgs 
 				{
                  self.out_queue.push_back(SourcedMessage {
-                   sender_id: self.id.clone(),
+                   sender_id: PeerIdW{0: self.id.clone()},
                    target,
                    message,});
 				}
@@ -302,15 +343,21 @@ impl<B: BlockT,D: ConsensusProtocol<NodeId=PeerIdW> ,R: Rng> BadgerNode<B,D,R>
 	}
 }
 
-pub(super) struct BadgerGossipValidator<Block: BlockT,D: ConsensusProtocol<NodeId=PeerIdW> ,R: Rng> {
+pub(super) struct BadgerGossipValidator<Block: BlockT,D: ConsensusProtocol<NodeId=PeerIdW> ,R: Rng>
+where
+D::Message: Serialize + DeserializeOwned,
+ {
 	inner: parking_lot::RwLock<BadgerNode<Block,D,R>>,
 }
-impl<Block: BlockT,D: ConsensusProtocol<NodeId=PeerIdW> ,R: Rng> BadgerGossipValidator<Block,D,R> {
+impl<'a,Block: BlockT,D: ConsensusProtocol<NodeId=PeerIdW> +'a,R: Rng+'a> BadgerGossipValidator<Block,D,R> 
+where
+D::Message: Serialize + DeserializeOwned,
+{
 	   fn flush_messages(&self,context: &mut dyn ValidatorContext<Block>)
    {
     let locked= self.inner.write();
 	let topic = badger_topic::<Block>();    
-		 for msg in locked.out_msgs.drain()
+		 for msg in locked.out_queue.drain(..)
 		 {
 			 let vdata=GossipMessage::BadgerData(msg.message).encode();
 			 match &msg.target
@@ -318,12 +365,12 @@ impl<Block: BlockT,D: ConsensusProtocol<NodeId=PeerIdW> ,R: Rng> BadgerGossipVal
 				 Target::All  => context.broadcast_message(topic,vdata,true),
 				Target::Node(to_id) => 
 				  {
-				  context.send_message(to_id, vdata);
+				  context.send_message(to_id.0, vdata);
 
 				  },
               Target::AllExcept(exclude) => {
-				    
-                    for pid in self.peers.peer_list().filter(|n| !exclude.contains(&n)) {
+				    let mut inner = self.inner.write();
+                    for pid in inner.peers.peer_list().iter().filter(|n| !exclude.contains(&n)) {
                         if pid != msg.sender_id {
                             context.send_message(pid, vdata);
                         }
@@ -399,9 +446,9 @@ impl<Block: BlockT,D: ConsensusProtocol<NodeId=PeerIdW> ,R: Rng> BadgerGossipVal
 
 		let action = {
 			match GossipMessage::decode(&mut data) {
-					Some(GossipMessage::Greeting(msg))  =>
+					Ok(GossipMessage::Greeting(msg))  =>
 					{
-						if msg.mySig.verify(msg.myId.to_bytes()) 
+						if msg.mySig.0.verify(msg.myId.to_bytes()) 
 						 {
 							self.inner.write().register_peer_public_key(who,msg.myId);
 							Action::ProcessAndKeep()
@@ -411,22 +458,22 @@ impl<Block: BlockT,D: ConsensusProtocol<NodeId=PeerIdW> ,R: Rng> BadgerGossipVal
 						 Action::Discard(-1)
 						 }
 					},
-					Some(GossipMessage::RequestGreeting) =>
+					Ok(GossipMessage::RequestGreeting) =>
 					{
 						let rd=self.inner.read().unwrap();
 						let msrep=GreetingMessage { myId: rd.id.clone(),mySig: rd.config.node_id.1.sign(rd.id.clone().to_bytes())} ;
                     peer_reply = Some(GossipMessage::Greeting(msrep));
 					Action::ProcessAndDiscard()
 					},
-					Some(GossipMessage::BadgerData(badger_msg)) => 
+					Ok(GossipMessage::BadgerData(badger_msg)) => 
 					{
 						
 					let locked=self.inner.write();
 					if locked.is_authority(who) 
 					 {
-						if let Some(msg) = bincode::deserialize::<D::Message>(&badger_msg)
+						if let Ok(msg) = bincode::deserialize::<D::Message>(&badger_msg)
 						{
-						match locked.handle_message(locked.peers.peer(who).unwrap(),msg)
+						match locked.handle_message(&PeerIdW{0:who.clone()} ,msg)
 						{
 							Ok(_) => 
 							{
@@ -451,7 +498,7 @@ impl<Block: BlockT,D: ConsensusProtocol<NodeId=PeerIdW> ,R: Rng> BadgerGossipVal
 					 }
 					},
 
-				None => {
+				Err(_) => {
 					debug!(target: "afg", "Error decoding message");
 					telemetry!(CONSENSUS_DEBUG; "afg.err_decoding_msg"; "" => "");
 
@@ -466,9 +513,10 @@ impl<Block: BlockT,D: ConsensusProtocol<NodeId=PeerIdW> ,R: Rng> BadgerGossipVal
 }
 
 
-impl<Block: BlockT,D:ConsensusProtocol<NodeId=PeerIdW> ,R:Rng+Send+Sync> network_gossip::Validator<Block> for BadgerGossipValidator<Block,D,R> 
+impl<'a,Block: BlockT,D:ConsensusProtocol<NodeId=PeerIdW>+'a ,R:Rng+Send+Sync+'a> network_gossip::Validator<Block> for BadgerGossipValidator<Block,D,R> 
 where
-D::Output: Send+Sync
+D::Output: Send+Sync,
+D::Message: Serialize+DeserializeOwned,
 {
 	fn new_peer(&self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, _roles: Roles) 
 	{
@@ -482,7 +530,7 @@ D::Output: Send+Sync
             GreetingMessage
 			{
 				myId: PublicKeyWrap{ 0 : inner.config.node_id.0},
-				mySig: SignatureWrap {0: inner.config.node_id.1.sign(self.inner.config.node_id.0.clone())}
+				mySig: SignatureWrap {0: inner.config.node_id.1.sign(inner.config.node_id.0.clone())}
 			}
 		};
 
@@ -528,8 +576,8 @@ D::Output: Send+Sync
 		}
 	}
 
-	fn message_allowed<'a>(&'a self) //todo: not sure what this is for
-		-> Box<dyn FnMut(&PeerId, MessageIntent, &Block::Hash, &[u8]) -> bool + 'a>
+	fn message_allowed<'b>(&'b self) //todo: not sure what this is for
+		-> Box<dyn FnMut(&PeerId, MessageIntent, &Block::Hash, &[u8]) -> bool + 'b>
 	{
 		let (inner, do_rebroadcast) = {
 			use parking_lot::RwLockWriteGuard;
@@ -575,7 +623,7 @@ D::Output: Send+Sync
 		})
 	}
 
-	fn message_expired<'a>(&'a self) -> Box<dyn FnMut(Block::Hash, &[u8]) -> bool + 'a> {
+	fn message_expired<'b>(&'b self) -> Box<dyn FnMut(Block::Hash, &[u8]) -> bool + 'b> {
 		let inner = self.inner.read();
 		Box::new(move |topic, mut data| {
 			// if the topic is not one of the ones that we are keeping at the moment,
@@ -674,26 +722,32 @@ impl Stream for NetworkStream {
 		if let Some(ref mut inner) = self.inner {
 			return Some(inner.poll(cx));
 		}
-		match self.outer.poll(cx) {
-		     futures03::Poll::Ready(mut inner) => {
+		match self.outer.try_recv() {
+			
+		    Ok(Some(mut inner)) => {
 				let poll_result = inner.poll_next(cx);
 				self.inner = Some(inner);
 				poll_result
 			},
-			futures03::Poll::Pending => futures03::Poll::Pending,
+			Ok(None) => futures03::Poll::Pending,
+			Err(_) => futures03::Poll::Pending,
 		}
 	}
 }
 
 /// Bridge between the underlying network service, gossiping consensus messages and Grandpa
-pub(crate) struct NetworkBridge<B: BlockT, N: Network<B>,D: ConsensusProtocol<NodeId=PeerIdW>, R: Rng> {
+pub(crate) struct NetworkBridge<B: BlockT, N: Network<B>,D: ConsensusProtocol<NodeId=PeerIdW>, R: Rng> 
+where 
+D::Message: Serialize + DeserializeOwned,
+{
 	service: N,
 	node: Arc<BadgerGossipValidator<B,D,R>>,
 }
 
-impl<B: BlockT, N: PollParameters + Network<B>,D: ConsensusProtocol<NodeId=PeerIdW>, R: Rng+Send+Sync> NetworkBridge<B, N, D,R> 
+impl<'a,B: BlockT, N: PollParameters + Network<B>,D: ConsensusProtocol<NodeId=PeerIdW>+'a, R: Rng+Send+Sync+'a> NetworkBridge<B, N, D,R> 
 where
-  D::Output: Send+Sync
+  D::Output: Send+Sync,
+  D::Message: Serialize + DeserializeOwned,
 {
 	/// Create a new NetworkBridge to the given NetworkService. Returns the service
 	/// handle and a future that must be polled to completion to finish startup.
@@ -763,27 +817,37 @@ pub  fn is_validator(&self) ->bool
 fn incoming_global<B: BlockT, N: Network<B>,D: ConsensusProtocol<NodeId=PeerIdW>, R: Rng>(
 	gossip_validator: Arc<BadgerGossipValidator<B,D,R>>,
 ) -> impl Stream<Item = D::Output> 
+where
+D::Message: Serialize + DeserializeOwned,
 {
 	BadgerStream::new(gossip_validator.clone())
 }
 
-impl<B: BlockT, N: Network<B>,D:ConsensusProtocol<NodeId=PeerIdW>,R:Rng> Clone for NetworkBridge<B, N,D,R> {
+impl<B: BlockT, N: Network<B>,D:ConsensusProtocol<NodeId=PeerIdW>,R:Rng> Clone for NetworkBridge<B, N,D,R> 
+where
+D::Message: Serialize + DeserializeOwned,
+{
 	fn clone(&self) -> Self {
 		NetworkBridge {
 			service: self.service.clone(),
-			validator: Arc::clone(&self.node),
+			node: Arc::clone(&self.node),
 		}
 	}
 }
 
 
 
-pub struct BadgerStream<Block: BlockT,D :ConsensusProtocol<NodeId=PeerIdW>, R:Rng>  {
+pub struct BadgerStream<Block: BlockT,D :ConsensusProtocol<NodeId=PeerIdW>, R:Rng> 
+where 
+D::Message: Serialize + DeserializeOwned,
+ {
 	validator:Arc<BadgerGossipValidator<Block,D,R>>,
 }
 
 
 impl<Block:BlockT,D :ConsensusProtocol<NodeId=PeerIdW>, R:Rng> BadgerStream<Block,D,R>
+where
+D::Message: Serialize + DeserializeOwned,
 {
   fn new( gossip_validator: Arc<BadgerGossipValidator<Block,D,R>>) ->Self
   {
@@ -794,7 +858,10 @@ impl<Block:BlockT,D :ConsensusProtocol<NodeId=PeerIdW>, R:Rng> BadgerStream<Bloc
   }
 }
 
-impl<Block:BlockT,D:ConsensusProtocol<NodeId=PeerIdW> ,R:Rng> Stream for BadgerStream <Block,D , R>{
+impl<Block:BlockT,D:ConsensusProtocol<NodeId=PeerIdW> ,R:Rng> Stream for BadgerStream <Block,D , R>
+where
+D::Message: Serialize + DeserializeOwned,
+{
 	type Item = D::Output;
 	
 	fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>>
@@ -810,13 +877,19 @@ impl<Block:BlockT,D:ConsensusProtocol<NodeId=PeerIdW> ,R:Rng> Stream for BadgerS
 
 
 /// An output sink for commit messages.
-struct TransactionFeed<Block: BlockT, N: Network<Block>,D :ConsensusProtocol<NodeId=PeerIdW>, R:Rng> {
+struct TransactionFeed<Block: BlockT, N: Network<Block>,D :ConsensusProtocol<NodeId=PeerIdW>, R:Rng> 
+where
+D::Message: Serialize + DeserializeOwned,
+{
 	network: N,
 	is_voter: bool,
 	gossip_validator: Arc<BadgerGossipValidator<Block,D,R>>,
 }
 
-impl<Block: BlockT, N: Network<Block>,D :ConsensusProtocol<NodeId=PeerIdW>, R:Rng> TransactionFeed<Block, N,D,R> {
+impl<Block: BlockT, N: Network<Block>,D :ConsensusProtocol<NodeId=PeerIdW>, R:Rng> TransactionFeed<Block, N,D,R> 
+where
+D::Message: Serialize + DeserializeOwned,
+{
 	/// Create a new commit output stream.
 	pub(crate) fn new(
 		network: N,
@@ -833,7 +906,8 @@ impl<Block: BlockT, N: Network<Block>,D :ConsensusProtocol<NodeId=PeerIdW>, R:Rn
 
 impl<Block: BlockT, N: Network<Block>,D :ConsensusProtocol<NodeId=PeerIdW>, R:Rng, Item: iter::IntoIterator> Sink<Item> for TransactionFeed<Block, N,D,R> 
 where 
-  <Item as IntoIterator>::Item: badger::Contribution 
+  <Item as IntoIterator>::Item: badger::Contribution,
+  D::Message: Serialize + DeserializeOwned,
 {
 	type Error = Error;
      

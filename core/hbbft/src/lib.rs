@@ -48,6 +48,12 @@
 //! number (this is num(signal) + N). When finalizing a block, we either apply
 //! or prune any signaled changes based on whether the signaling block is
 //! included in the newly-finalized chain.
+
+extern crate serde;
+use serde::Serialize;
+use serde::de::DeserializeOwned;  
+extern crate unsigned_varint;
+use runtime_primitives::traits::Hash as THash;
 use runtime_primitives::traits::{NumberFor, Block as BlockT, Header,  ProvideRuntimeApi,BlakeTwo256,};
 use runtime_primitives::{generic::{self, BlockId}, Justification,ApplyError};
 //use runtime_primitives::{
@@ -64,7 +70,7 @@ use communication::NetworkBridge;
 use communication::TransactionSet;
 use communication::PeerIdW;
 //use network::consensus_gossip::{self as network_gossip, MessageIntent, ValidatorContext};
-//use network::{PeerId};//config::Roles, 
+use network::{PeerId};//config::Roles, 
 use substrate_telemetry::{telemetry, CONSENSUS_WARN, CONSENSUS_INFO};//CONSENSUS_TRACE, CONSENSUS_DEBUG, 
 use futures03::prelude::*;
 //use futures03::channel::mpsc;
@@ -73,16 +79,19 @@ use futures03::sink::SendAll;
 use serde_json as json;
 use hex;
 use transaction_pool::txpool::{self, Pool as TransactionPool};
-use network::config::BoxFinalityProofRequestBuilder;
 use std::{sync::Arc, time::Duration,  marker::PhantomData, hash::Hash, fmt::Debug};//time::Instant, thread,
 use client::error::{Error as ClientError, };
 use runtime_primitives::traits::DigestFor;
-use service::TelemetryOnConnect;
+use client::runtime_api::ConstructRuntimeApi;
 
+
+use service::TelemetryOnConnect;
+use client::blockchain::HeaderBackend;
 use badger::crypto::{ PublicKey,   SecretKey, };//PublicKeySet,PublicKeyShare,SecretKeyShare,Signature,
 use client::Client;
 use client::CallExecutor;
 use client::backend::Backend;
+use std::str::FromStr;
 //use client::blockchain::Backend;
 
 
@@ -113,6 +122,7 @@ use badger::ConsensusProtocol;
 use fg_primitives::SecretKeyShareWrap;
 use fg_primitives::SecretKeyWrap;
 use fg_primitives::PublicKeySetWrap;
+use fg_primitives::PublicKeyWrap;
 use std::path::PathBuf;
 //use fg_primitives::AuthorityId;
 use fg_primitives::HbbftApi;
@@ -149,7 +159,8 @@ pub type BadgerImportQueue<B> = BasicQueue<B>;
 
 
 pub  struct BadgerWorker<C,  I, SO,Inbound,R:Rng,B:BlockT,N: Network<B>,D: ConsensusProtocol<NodeId=PeerIdW>,A> 
-where A: txpool::ChainApi
+where A: txpool::ChainApi,
+D::Message: Serialize + DeserializeOwned,
 {
 	pub client: Arc<C>,
 	pub block_import: Arc<Mutex<I>>,
@@ -277,7 +288,7 @@ pub fn badger_import_queue<B, C, Pub,Sig>(
 	))
 }
 
-//use std::collections::{HashMap, };
+use std::collections::{BTreeMap, };
 
 
 const REBROADCAST_AFTER: Duration = Duration::from_secs(60 * 5);
@@ -303,7 +314,7 @@ pub struct Config {
 	pub node_id: Arc<AuthorityPair>,
 	pub public_key_set: Arc<PublicKeySetWrap>,
 	pub batch_size:u32,
-
+    pub initial_validators: BTreeMap<PeerIdW, PublicKey>,
 }
 fn secret_share_from_string(st:&str) ->Result<SecretKeyShareWrap,Error>
 {
@@ -349,7 +360,7 @@ impl Config {
          name: Some(name.to_string()),
          num_validators: match spec["num_validators"]
 		   {
-			   Number(x) => x as usize,
+			   Number(x) => match x.as_u64() {Some(y)=> y as usize, None => return Err("Invalid num_validators".to_string())},
                Value::String(st) => match st.parse::<usize>()
 			     {
 					 Ok(v) =>v,
@@ -372,14 +383,18 @@ impl Config {
 						           {
                                     Value::String(st) => 
 									{
-									let data=hex::decode(st)?;
+									let data= match hex::decode(st)
+									 {
+										 Ok(val) =>val,
+										 Err(_) =>return Err("Hex error in pub".to_string())
+									 };
 									match bincode::deserialize(&data)
 									{
 									Ok(val) => val,
 									Err(_)  => return Err("public key binary invalid".to_string())
 									}
 									}
-									_ => return Err("pub key not string"),
+									_ => return Err("pub key not string".to_string()),
 								   };
 						 let sec_key:SecretKey=match nid["priv"]
 						           {
@@ -400,30 +415,64 @@ impl Config {
 								   };
 								   Arc::new((pub_key,sec_key))
 					  },
-					  _ => return Err(  "node id not pub/priv object")
+					  _ => return Err(  "node id not pub/priv object".to_string())
 
 				  },
 		public_key_set: match spec["public_key_set"]
 		                {
                            Value::String(st) => 
 									{
-									let data=hex::decode(st)?;
+									let data=match hex::decode(st)
+									 {
+										 Ok(val) =>val,
+										 Err(_) =>return Err("Hex error in public_key_set".to_string())
+									 };
 									match bincode::deserialize(&data)
 									{
 									Ok(val) => Arc::new(PublicKeySetWrap{0: val}),
-									Err(_)  => return Err( "public key set binary invalid")
+									Err(_)  => return Err( "public key set binary invalid".to_string())
 									}
 									}
-									_ => return Err("pub key set not string"),
+									_ => return Err("pub key set not string".to_string()),
 						},
 		batch_size : 	match spec["batch_size"]
 		   {
-			   Number(x) => x as usize,
-               Value::String(st) => st.parse::<usize>()?,
-			   _ => return Err(  "Invalid batch_size") ,
-		   },				  
+			   Number(x) => match x.as_u64() {Some(y)=> y as u32, None => return Err("Invalid batch_size".to_string())},
+               Value::String(st) => match st.parse::<u32>(){Ok(val)=>val,Err(_)=>return Err("batch_size parsing error".to_string())},
+			   _ => return Err(  "Invalid batch_size".to_string()) ,
+		   },
+		  
+		  initial_validators : match spec["initial_validators"]
+		   {
+            Object(dict) => {
+				let mut ret=BTreeMap::<PeerIdW, PublicKey>::new();
+						for (k,v) in dict.iter()
+					{
+						let peer=match PeerId::from_str(k)
+						   {
+							   Ok(val) => val,
+							   Err(_) => return Err(  "Invalid PeerId".to_string()) 
+						   };
+						let data= match hex::decode(v)
+						{
+							Ok(val) =>val,
+							Err(_) =>return Err("Hex error in pubkey".to_string())
+						};
+						let pubkey :PublicKeyWrap =  match bincode::deserialize(&data)
+							{
+							Ok(val) => val,
+							Err(_)  => return Err("public key binary invalid".to_string())
+							};
+                      ret.insert(PeerIdW{0:peer},pubkey.0);
+					}
+
+				ret
+			},
+			_ =>return Err(  "Invalid initial_validators, should be object".to_string())
+
+		   }				  
 		};
-		ret
+		Ok(ret)
 	}
 }
 
@@ -447,7 +496,7 @@ pub enum Error {
 impl From<hex::FromHexError> for Error
 {
   fn from(e: hex::FromHexError) -> Self {
-		Error::Badger(e)
+		Error::Badger(e.to_string())
 	}
 }
 impl From<ClientError> for Error {
@@ -578,6 +627,7 @@ fn global_communication<Block: BlockT<Hash=H256>, B, E, N, RA,D, R>(
 	D: ConsensusProtocol<NodeId=PeerIdW>,
 	D::Output: Send+Sync,
 	R: Rng +Send+Sync,
+	D::Message: Serialize+DeserializeOwned,
 {
 
 	let is_voter = network.is_validator();
@@ -635,7 +685,7 @@ where A: txpool::ChainApi
     ) -> Poll<Option<Self::Item>>
 	{
      let pending_iterator = self.transaction_pool.ready();
-	  let batch=pending_iterator.into_iter().collect();
+	  let batch:Vec<_>=pending_iterator.into_iter().map(|a| a.encode()).collect();
 	  if batch.len()==0
 	  {
 		  return Poll::Pending;
@@ -644,11 +694,14 @@ where A: txpool::ChainApi
 	}
 }
 
-pub struct BadgerProposerWorker<D: ConsensusProtocol<NodeId=PeerIdW>, S, N, Block:BlockT, TF,C,A,I>
+pub struct BadgerProposerWorker<D: ConsensusProtocol<NodeId=PeerIdW>, S, N, Block:BlockT<Hash=H256>, TF,A,I,B,E,RA>
 where
 S : Stream<Item = D::Output> ,
 TF: Sink<TransactionSet>+Unpin,
 A: txpool::ChainApi,
+B: client::backend::Backend<Block, Blake2Hasher> + Send + Sync + 'static,
+E: CallExecutor<Block, Blake2Hasher> + Send + Sync + Clone + 'static,
+RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
 //N : Network<Block> + Send + Sync + 'static,
 NumberFor<Block>: BlockNumberOps,
 I:BlockImport<Block>
@@ -657,16 +710,21 @@ I:BlockImport<Block>
  pub transaction_in: TF,
  pub transaction_pool: Arc<TransactionPool<A>>,
  pub network: N,
- pub client:C,
+ pub client: Arc<Client<B, E, Block, RA>>,
  pub block_import: Arc<Mutex<I>>,
  pub inherent_data_providers: InherentDataProviders,
  ph:PhantomData<D>,
  phb:PhantomData<Block>,
 
 }
-impl<'a,D:ConsensusProtocol<NodeId=PeerIdW>+'a,S: Stream<Item = D::Output> +'a ,N:'a,Block:BlockT,TF: Sink<TransactionSet>+Unpin,C:'a,A: txpool::ChainApi,I:BlockImport<Block>+'a>   BadgerProposerWorker<D,S,N,Block,TF,C,A,I>
+impl<'a,D:ConsensusProtocol<NodeId=PeerIdW>+'a,S: Stream<Item = D::Output> +'a ,N:'a,Block:BlockT<Hash=H256>,TF: Sink<TransactionSet>+Unpin,A: txpool::ChainApi,I:BlockImport<Block>+'a,B,E,RA:'a>   BadgerProposerWorker<D,S,N,Block,TF,A,I,B,E,RA>
 where
-NumberFor<Block>: BlockNumberOps
+NumberFor<Block>: BlockNumberOps,
+Client<B, E, Block, RA>: ProvideRuntimeApi,
+<Client<B, E, Block, RA> as ProvideRuntimeApi>::Api: BlockBuilderApi<Block>,
+B: client::backend::Backend<Block, Blake2Hasher> + Send + Sync + 'static,
+E: CallExecutor<Block, Blake2Hasher> + Send + Sync + Clone + 'static,
+RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
 {
 	pub fn make_sink(& mut self) -> SendAll<TF, TxStream<A>> 
 	{
@@ -713,14 +771,14 @@ NumberFor<Block>: BlockNumberOps
 		inherent_digests: DigestFor<Block>,
 	) -> Result<Vec<BlockImportParams<Block>>, error::Error> {
 
-		 info!("Processing batch with epoch {:?} of {:?} transactions into blocks",batch.epoch,batch.contributions.len());
+		 info!("Processing batch with epoch {:?} of {:?} transactions into blocks",batch.epoch(),batch.len());
          let mut ret=Vec::new();
    		let mut chain_head = match self.client.best_chain() {
 				Ok(x) => x,
 				Err(e) => {
 					warn!(target: "slots", "Unable to author block. \
 					no best block header: {:?}", e);
-					return Err(())
+					return Err(error::Error::Backend("No best block".to_string()))
 				}
 			};
         let mut parent_hash = chain_head.hash();
@@ -870,7 +928,7 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 ) -> ::client::error::Result<impl Future<Output=()> + Send+Unpin> where
 	Block::Hash: Ord,
 	B: Backend<Block, Blake2Hasher> + 'static,
-	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
+	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static+Clone,
 	N: Network<Block> + Send + Sync + Unpin +PollParameters,
 	N::In: Send,
 	SC: SelectChain<Block> + 'static,
@@ -880,6 +938,8 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 	X: Future<Output=()> + Clone + Send+Unpin,
 	A: txpool::ChainApi,
 	I:BlockImport<Block>+Send+Sync,
+	RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
+	<Client<B, E, Block, RA> as ProvideRuntimeApi>::Api: BlockBuilderApi<Block>
 {
 	let (network_bridge, network_startup) = NetworkBridge::new(
 		network,

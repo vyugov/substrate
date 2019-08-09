@@ -90,33 +90,9 @@ impl<B, E, Block: BlockT<Hash=H256>, RA, PRA, SC> JustificationImport<Block>
 	}
 }
 
-enum AppliedChanges<H, N> {
-	Standard(bool), // true if the change is ready to be applied (i.e. it's a root)
-	Forced(NewAuthoritySet<H, N>),
-	None,
-}
-
-impl<H, N> AppliedChanges<H, N> {
-	fn needs_justification(&self) -> bool {
-		match *self {
-			AppliedChanges::Standard(_) => true,
-			AppliedChanges::Forced(_) | AppliedChanges::None => false,
-		}
-	}
-}
 
 
 
-impl<'a, Block: 'a + BlockT> PendingSetChanges<'a, Block> {
-	// revert the pending set change explicitly.
-	fn revert(self) { }
-
-	fn defuse(mut self) -> (AppliedChanges<Block::Hash, NumberFor<Block>>, bool) {
-		self.just_in_case = None;
-		let applied_changes = ::std::mem::replace(&mut self.applied_changes, AppliedChanges::None);
-		(applied_changes, self.do_pause)
-	}
-}
 
 impl<'a, Block: 'a + BlockT> Drop for PendingSetChanges<'a, Block> {
 	fn drop(&mut self) {

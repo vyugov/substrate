@@ -144,7 +144,7 @@ impl From<GreetingMessage> for GossipMessage {
 
 struct PeerInfo {
 	//view: View<N>,
-	id: Option<AuthorityId> //public key
+	pub id: Option<AuthorityId> //public key
 }
 
 impl PeerInfo {
@@ -172,6 +172,10 @@ impl Default for Peers {
 }
 
 impl Peers {
+	pub fn new() ->Self
+	{
+		Peers { inner: HashMap::new() }
+	}
 	pub fn new_peer(&mut self, who: PeerId) {
 		self.inner.insert(who, PeerInfo::new());
 	}

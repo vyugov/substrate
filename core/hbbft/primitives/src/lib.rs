@@ -24,6 +24,8 @@ extern crate alloc;
 #[cfg(feature = "std")]
 use serde::Serialize;
 
+#[cfg(feature = "std")]
+use serde::Deserialize;
 //#[cfg(feature = "std")]
 //use serde::Deserialize;
 
@@ -78,11 +80,11 @@ impl parity_codec::Decode for SecretKeyWrap {
   }
 }
 
-#[derive(Debug,Serialize,Clone,PartialEq,Eq,Hash)]
+#[derive(Debug,Serialize,Deserialize,Clone,PartialEq,Eq,Hash)]
 pub struct PublicKeySetWrap( pub PublicKeySet);
 
 
-#[derive(Debug,Serialize,Clone,PartialEq,Eq,Hash)]
+#[derive(Debug,Serialize,Deserialize,Clone,PartialEq,Eq,Hash)]
 pub struct PublicKeyWrap(pub PublicKey);
 
 use badger::crypto::PK_SIZE;
@@ -187,7 +189,7 @@ pub type AuthorityId = PublicKeyWrap;
 
 
 #[derive(Debug,Serialize,Clone,PartialEq,Eq,Hash)]
-pub struct SignatureWrap(Signature);
+pub struct SignatureWrap(pub Signature);
 
 
 impl parity_codec::Encode for SignatureWrap {
