@@ -5,6 +5,7 @@ authors = ["Not me"]
 edition = "2018"
 
 [dependencies]
+bytes = "0.4.12"
 unsigned-varint = { version = "0.2.2", features = ["codec"] }
 fork-tree = { path = "../../core/utils/fork-tree" }
 futures03 = { package = "futures-preview", version = "0.3.0-alpha.17", features = ["compat"] }

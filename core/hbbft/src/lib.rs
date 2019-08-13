@@ -15,6 +15,8 @@
 // You should have received a copy of the GNU General Public License
 // along with Substrate.  If not, see <http://www.gnu.org/licenses/>.
 
+
+
 //! Integration of the GRANDPA finality gadget into substrate.
 //!
 //! This crate is unstable and the API and usage may change.
@@ -66,7 +68,7 @@ use consensus_common::{evaluation};
 use inherents::{ InherentIdentifier,  };
 mod communication;
 use communication::NetworkBridge;
-
+use communication::QHB;
 use communication::TransactionSet;
 use communication::PeerIdW;
 //use network::consensus_gossip::{self as network_gossip, MessageIntent, ValidatorContext};
@@ -158,13 +160,12 @@ pub type BadgerImportQueue<B> = BasicQueue<B>;
 
 
 
-pub  struct BadgerWorker<C,  I, SO,Inbound,R:Rng,B:BlockT,N: Network<B>,D: ConsensusProtocol<NodeId=PeerIdW>,A> 
+pub  struct BadgerWorker<C,  I, SO,Inbound,B:BlockT,N: Network<B>,A> 
 where A: txpool::ChainApi,
-D::Message: Serialize + DeserializeOwned,
 {
 	pub client: Arc<C>,
 	pub block_import: Arc<Mutex<I>>,
-	pub network: NetworkBridge<B,N,D,R>,
+	pub network: NetworkBridge<B,N>,
 
 	pub transaction_pool: Arc<TransactionPool<A>>,
 	pub sync_oracle: SO,
@@ -453,7 +454,7 @@ impl Config {
 							   Ok(val) => val,
 							   Err(_) => return Err(  "Invalid PeerId".to_string()) 
 						   };
-						let data= match hex::decode(v)
+						let data= match hex::decode(v.as_str().unwrap())
 						{
 							Ok(val) =>val,
 							Err(_) =>return Err("Hex error in pubkey".to_string())
@@ -547,12 +548,12 @@ impl<B, E, Block: BlockT<Hash=H256>, RA> BlockStatus<Block> for Arc<Client<B, E,
 
 
 
-pub struct LinkHalf<B, E, Block: BlockT<Hash=H256>, RA, SC> {
-	client: Arc<Client<B, E, Block, RA>>,
-	select_chain: SC,
+//pub struct LinkHalf<B, E, Block: BlockT<Hash=H256>, RA, SC> {
+//	client: Arc<Client<B, E, Block, RA>>,
+	
 	//persistent_data: PersistentData<Block>,
 	//voter_commands_rx: mpsc::UnboundedReceiver<VoterCommand<Block::Hash, NumberFor<Block>>>,
-}
+//}
 
 /// Make block importer and link half necessary to tie the background voter
 /// to it.
@@ -612,11 +613,11 @@ where
 	))
 } */
 
-fn global_communication<Block: BlockT<Hash=H256>, B, E, N, RA,D, R>(
+fn global_communication<Block: BlockT<Hash=H256>, B, E, N, RA>(
 	client: &Arc<Client<B, E, Block, RA>>,
-	network: &NetworkBridge<Block, N,D,R>,
+	network: &NetworkBridge<Block, N>,
 ) -> (
-		impl Stream<Item = D::Output>,
+		impl Stream<Item = <QHB as ConsensusProtocol>::Output>,
 		impl Sink<TransactionSet>,
 ) where
 	B: Backend<Block, Blake2Hasher>,
@@ -624,10 +625,6 @@ fn global_communication<Block: BlockT<Hash=H256>, B, E, N, RA,D, R>(
 	N: Network<Block>+PollParameters,
 	RA: Send + Sync,
 	NumberFor<Block>: BlockNumberOps,
-	D: ConsensusProtocol<NodeId=PeerIdW>,
-	D::Output: Send+Sync,
-	R: Rng +Send+Sync,
-	D::Message: Serialize+DeserializeOwned,
 {
 
 	let is_voter = network.is_validator();
@@ -676,7 +673,8 @@ where A: txpool::ChainApi
 }
 
 impl<A> Stream for TxStream<A>
-where A: txpool::ChainApi
+where A: txpool::ChainApi,
+
 {
 	type Item=TransactionSet;
 	fn poll_next(
@@ -685,7 +683,7 @@ where A: txpool::ChainApi
     ) -> Poll<Option<Self::Item>>
 	{
      let pending_iterator = self.transaction_pool.ready();
-	  let batch:Vec<_>=pending_iterator.into_iter().map(|a| a.encode()).collect();
+	  let batch:Vec<_>=pending_iterator.map(|a| a.data.encode()).collect();
 	  if batch.len()==0
 	  {
 		  return Poll::Pending;
@@ -694,9 +692,9 @@ where A: txpool::ChainApi
 	}
 }
 
-pub struct BadgerProposerWorker<D: ConsensusProtocol<NodeId=PeerIdW>, S, N, Block:BlockT<Hash=H256>, TF,A,I,B,E,RA>
+pub struct BadgerProposerWorker<S, N, Block:BlockT<Hash=H256>, TF,A,I,B,E,RA,SC>
 where
-S : Stream<Item = D::Output> ,
+S : Stream<Item = <QHB as ConsensusProtocol>::Output> ,
 TF: Sink<TransactionSet>+Unpin,
 A: txpool::ChainApi,
 B: client::backend::Backend<Block, Blake2Hasher> + Send + Sync + 'static,
@@ -704,6 +702,7 @@ E: CallExecutor<Block, Blake2Hasher> + Send + Sync + Clone + 'static,
 RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
 //N : Network<Block> + Send + Sync + 'static,
 NumberFor<Block>: BlockNumberOps,
+ SC:SelectChain<Block> + Clone,
 I:BlockImport<Block>
 {
  pub block_out: S,
@@ -713,22 +712,23 @@ I:BlockImport<Block>
  pub client: Arc<Client<B, E, Block, RA>>,
  pub block_import: Arc<Mutex<I>>,
  pub inherent_data_providers: InherentDataProviders,
- ph:PhantomData<D>,
+ pub select_chain: SC,
  phb:PhantomData<Block>,
 
 }
-impl<'a,D:ConsensusProtocol<NodeId=PeerIdW>+'a,S: Stream<Item = D::Output> +'a ,N:'a,Block:BlockT<Hash=H256>,TF: Sink<TransactionSet>+Unpin,A: txpool::ChainApi,I:BlockImport<Block>+'a,B,E,RA:'a>   BadgerProposerWorker<D,S,N,Block,TF,A,I,B,E,RA>
+impl<'a,S: Stream<Item = <QHB as ConsensusProtocol>::Output> +'a ,N:'a,Block:BlockT<Hash=H256>,TF: Sink<TransactionSet>+Unpin,A: txpool::ChainApi,I:BlockImport<Block>+'a,B,E,RA:'a,SC:'a>   BadgerProposerWorker<S,N,Block,TF,A,I,B,E,RA,SC>
 where
 NumberFor<Block>: BlockNumberOps,
 Client<B, E, Block, RA>: ProvideRuntimeApi,
 <Client<B, E, Block, RA> as ProvideRuntimeApi>::Api: BlockBuilderApi<Block>,
 B: client::backend::Backend<Block, Blake2Hasher> + Send + Sync + 'static,
 E: CallExecutor<Block, Blake2Hasher> + Send + Sync + Clone + 'static,
-RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
+RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>+ Send + Sync,
+SC:SelectChain<Block> + Clone,
 {
 	pub fn make_sink(& mut self) -> SendAll<TF, TxStream<A>> 
 	{
-		self.transaction_in.send_all(TxStream{transaction_pool:self.transaction_pool.clone()})
+		self.transaction_in.send_all(&mut TxStream{transaction_pool:self.transaction_pool.clone()})
 	}
 
 	pub fn make_block_spitter (&mut self) -> impl Future + '_
@@ -766,14 +766,14 @@ RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
 
 	pub fn make_import_blocks(
 		&self,
-		batch: &D::Output,
+		batch: &<QHB as ConsensusProtocol>::Output,
 		inherent_data: InherentData,
 		inherent_digests: DigestFor<Block>,
 	) -> Result<Vec<BlockImportParams<Block>>, error::Error> {
 
 		 info!("Processing batch with epoch {:?} of {:?} transactions into blocks",batch.epoch(),batch.len());
          let mut ret=Vec::new();
-   		let mut chain_head = match self.client.best_chain() {
+   		let mut chain_head = match self.select_chain.best_chain() {
 				Ok(x) => x,
 				Err(e) => {
 					warn!(target: "slots", "Unable to author block. \
@@ -807,9 +807,15 @@ RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
 		let pending_iterator = self.transaction_pool.ready();
 
 		debug!("Attempting to push transactions from the batch.");
-		for (nid , pending) in batch.contributions.into_iter() {
-
-			trace!("[{:?}] Pushing to the block.", pending.hash);
+		for  pending in batch.into_tx_iter() {
+            let pending =   Decode::decode(&mut pending.as_slice());
+			let pending= match pending
+			{
+				Ok(val) => val,
+				Err(_) => continue
+			};
+            //a.data.encode()
+			trace!("[{:?}] Pushing to the block.", pending);
 			match client::block_builder::BlockBuilder::push(&mut block_builder, *pending.data.clone()) {
 				Ok(()) => {
 					debug!("[{:?}] Pushed to the block.", pending.hash);
@@ -836,12 +842,12 @@ RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
 							"number" => ?block.header().number(),
 							"hash" => ?<Block as BlockT>::Hash::from(block.header().hash()),
 							);
-						if Decode::decode(&mut block.encode().as_slice()).as_ref() != Some(&block) 
+						if Decode::decode(&mut block.encode().as_slice()).as_ref() != Ok(&block) 
 						 {
     	                	error!("Failed to verify block encoding/decoding");
 		                    }
 
-						if let Err(err) = evaluation::evaluate_initial(&block, &parent_hash, pnumber) {
+						if let Err(err) = evaluation::evaluate_initial(&block, &parent_hash, *pnumber) {
 							error!("Failed to evaluate authored block: {:?}", err);
 						}
 						let (header, body) = block.deconstruct();
@@ -925,6 +931,7 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
     on_exit: X,
 	block_import: Arc<Mutex<I>>,
 	inherent_data_providers: InherentDataProviders,
+	selch:SC,
 ) -> ::client::error::Result<impl Future<Output=()> + Send+Unpin> where
 	Block::Hash: Ord,
 	B: Backend<Block, Blake2Hasher> + 'static,
@@ -937,7 +944,7 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 	RA: Send + Sync + 'static,
 	X: Future<Output=()> + Clone + Send+Unpin,
 	A: txpool::ChainApi,
-	I:BlockImport<Block>+Send+Sync,
+	I:BlockImport<Block>+Send+Sync+'static,
 	RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
 	<Client<B, E, Block, RA> as ProvideRuntimeApi>::Api: BlockBuilderApi<Block>
 {
@@ -967,7 +974,7 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
                  client: client.clone(),
                  block_import: block_import.clone(),
                  inherent_data_providers: inherent_data_providers,
-				 ph:PhantomData,
+				 select_chain: selch,
 				 phb:PhantomData
                 };
 
