@@ -440,7 +440,10 @@ fn register_peer_public_key(&mut self,who :&PeerId, auth:AuthorityId)
  {
   self.peers.update_id(who,auth)
  }
-
+fn push_transaction(&mut self,tx: Vec<u8>) -> Result<CpStep<D>>
+{
+algo.push_transaction(tx,&self.rng)
+}
  fn is_authority(&self, who :&PeerId) -> bool
   {
 	  let auth=self.peers.peer(who);
@@ -645,7 +648,7 @@ fn flush_message_net<N:Network<Block>>(&self,context: &N)
     pub fn push_transaction<N:Network<Block>>(&self,tx: Vec<u8>,net: &N) ->Result<(),Error>
 	{
        let mut locked=self.inner.write();
-	   match locked.algo.push_transaction(tx,&locked.main_rng)
+	   match locked.push_transaction(tx)
 	   {
 		   Ok(step) => {
 			let out_msgs: Vec<_> = step
