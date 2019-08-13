@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::iter;
 use std::time;
 use log::{trace, debug};
-use futures::sync::mpsc;
+use futures03::channel::mpsc;
 use lru_cache::LruCache;
 use libp2p::PeerId;
 use sr_primitives::traits::{Block as BlockT, Hash, HashFor};
@@ -551,6 +551,28 @@ impl<B: BlockT> ConsensusGossip<B> {
 
 		peer.known_messages.insert(message_hash);
 		protocol.send_consensus(who.clone(), message.clone());
+	}
+}
+
+/// A gossip message validator that discards all messages.
+pub struct DiscardAll;
+
+impl<B: BlockT> Validator<B> for DiscardAll {
+	fn validate(
+		&self,
+		_context: &mut dyn ValidatorContext<B>,
+		_sender: &PeerId,
+		_data: &[u8],
+	) -> ValidationResult<B::Hash> {
+		ValidationResult::Discard
+	}
+
+	fn message_expired<'a>(&'a self) -> Box<dyn FnMut(B::Hash, &[u8]) -> bool + 'a> {
+		Box::new(move |_topic, _data| true)
+	}
+
+	fn message_allowed<'a>(&'a self) -> Box<dyn FnMut(&PeerId, MessageIntent, &B::Hash, &[u8]) -> bool + 'a> {
+		Box::new(move |_who, _intent, _topic, _data| false)
 	}
 }
 

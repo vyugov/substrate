@@ -73,14 +73,14 @@ use communication::TransactionSet;
 use communication::PeerIdW;
 //use network::consensus_gossip::{self as network_gossip, MessageIntent, ValidatorContext};
 use network::{PeerId};//config::Roles, 
-use substrate_telemetry::{telemetry, CONSENSUS_WARN, CONSENSUS_INFO};//CONSENSUS_TRACE, CONSENSUS_DEBUG, 
+use substrate_telemetry::{telemetry, CONSENSUS_WARN, CONSENSUS_INFO};//CONSENSUS_TRATransactionCE, CONSENSUS_DEBUG, 
 use futures03::prelude::*;
 //use futures03::channel::mpsc;
 use futures03::task::Poll;
 use futures03::sink::SendAll;
 use serde_json as json;
 use hex;
-use transaction_pool::txpool::{self, Pool as TransactionPool};
+use transaction_pool::txpool::{self, Pool as TransactionPool,ExHash,Transaction,ExtrinsicFor};
 use std::{sync::Arc, time::Duration,  marker::PhantomData, hash::Hash, fmt::Debug};//time::Instant, thread,
 use client::error::{Error as ClientError, };
 use runtime_primitives::traits::DigestFor;
@@ -210,8 +210,9 @@ impl<B: BlockT, C, Pub,Sig> Verifier<B> for BadgerVerifier<C, Pub,Sig> where
 	Pub: Send + Sync + Hash + Eq + Clone + Decode + Encode + Debug,
 	Sig: Encode + Decode+Send+Sync,
 {
+	
 	fn verify(
-		&self,
+		&mut self,
 		origin: BlockOrigin,
 		header: B::Header,
 		justification: Option<Justification>,
@@ -235,7 +236,6 @@ impl<B: BlockT, C, Pub,Sig> Verifier<B> for BadgerVerifier<C, Pub,Sig> where
 		
 	}
 }
-
 
 
 
@@ -267,20 +267,20 @@ pub fn badger_import_queue<B, C, Pub,Sig>(
 	C: 'static + ProvideRuntimeApi + ProvideCache<B> + Send + Sync + AuxStore,
 	C::Api: BlockBuilderApi<B> + HbbftApi<B>,
 	//DigestItemFor<B>: CompatibleDigestItem<P>,
-	Pub: Clone + Eq + Send + Sync + Hash + Debug + Encode + Decode + AsRef<Pub>,
-	Sig: Encode + Decode,
+	Pub: Clone + Eq + Send + Sync + Hash + Debug + Encode + Decode + AsRef<Pub>+'static,
+	Sig: Encode + Decode+ Send + Sync+'static,
 {
 	register_badger_inherent_data_provider(&inherent_data_providers, 1)?;
 	//initialize_authorities_cache(&*client)?;
 
-	let verifier = Arc::new(
-		BadgerVerifier {
+	let verifier =
+		BadgerVerifier::<C,Pub,Sig> {
 			client: client.clone(),
 			inherent_data_providers,
 			phantom: PhantomData,
 			phantom2: PhantomData,
-		}
-	);
+		};
+	
 	Ok(BasicQueue::new(
 		verifier,
 		block_import,
@@ -342,7 +342,7 @@ impl Config {
 	pub fn from_json_file_with_name(path: PathBuf, name: &str) -> Result<Self, String> {
 		let file = File::open(&path).map_err(|e| format!("Error opening config file: {}", e))?;
 		let spec :serde_json::Value = json::from_reader(file).map_err(|e| format!("Error parsing spec file: {}", e))?;
-		let nodedata= match spec["nodes"]
+		let nodedata= match &spec["nodes"]
 		   {
            Object(map) =>
 		    {
@@ -359,7 +359,7 @@ impl Config {
         let ret = Config
 		{
          name: Some(name.to_string()),
-         num_validators: match spec["num_validators"]
+         num_validators: match &spec["num_validators"]
 		   {
 			   Number(x) => match x.as_u64() {Some(y)=> y as usize, None => return Err("Invalid num_validators".to_string())},
                Value::String(st) => match st.parse::<usize>()
@@ -369,7 +369,7 @@ impl Config {
 				 },
 			   _ => return Err("Invalid num_validators".to_string())
 		   },
-		 secret_key_share: match nodedata["secret_key_share"]
+		 secret_key_share: match &nodedata["secret_key_share"]
 		            {
                       Value::String(st) => {
 						    Some(Arc::new( match secret_share_from_string(&st) {
@@ -377,10 +377,10 @@ impl Config {
 						   },
 					  _ =>  None,
 					}, 
-		 node_id: match nodedata["node_id"]
+		 node_id: match &nodedata["node_id"]
                   {
 					  Object(nid) => {
-						  let pub_key:PublicKey=match nid["pub"]
+						  let pub_key:PublicKey=match &nid["pub"]
 						           {
                                     Value::String(st) => 
 									{
@@ -397,7 +397,7 @@ impl Config {
 									}
 									_ => return Err("pub key not string".to_string()),
 								   };
-						 let sec_key:SecretKey=match nid["priv"]
+						 let sec_key:SecretKey=match &nid["priv"]
 						           {
                                     Value::String(st) => 
 									{
@@ -419,7 +419,7 @@ impl Config {
 					  _ => return Err(  "node id not pub/priv object".to_string())
 
 				  },
-		public_key_set: match spec["public_key_set"]
+		public_key_set: match &spec["public_key_set"]
 		                {
                            Value::String(st) => 
 									{
@@ -436,14 +436,14 @@ impl Config {
 									}
 									_ => return Err("pub key set not string".to_string()),
 						},
-		batch_size : 	match spec["batch_size"]
+		batch_size : 	match &spec["batch_size"]
 		   {
 			   Number(x) => match x.as_u64() {Some(y)=> y as u32, None => return Err("Invalid batch_size".to_string())},
                Value::String(st) => match st.parse::<u32>(){Ok(val)=>val,Err(_)=>return Err("batch_size parsing error".to_string())},
 			   _ => return Err(  "Invalid batch_size".to_string()) ,
 		   },
 		  
-		  initial_validators : match spec["initial_validators"]
+		  initial_validators : match &spec["initial_validators"]
 		   {
             Object(dict) => {
 				let mut ret=BTreeMap::<PeerIdW, PublicKey>::new();
@@ -672,6 +672,9 @@ where A: txpool::ChainApi
  pub transaction_pool: Arc<TransactionPool<A>>,
 }
 
+
+
+
 impl<A> Stream for TxStream<A>
 where A: txpool::ChainApi,
 
@@ -728,10 +731,11 @@ SC:SelectChain<Block> + Clone,
 {
 	pub fn make_sink(& mut self) -> SendAll<TF, TxStream<A>> 
 	{
-		self.transaction_in.send_all(&mut TxStream{transaction_pool:self.transaction_pool.clone()})
+		self.transaction_in.send_all(&mut Box::pin(TxStream{transaction_pool:self.transaction_pool.clone()}))
+
 	}
 
-	pub fn make_block_spitter (&mut self) -> impl Future + '_
+	pub fn make_block_spitter (&self) -> impl Future + '_
 	{
 		Box::pin( self.block_out.for_each(move |batch|
 		  {
@@ -743,15 +747,16 @@ SC:SelectChain<Block> + Clone,
 			let inherent_digests= generic::Digest {
 							logs: vec![],
 						};
-           	if let Ok(imp_blocks) =self.make_import_blocks(&batch, inherent_data,inherent_digests)
+           	if let Ok(mut imp_blocks) =self.make_import_blocks(&mut batch, inherent_data,inherent_digests)
 			   {
 			  for import_block in imp_blocks.drain(..)
 			  { 
+				  let eh=import_block.header.parent_hash().clone();
 			if let Err(e) = self.block_import.lock().import_block(import_block, Default::default()) {
 				warn!(target: "badger", "Error with block built on {:?}: {:?}",
-						import_block.header.parent_hash().clone(), e);
+						eh, e);
 				telemetry!(CONSENSUS_WARN; "mushroom.err_with_block_built_on";
-					"hash" => ?import_block.header.parent_hash().clone(), "err" => ?e
+					"hash" => ?eh, "err" => ?e
 				);
 			  }
 			}
@@ -766,7 +771,7 @@ SC:SelectChain<Block> + Clone,
 
 	pub fn make_import_blocks(
 		&self,
-		batch: &<QHB as ConsensusProtocol>::Output,
+		batch: &mut <QHB as ConsensusProtocol>::Output,
 		inherent_data: InherentData,
 		inherent_digests: DigestFor<Block>,
 	) -> Result<Vec<BlockImportParams<Block>>, error::Error> {
@@ -782,7 +787,7 @@ SC:SelectChain<Block> + Clone,
 				}
 			};
         let mut parent_hash = chain_head.hash();
-		let mut pnumber= chain_head.number();
+		let mut pnumber= *chain_head.number();
 		let mut parent_id=BlockId::hash(parent_hash);
 		let mut block_builder = self.client.new_block_at(&parent_id, inherent_digests)?;
 
@@ -802,28 +807,29 @@ SC:SelectChain<Block> + Clone,
 		// proceed with transactions
 		let mut is_first = true;
 		let mut skipped = 0;
-		let mut unqueue_invalid = Vec::new();
-		let mut unqueue_valid = Vec::new();
+		//let mut unqueue_invalid = Vec::new();
+		//let mut unqueue_valid = Vec::new();
 		let pending_iterator = self.transaction_pool.ready();
 
 		debug!("Attempting to push transactions from the batch.");
 		for  pending in batch.into_tx_iter() {
-            let pending =   Decode::decode(&mut pending.as_slice());
-			let pending= match pending
+            let data: Result<<Block as BlockT>::Extrinsic,_> =Decode::decode(&mut pending.as_slice());
+			//   <Transaction<ExHash<A>,<Block as BlockT>::Extrinsic> as Decode>::decode(&mut pending.as_slice());
+			let data= match data
 			{
 				Ok(val) => val,
 				Err(_) => continue
 			};
             //a.data.encode()
 			trace!("[{:?}] Pushing to the block.", pending);
-			match client::block_builder::BlockBuilder::push(&mut block_builder, *pending.data.clone()) {
+			match client::block_builder::BlockBuilder::push(&mut block_builder, data.clone()) {
 				Ok(()) => {
-					debug!("[{:?}] Pushed to the block.", pending.hash);
+					debug!("[{:?}] bytes Pushed to the block.", pending.len());
 				}
 				Err(error::Error::ApplyExtrinsicFailed(ApplyError::FullBlock)) => {
 					if is_first {
-						debug!("[{:?}] Invalid transaction: FullBlock on empty block", pending.hash);
-						unqueue_invalid.push(pending.hash.clone());
+						debug!("[{:?}] Invalid transaction: FullBlock on empty block", pending.len());
+					//	unqueue_invalid.push(pending.hash.clone());
 					  }  else 
 					   {
 						debug!("Block is full, proceed with proposing.");
@@ -847,13 +853,13 @@ SC:SelectChain<Block> + Clone,
     	                	error!("Failed to verify block encoding/decoding");
 		                    }
 
-						if let Err(err) = evaluation::evaluate_initial(&block, &parent_hash, *pnumber) {
+						if let Err(err) = evaluation::evaluate_initial(&block, &parent_hash, pnumber) {
 							error!("Failed to evaluate authored block: {:?}", err);
 						}
 						let (header, body) = block.deconstruct();
 
 						let header_num = header.number().clone();
-						let parent_hash = header.parent_hash().clone();
+						let mut parent_hash = header.parent_hash().clone();
 
 						// sign the pre-sealed hash of the block and then
 						// add it to a digest item.
@@ -881,7 +887,7 @@ SC:SelectChain<Block> + Clone,
 							"hash_previously" => ?header_hash
 						);
 							parent_hash = import_block.post_header().hash();
-							pnumber = import_block.post_header().number();
+							pnumber = *import_block.post_header().number();
 							parent_id = BlockId::hash(parent_hash);
 							// go on to next block
 							ret.push(import_block);
@@ -892,15 +898,15 @@ SC:SelectChain<Block> + Clone,
 					}
 				}
 				Err(e) => {
-					debug!("[{:?}] Invalid transaction: {}", pending.hash, e);
-					unqueue_invalid.push(pending.hash.clone());
+					debug!("[{:?}] Invalid transaction: {}", pending.len(), e);
+					//unqueue_invalid.push(pending.hash.clone());
 				}
 			}
 
 			is_first = false;
 		}
 
-		self.transaction_pool.remove_invalid(&unqueue_invalid);
+		//self.transaction_pool.remove_invalid(&unqueue_invalid);
 
 		Ok(ret)
 	}

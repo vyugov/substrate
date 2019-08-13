@@ -479,12 +479,11 @@ decl_storage! {
 		config(endowed_accounts): Vec<T::AccountId>;
 
 		build(|
-			storage: &mut sr_primitives::StorageOverlay,
-			_: &mut sr_primitives::ChildrenStorageOverlay,
+			storage: &mut (sr_primitives::StorageOverlay, sr_primitives::ChildrenStorageOverlay),
 			config: &GenesisConfig<T>| {
 			config.assets.iter().for_each(|asset_id| {
 				config.endowed_accounts.iter().for_each(|account_id| {
-					storage.insert(
+					storage.0.insert(
 						<FreeBalance<T>>::key_for(asset_id, account_id),
 						<T::Balance as codec::Encode>::encode(&config.initial_balance)
 					);
@@ -1050,6 +1049,7 @@ impl<T: Subtrait> PartialEq for ElevatedTrait<T> {
 impl<T: Subtrait> Eq for ElevatedTrait<T> {}
 impl<T: Subtrait> system::Trait for ElevatedTrait<T> {
 	type Origin = T::Origin;
+	type Call = T::Call;
 	type Index = T::Index;
 	type BlockNumber = T::BlockNumber;
 	type Hash = T::Hash;

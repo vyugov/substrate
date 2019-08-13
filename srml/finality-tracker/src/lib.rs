@@ -244,15 +244,16 @@ impl<T: Trait> ProvideInherent for Module<T> {
 	const INHERENT_IDENTIFIER: InherentIdentifier = INHERENT_IDENTIFIER;
 
 	fn create_inherent(data: &InherentData) -> Option<Self::Call> {
-		let final_num =
-			data.finalized_number().expect("Gets and decodes final number inherent data");
-
-		// make hint only when not same as last to avoid bloat.
-		Self::recent_hints().last().and_then(|last| if last == &final_num {
-			None
+		if let Ok(final_num) = data.finalized_number() {
+			// make hint only when not same as last to avoid bloat.
+			Self::recent_hints().last().and_then(|last| if last == &final_num {
+				None
+			} else {
+				Some(Call::final_hint(final_num))
+			})
 		} else {
-			Some(Call::final_hint(final_num))
-		})
+			None
+		}
 	}
 
 	fn check_inherent(_call: &Self::Call, _data: &InherentData) -> result::Result<(), Self::Error> {
@@ -308,6 +309,7 @@ mod tests {
 		type Origin = Origin;
 		type Index = u64;
 		type BlockNumber = u64;
+		type Call = ();
 		type Hash = H256;
 		type Hashing = BlakeTwo256;
 		type AccountId = u64;
@@ -336,7 +338,7 @@ mod tests {
 	#[test]
 	fn median_works() {
 		let t = system::GenesisConfig::default().build_storage::<Test>().unwrap();
-		with_externalities(&mut TestExternalities::new_with_children(t), || {
+		with_externalities(&mut TestExternalities::new(t), || {
 			FinalityTracker::update_hint(Some(500));
 			assert_eq!(FinalityTracker::median(), 250);
 			assert!(NOTIFICATIONS.with(|n| n.borrow().is_empty()));
@@ -346,7 +348,7 @@ mod tests {
 	#[test]
 	fn notifies_when_stalled() {
 		let t = system::GenesisConfig::default().build_storage::<Test>().unwrap();
-		with_externalities(&mut TestExternalities::new_with_children(t), || {
+		with_externalities(&mut TestExternalities::new(t), || {
 			let mut parent_hash = System::parent_hash();
 			for i in 2..106 {
 				System::initialize(&i, &parent_hash, &Default::default(), &Default::default());
@@ -365,7 +367,7 @@ mod tests {
 	#[test]
 	fn recent_notifications_prevent_stalling() {
 		let t = system::GenesisConfig::default().build_storage::<Test>().unwrap();
-		with_externalities(&mut TestExternalities::new_with_children(t), || {
+		with_externalities(&mut TestExternalities::new(t), || {
 			let mut parent_hash = System::parent_hash();
 			for i in 2..106 {
 				System::initialize(&i, &parent_hash, &Default::default(), &Default::default());
