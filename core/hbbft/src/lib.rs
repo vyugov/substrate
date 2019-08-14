@@ -695,11 +695,11 @@ where A: txpool::ChainApi,
 	}
 }
 
-pub struct BadgerProposerWorker<S,  Block:BlockT<Hash=H256>, TF,A,I,B,E,RA,SC>
+pub struct BadgerProposerWorker<S,  Block:BlockT<Hash=H256>, I,B,E,RA,SC>
 where
 S : Stream<Item = <QHB as ConsensusProtocol>::Output> ,
-TF: Sink<TransactionSet>+Unpin,
-A: txpool::ChainApi,
+//TF: Sink<TransactionSet>+Unpin,
+//A: txpool::ChainApi,
 B: client::backend::Backend<Block, Blake2Hasher> + Send + Sync + 'static,
 E: CallExecutor<Block, Blake2Hasher> + Send + Sync + Clone + 'static,
 RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
@@ -709,8 +709,8 @@ NumberFor<Block>: BlockNumberOps,
 I:BlockImport<Block>
 {
  pub block_out: S,
- pub transaction_in: TF,
- pub transaction_out: TxStream<A>,//Arc<TransactionPool<A>>,
+ //pub transaction_in: TF,
+ //pub transaction_out: TxStream<A>,//Arc<TransactionPool<A>>,
  //pub network: N,
  pub client: Arc<Client<B, E, Block, RA>>,
  pub block_import: Arc<Mutex<I>>,
@@ -719,7 +719,7 @@ I:BlockImport<Block>
  phb:PhantomData<Block>,
  
 }
-impl<S: Stream<Item = <QHB as ConsensusProtocol>::Output> +'static ,Block:BlockT<Hash=H256>,TF: Sink<TransactionSet>+Unpin+'static,A: txpool::ChainApi+'static,I:BlockImport<Block>+'static,B,E,RA:'static,SC:'static>   BadgerProposerWorker<S,Block,TF,A,I,B,E,RA,SC>
+impl<S: Stream<Item = <QHB as ConsensusProtocol>::Output> +'static ,Block:BlockT<Hash=H256>,I:BlockImport<Block>+'static,B,E,RA:'static,SC:'static>   BadgerProposerWorker<S,Block,I,B,E,RA,SC>
 where
 NumberFor<Block>: BlockNumberOps,
 Client<B, E, Block, RA>: ProvideRuntimeApi,
@@ -736,154 +736,14 @@ S: Unpin
 
 	}*/
 
-	pub fn make_import_blocks(
-		&self,
-		batch: &mut <QHB as ConsensusProtocol>::Output,
-		inherent_data: InherentData,
-		inherent_digests: DigestFor<Block>,
-	) -> Result<Vec<BlockImportParams<Block>>, error::Error> {
 
-		 info!("Processing batch with epoch {:?} of {:?} transactions into blocks",batch.epoch(),batch.len());
-         let mut ret=Vec::new();
-   		let mut chain_head = match self.select_chain.best_chain() {
-				Ok(x) => x,
-				Err(e) => {
-					warn!(target: "slots", "Unable to author block. \
-					no best block header: {:?}", e);
-					return Err(error::Error::Backend("No best block".to_string()))
-				}
-			};
-        let mut parent_hash = chain_head.hash();
-		let mut pnumber= *chain_head.number();
-		let mut parent_id=BlockId::hash(parent_hash);
-		let mut block_builder = self.client.new_block_at(&parent_id, inherent_digests.clone())?;
-
-		// We don't check the API versions any further here since the dispatch compatibility
-		// check should be enough. 
-		// do this only once? 
-		for extrinsic in self.client.runtime_api()
-			.inherent_extrinsics_with_context(
-				&parent_id,
-				ExecutionContext::BlockConstruction,
-				inherent_data
-			)?
-		{
-			block_builder.push(extrinsic)?;
-		}
-
-		// proceed with transactions
-		let mut is_first = true;
-		let mut skipped = 0;
-		//let mut unqueue_invalid = Vec::new();
-		//let mut unqueue_valid = Vec::new();
-		//let pending_iterator = self.transaction_pool.ready();
-
-		debug!("Attempting to push transactions from the batch.");
-		for  pending in batch.iter() {
-            let data: Result<<Block as BlockT>::Extrinsic,_> =Decode::decode(&mut pending.as_slice());
-			//   <Transaction<ExHash<A>,<Block as BlockT>::Extrinsic> as Decode>::decode(&mut pending.as_slice());
-			let data= match data
-			{
-				Ok(val) => val,
-				Err(_) => continue
-			};
-            //a.data.encode()
-			trace!("[{:?}] Pushing to the block.", pending);
-			match client::block_builder::BlockBuilder::push(&mut block_builder, data.clone()) {
-				Ok(()) => {
-					debug!("[{:?}] bytes Pushed to the block.", pending.len());
-				}
-				Err(error::Error::ApplyExtrinsicFailed(ApplyError::FullBlock)) => {
-					if is_first {
-						debug!("[{:?}] Invalid transaction: FullBlock on empty block", pending.len());
-					//	unqueue_invalid.push(pending.hash.clone());
-					  }  else 
-					   {
-						debug!("Block is full, proceed with proposing.");
-                        let block = block_builder.bake()?;
-						info!("Prepared block for proposing at {} [hash: {:?}; parent_hash: {}; extrinsics: [{}]]",
-							block.header().number(),
-							<Block as BlockT>::Hash::from(block.header().hash()),
-							block.header().parent_hash(),
-							block.extrinsics()
-								.iter()
-								.map(|xt| format!("{}", BlakeTwo256::hash_of(xt)))
-								.collect::<Vec<_>>()
-								.join(", ")
-						);
-						telemetry!(CONSENSUS_INFO; "prepared_block_for_proposing";
-							"number" => ?block.header().number(),
-							"hash" => ?<Block as BlockT>::Hash::from(block.header().hash()),
-							);
-						if Decode::decode(&mut block.encode().as_slice()).as_ref() != Ok(&block) 
-						 {
-    	                	error!("Failed to verify block encoding/decoding");
-		                    }
-
-						if let Err(err) = evaluation::evaluate_initial(&block, &parent_hash, pnumber) {
-							error!("Failed to evaluate authored block: {:?}", err);
-						}
-						let (header, body) = block.deconstruct();
-
-						let header_num = header.number().clone();
-						let mut parent_hash = header.parent_hash().clone();
-
-						// sign the pre-sealed hash of the block and then
-						// add it to a digest item.
-						let header_hash = header.hash();
-
-						let import_block: BlockImportParams<Block> = BlockImportParams {
-							origin: BlockOrigin::Own,
-							header,
-							justification: None,
-							post_digests: vec![],
-							body: Some(body),
-							finalized: true,
-							auxiliary: Vec::new(),
-							fork_choice: ForkChoiceStrategy::LongestChain,
-						};
-
-						info!("Pre-sealed block for proposal at {}. Hash now {:?}, previously {:?}.",
-								header_num,
-								import_block.post_header().hash(),
-								header_hash
-						);
-						telemetry!(CONSENSUS_INFO; "badger.pre_sealed_block";
-							"header_num" => ?header_num,
-							"hash_now" => ?import_block.post_header().hash(),
-							"hash_previously" => ?header_hash
-						);
-							parent_hash = import_block.post_header().hash();
-							pnumber = *import_block.post_header().number();
-							parent_id = BlockId::hash(parent_hash);
-							// go on to next block
-							ret.push(import_block);
-							block_builder = self.client.new_block_at(&parent_id, inherent_digests.clone())?;
-							is_first=true;
-							continue;
-					//	break;
-					}
-				}
-				Err(e) => {
-					debug!("[{:?}] Invalid transaction: {}", pending.len(), e);
-					//unqueue_invalid.push(pending.hash.clone());
-				}
-			}
-
-			is_first = false;
-		}
-
-		//self.transaction_pool.remove_invalid(&unqueue_invalid);
-
-		Ok(ret)
-	}
-
-   pub fn  get_aggregate(mut self) -> futures03::future::Select< impl Future, impl Future>
+   pub fn  get_aggregate(mut self) -> impl Future
    {
-	   futures03::future::select(self.transaction_in.send_all(&mut self.transaction_out) ,
+	 
 	   self.block_out.for_each(move |mut batch|
 		  {
-			let inherent_data = match self.inherent_data_providers.create_inherent_data() {
+			let inherent_data = match self.inherent_data_providers.create_inherent_data() 
+			{
 				Ok(id) => id,
 				Err(err) => return future::ready(()),//future::err(err),
 			};
@@ -891,24 +751,168 @@ S: Unpin
 			let inherent_digests= generic::Digest {
 							logs: vec![],
 						};
-           	if let Ok(mut imp_blocks) =self.make_import_blocks(&mut batch, inherent_data,inherent_digests)
-			   {
-			  for import_block in imp_blocks.drain(..)
-			  { 
-				  let eh=import_block.header.parent_hash().clone();
-			if let Err(e) = self.block_import.lock().import_block(import_block, Default::default()) {
-				warn!(target: "badger", "Error with block built on {:?}: {:?}",
-						eh, e);
-				telemetry!(CONSENSUS_WARN; "mushroom.err_with_block_built_on";
-					"hash" => ?eh, "err" => ?e
-				);
-			  }
-			}
+                  
+				info!("Processing batch with epoch {:?} of {:?} transactions into blocks",batch.epoch(),batch.len());
+   		        let mut chain_head = match self.select_chain.best_chain() {
+				    Ok(x) => x,
+				    Err(e) => {
+					 warn!(target: "slots", "Unable to author block, no best block header: {:?}", e);
+					 return future::ready(());
+				     }
+			    };
+                let mut parent_hash = chain_head.hash();
+		        let mut pnumber= *chain_head.number();
+		        let mut parent_id=BlockId::hash(parent_hash);
+		        let mut block_builder = match  self.client.new_block_at(&parent_id, inherent_digests.clone())
+				  {
+                   Ok(val) =>val,
+				   Err(_) =>
+				    {
+                    warn!("Error in new_block_at");
+					return future::ready(());
+				    }
+				  };
 
-			}
+ 		        // We don't check the API versions any further here since the dispatch compatibility
+		        // check should be enough. 
+		        // do this only once? 
+				for extrinsic in self.client.runtime_api()
+					.inherent_extrinsics_with_context(
+						&parent_id,
+						ExecutionContext::BlockConstruction,
+						inherent_data
+					).unwrap()
+				   {
+					match block_builder.push(extrinsic)
+					{
+						Ok(_) =>{},
+						Err(_) =>
+						{
+							warn!("Error in block_builder.push");
+					        return future::ready(());
+						}
+					}
+				   }
+
+		        // proceed with transactions
+				let mut is_first = true;
+				let mut skipped = 0;
+		        debug!("Attempting to push transactions from the batch.");
+		     for  pending in batch.iter() {
+					let data: Result<<Block as BlockT>::Extrinsic,_> =Decode::decode(&mut pending.as_slice());
+					//   <Transaction<ExHash<A>,<Block as BlockT>::Extrinsic> as Decode>::decode(&mut pending.as_slice());
+					let data= match data
+					{
+						Ok(val) => val,
+						Err(_) => {
+							debug!("Data decoding error");
+							continue
+						}
+					};
+					//a.data.encode()
+					trace!("[{:?}] Pushing to the block.", pending);
+					match client::block_builder::BlockBuilder::push(&mut block_builder, data.clone()) {
+						Ok(()) => {
+							debug!("[{:?}] bytes Pushed to the block.", pending.len());
+						}
+						Err(error::Error::ApplyExtrinsicFailed(ApplyError::FullBlock)) => {
+							if is_first {
+								debug!("[{:?}] Invalid transaction: FullBlock on empty block", pending.len());
+							//	unqueue_invalid.push(pending.hash.clone());
+							}  else 
+							{
+								debug!("Block is full, proceed with proposing.");
+								let block = match block_builder.bake()
+								{
+									Ok(val) => val,
+									Err(_) => {
+										warn!("Block baking error");
+										return future::ready(());
+									}
+								};
+								info!("Prepared block for proposing at {} [hash: {:?}; parent_hash: {}; extrinsics: [{}]]",
+									block.header().number(),
+									<Block as BlockT>::Hash::from(block.header().hash()),
+									block.header().parent_hash(),
+									block.extrinsics()
+										.iter()
+										.map(|xt| format!("{}", BlakeTwo256::hash_of(xt)))
+										.collect::<Vec<_>>()
+										.join(", ")
+								);
+								telemetry!(CONSENSUS_INFO; "prepared_block_for_proposing";
+									"number" => ?block.header().number(),
+									"hash" => ?<Block as BlockT>::Hash::from(block.header().hash()),
+									);
+								if Decode::decode(&mut block.encode().as_slice()).as_ref() != Ok(&block) 
+								{
+									error!("Failed to verify block encoding/decoding");
+								}
+
+								if let Err(err) = evaluation::evaluate_initial(&block, &parent_hash, pnumber) {
+									error!("Failed to evaluate authored block: {:?}", err);
+								}
+								let (header, body) = block.deconstruct();
+
+								let header_num = header.number().clone();
+								let mut parent_hash = header.parent_hash().clone();
+
+								// sign the pre-sealed hash of the block and then
+								// add it to a digest item.
+								let header_hash = header.hash();
+
+								let import_block: BlockImportParams<Block> = BlockImportParams {
+									origin: BlockOrigin::Own,
+									header,
+									justification: None,
+									post_digests: vec![],
+									body: Some(body),
+									finalized: true,
+									auxiliary: Vec::new(),
+									fork_choice: ForkChoiceStrategy::LongestChain,
+								};
+
+								info!("Pre-sealed block for proposal at {}. Hash now {:?}, previously {:?}.",
+										header_num,
+										import_block.post_header().hash(),
+										header_hash
+								);
+								telemetry!(CONSENSUS_INFO; "badger.pre_sealed_block";
+									"header_num" => ?header_num,
+									"hash_now" => ?import_block.post_header().hash(),
+									"hash_previously" => ?header_hash
+								);
+									parent_hash = import_block.post_header().hash();
+									pnumber = *import_block.post_header().number();
+									parent_id = BlockId::hash(parent_hash);
+									// go on to next block
+									{
+									let eh=import_block.header.parent_hash().clone();
+									if let Err(e) = self.block_import.lock().import_block(import_block, Default::default()) {
+						warn!(target: "badger", "Error with block built on {:?}: {:?}",eh, e);
+						telemetry!(CONSENSUS_WARN; "mushroom.err_with_block_built_on";
+							"hash" => ?eh, "err" => ?e);
+									}
+									block_builder = self.client.new_block_at(&parent_id, inherent_digests.clone()).unwrap();
+									is_first=true;
+									continue;
+									}
+						}
+						}
+						Err(e) => {
+							debug!("[{:?}] Invalid transaction: {}", pending.len(), e);
+							//unqueue_invalid.push(pending.hash.clone());
+						}
+					}
+
+					is_first = false;
+		        }
+
+			   
+
+			
 		 future::ready(())
-		  }
-		) )
+		  }) 
    }
 
 }
@@ -960,7 +964,7 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 
 
 //	register_finality_tracker_inherent_data_provider(client.clone(), &inherent_data_providers)?;
-	let (blk_out,tx_in) = global_communication(
+	let (blk_out, mut tx_in) = global_communication(
 					&client,
 					&network_bridge,
 				);
@@ -969,8 +973,6 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
     let bworker= BadgerProposerWorker
                 {
                  block_out: blk_out,
-                 transaction_in: tx_in,
-                 transaction_out: TxStream{transaction_pool:t_pool.clone()},
                //  network: network,
                  client: client.clone(),
                  block_import: block_import.clone(),
@@ -982,6 +984,13 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 
 
    let  aggregate=bworker.get_aggregate();
+   let tx_out= TxStream{transaction_pool:t_pool.clone()};
+  let sender= tx_out.for_each(move |data| 
+   {
+	   tx_in.send(data);
+	   future::ready(())
+   }
+   );
 
  
 	
