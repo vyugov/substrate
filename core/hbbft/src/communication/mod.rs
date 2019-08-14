@@ -28,7 +28,6 @@
 //! under certain conditions that are used to un-stick the protocol.
 use network::consensus_gossip::ValidatorContext;
 use std::sync::Arc;
-use std::iter;
 use std::collections::{VecDeque};
 use futures03::core_reexport::marker::PhantomData;
 use std::time::{Duration, Instant};
@@ -38,10 +37,10 @@ use libp2p::swarm::{ PollParameters};
 use badger::dynamic_honey_badger::DynamicHoneyBadger;
 use badger::queueing_honey_badger::{ QueueingHoneyBadger};
 use badger::sender_queue::{Message as BMessage, SenderQueue};
-use badger::{ConsensusProtocol, CpStep, NetworkInfo,  Target,Contribution};
+use badger::{ConsensusProtocol, CpStep, NetworkInfo,  Target,};
 use rand::{rngs::OsRng, Rng};
 use network::PeerId;
-use ::unsigned_varint::{decode, encode};
+use ::unsigned_varint::{encode,};
 use fg_primitives::{SignatureWrap,PublicKeyWrap};
 //use grandpa::{voter, voter_set::VoterSet};
 //use grandpa::Message::{Prevote, Precommit, PrimaryPropose};
@@ -49,7 +48,6 @@ use futures03::prelude::*;
 use futures03::channel::{oneshot, mpsc};
 use log::{debug, };// trace};
 use parity_codec::{Encode, Decode};
-use substrate_primitives::{ Pair};
 use substrate_telemetry::{telemetry, CONSENSUS_DEBUG,};
 use runtime_primitives::traits::{Block as BlockT, Hash as HashT, Header as HeaderT};
 use network::{consensus_gossip as network_gossip, NetworkService};
@@ -558,7 +556,7 @@ where D::Message: serde::Serialize + DeserializeOwned
 		}
 	}
 }
-use parking_lot::RwLock;
+
 pub struct BadgerGossipValidator<Block: BlockT>
  {
 	inner: parking_lot::RwLock<BadgerNode<Block,QHB>>,
@@ -687,7 +685,6 @@ fn flush_message_net<N:Network<Block>>(&self,context: &N)
 			match GossipMessage::decode(&mut data) {
 					Ok(GossipMessage::Greeting(msg))  =>
 					{
-						use badger::crypto::Signature;
 						
 						if  msg.myId.0.verify(&msg.mySig.0,msg.myId.0.to_bytes().to_vec())
 						 {
@@ -1043,7 +1040,7 @@ pub  fn is_validator(&self) ->bool
 		is_voter: bool,
 	) -> (
 		impl Stream<Item = <QHB as ConsensusProtocol>::Output>,
-		impl Sink<TransactionSet>,
+		impl SendOut,
 	)
 	 {
 
@@ -1122,7 +1119,10 @@ struct TransactionFeed<Block: BlockT, N: Network<Block>>
 	is_voter: bool,
 	gossip_validator: Arc<BadgerGossipValidator<Block>>,
 }
-
+pub trait SendOut
+{
+	 fn send_out(&mut self,input:Vec<Vec<u8>>) -> Result<(), Error>;
+}
 impl<Block: BlockT, N: Network<Block>> TransactionFeed<Block, N> 
 {
 	/// Create a new commit output stream.
@@ -1137,7 +1137,26 @@ impl<Block: BlockT, N: Network<Block>> TransactionFeed<Block, N>
 			gossip_validator,
 		}
 	}
+
 }
+impl<Block: BlockT, N: Network<Block>> SendOut for TransactionFeed<Block, N> 
+{
+	 fn send_out(&mut self,input:Vec<Vec<u8>>) -> Result<(), Error>
+	{
+    for tx in input.into_iter().enumerate()
+	   {
+        let locked=&self.gossip_validator;
+		match locked.push_transaction(tx.1,&self.network)
+		{
+        Ok(_) =>{},
+		Err(e) => return Err(e)
+		}
+   
+	   }
+	   Ok(())
+	}
+}
+
 use network::consensus_gossip::ConsensusGossip;
 use runtime_primitives::ConsensusEngineId;
 

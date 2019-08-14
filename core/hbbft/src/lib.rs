@@ -52,8 +52,6 @@
 //! included in the newly-finalized chain.
 
 extern crate serde;
-use serde::Serialize;
-use serde::de::DeserializeOwned;  
 extern crate unsigned_varint;
 use runtime_primitives::traits::Hash as THash;
 use runtime_primitives::traits::{NumberFor, Block as BlockT, Header,  ProvideRuntimeApi,BlakeTwo256,};
@@ -75,12 +73,10 @@ use communication::PeerIdW;
 use network::{PeerId};//config::Roles, 
 use substrate_telemetry::{telemetry, CONSENSUS_WARN, CONSENSUS_INFO};//CONSENSUS_TRATransactionCE, CONSENSUS_DEBUG, 
 use futures03::prelude::*;
-//use futures03::channel::mpsc;
 use futures03::task::Poll;
-use futures03::sink::SendAll;
 use serde_json as json;
 use hex;
-use transaction_pool::txpool::{self, Pool as TransactionPool,ExHash,Transaction,ExtrinsicFor};
+use transaction_pool::txpool::{self, Pool as TransactionPool,};
 use std::{sync::Arc, time::Duration,  marker::PhantomData, hash::Hash, fmt::Debug};//time::Instant, thread,
 use client::error::{Error as ClientError, };
 use runtime_primitives::traits::DigestFor;
@@ -118,7 +114,7 @@ use client::{
 	backend::AuxStore,
 };
 
-use rand::Rng;
+
 use crate::communication::Network;
 use badger::ConsensusProtocol;
 use fg_primitives::SecretKeyShareWrap;
@@ -612,13 +608,13 @@ where
 		},
 	))
 } */
-
+ use crate::communication::SendOut;
 fn global_communication<Block: BlockT<Hash=H256>, B, E, N, RA>(
 	client: &Arc<Client<B, E, Block, RA>>,
-	network: &NetworkBridge<Block, N>,
+	network: NetworkBridge<Block, N>,
 ) -> (
 		impl Stream<Item = <QHB as ConsensusProtocol>::Output>,
-		impl Sink<TransactionSet>,
+		impl SendOut,
 ) where
 	B: Backend<Block, Blake2Hasher>,
 	E: CallExecutor<Block, Blake2Hasher> + Send + Sync,
@@ -673,8 +669,6 @@ where A: txpool::ChainApi
 }
 
 
-
-
 impl<A> Stream for TxStream<A>
 where A: txpool::ChainApi,
 
@@ -694,6 +688,9 @@ where A: txpool::ChainApi,
 	  Poll::Ready(Some(batch))
 	}
 }
+
+
+
 
 pub struct BadgerProposerWorker<S,  Block:BlockT<Hash=H256>, I,B,E,RA,SC>
 where
@@ -793,7 +790,7 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 //	register_finality_tracker_inherent_data_provider(client.clone(), &inherent_data_providers)?;
 	let (blk_out, mut tx_in) = global_communication(
 					&client,
-					&network_bridge,
+					network_bridge,
 				);
 
 
@@ -811,13 +808,22 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 
 
   // let  aggregate=bworker.get_aggregate();
-   let tx_out= TxStream{transaction_pool:t_pool.clone()};
-  let sender= tx_out.for_each(move |data| 
+   let mut tx_out= TxStream{transaction_pool:t_pool.clone()};
+  //let sender= tx_out.forward(tx_in);
+  //let sender=tx_in.send_all(&mut tx_out);
+ let sender=tx_out.for_each( move |data: std::vec::Vec<std::vec::Vec<u8>>| 
    {
-	   tx_in.send(data);
-	   future::ready(())
+	   match tx_in.send_out(data)
+	   {
+		   Ok(_) =>{},
+		   Err(_) =>
+		   {
+			   debug!("Well, this is weird");
+		   }
+	   }
+	  future::ready(()) 
    }
-   );
+ ); 
   let cclient=client.clone();
   let cblock_import=block_import.clone();
   let receiver= blk_out.for_each(move |mut batch|
@@ -1000,7 +1006,7 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 //			telemetry!(CONSENSUS_WARN; "afg.badger_failed"; "e" => ?e);
 //		}) ;
 
-	let with_start = network_startup.then(move |()| sender);
+	let with_start = network_startup.then(move |()| futures03::future::select(sender,receiver));
 
 	// Make sure that `telemetry_task` doesn't accidentally finish and kill grandpa.
 
