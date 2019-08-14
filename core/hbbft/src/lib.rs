@@ -719,6 +719,9 @@ I:BlockImport<Block>
  phb:PhantomData<Block>,
  
 }
+
+
+/*
 impl<S: Stream<Item = <QHB as ConsensusProtocol>::Output> +'static ,Block:BlockT<Hash=H256>,I:BlockImport<Block>+'static,B,E,RA:'static,SC:'static>   BadgerProposerWorker<S,Block,I,B,E,RA,SC>
 where
 NumberFor<Block>: BlockNumberOps,
@@ -730,19 +733,96 @@ RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>+ Send + Sync,
 SC:SelectChain<Block> + Clone,
 S: Unpin
 {
-	 /* pub fn make_sink(& mut self) -> SendAll<TF, TxStream<A>> 
-	{
-		
 
-	}*/
 
 
    pub fn  get_aggregate(mut self) -> impl Future
    {
 	 
-	   self.block_out.for_each(move |mut batch|
+	  
+   }
+
+}
+*/
+/*impl<D:ConsensusProtocol<NodeId=PeerIdW>,S: Stream<Item = D::Output>  ,N,Block:BlockT,TF: Sink<TransactionSet>+Unpin,C,A: txpool::ChainApi,I:BlockImport<Block>>
+  Future on BadgerProposerWorker<D,S,N,Block,TF,C,A,I>
+{
+	type Output=();
+	fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output>
+	{
+
+	}
+}*/
+/// Run a GRANDPA voter as a task. Provide configuration and a link to a
+/// block import worker that has already been instantiated with `block_import`.
+pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
+	client : Arc<Client<B, E, Block, RA>>,
+	t_pool: Arc<TransactionPool<A>>,
+	config: Config,
+    network:N,
+    on_exit: X,
+	block_import: Arc<Mutex<I>>,
+	inherent_data_providers: InherentDataProviders,
+	selch:SC,
+) -> ::client::error::Result<impl Future<Output=()> + Send+Unpin> where
+	Block::Hash: Ord,
+	B: Backend<Block, Blake2Hasher> + 'static,
+	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static+Clone,
+	N: Network<Block> + Send + Sync + Unpin +PollParameters,
+	N::In: Send,
+	SC: SelectChain<Block> + 'static,
+	NumberFor<Block>: BlockNumberOps,
+	DigestFor<Block>: Encode,
+	RA: Send + Sync + 'static,
+	X: Future<Output=()> + Clone + Send+Unpin,
+	A: txpool::ChainApi+'static,
+	I:BlockImport<Block>+Send+Sync+'static,
+	RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
+	<Client<B, E, Block, RA> as ProvideRuntimeApi>::Api: BlockBuilderApi<Block>
+{
+	let (network_bridge, network_startup) = NetworkBridge::new(
+		network,
+		config.clone(),
+		on_exit.clone(),
+	);
+
+	//let PersistentData { authority_set, set_state, consensus_changes } = persistent_data;
+
+
+
+//	register_finality_tracker_inherent_data_provider(client.clone(), &inherent_data_providers)?;
+	let (blk_out, mut tx_in) = global_communication(
+					&client,
+					&network_bridge,
+				);
+
+
+  /*  let bworker= BadgerProposerWorker
+                {
+                 block_out: blk_out,
+               //  network: network,
+                 client: client.clone(),
+                 block_import: block_import.clone(),
+                 inherent_data_providers: inherent_data_providers,
+				 select_chain: selch,
+				 phb:PhantomData
+                };*/
+
+
+
+  // let  aggregate=bworker.get_aggregate();
+   let tx_out= TxStream{transaction_pool:t_pool.clone()};
+  let sender= tx_out.for_each(move |data| 
+   {
+	   tx_in.send(data);
+	   future::ready(())
+   }
+   );
+  let cclient=client.clone();
+  let cblock_import=block_import.clone();
+  let receiver= blk_out.for_each(move |mut batch|
 		  {
-			let inherent_data = match self.inherent_data_providers.create_inherent_data() 
+			let inherent_data = match inherent_data_providers.create_inherent_data() 
 			{
 				Ok(id) => id,
 				Err(err) => return future::ready(()),//future::err(err),
@@ -753,7 +833,7 @@ S: Unpin
 						};
                   
 				info!("Processing batch with epoch {:?} of {:?} transactions into blocks",batch.epoch(),batch.len());
-   		        let mut chain_head = match self.select_chain.best_chain() {
+   		        let mut chain_head = match selch.best_chain() {
 				    Ok(x) => x,
 				    Err(e) => {
 					 warn!(target: "slots", "Unable to author block, no best block header: {:?}", e);
@@ -763,7 +843,7 @@ S: Unpin
                 let mut parent_hash = chain_head.hash();
 		        let mut pnumber= *chain_head.number();
 		        let mut parent_id=BlockId::hash(parent_hash);
-		        let mut block_builder = match  self.client.new_block_at(&parent_id, inherent_digests.clone())
+		        let mut block_builder = match  cclient.new_block_at(&parent_id, inherent_digests.clone())
 				  {
                    Ok(val) =>val,
 				   Err(_) =>
@@ -776,7 +856,7 @@ S: Unpin
  		        // We don't check the API versions any further here since the dispatch compatibility
 		        // check should be enough. 
 		        // do this only once? 
-				for extrinsic in self.client.runtime_api()
+				for extrinsic in cclient.runtime_api()
 					.inherent_extrinsics_with_context(
 						&parent_id,
 						ExecutionContext::BlockConstruction,
@@ -888,12 +968,12 @@ S: Unpin
 									// go on to next block
 									{
 									let eh=import_block.header.parent_hash().clone();
-									if let Err(e) = self.block_import.lock().import_block(import_block, Default::default()) {
+									if let Err(e) = cblock_import.lock().import_block(import_block, Default::default()) {
 						warn!(target: "badger", "Error with block built on {:?}: {:?}",eh, e);
 						telemetry!(CONSENSUS_WARN; "mushroom.err_with_block_built_on";
 							"hash" => ?eh, "err" => ?e);
 									}
-									block_builder = self.client.new_block_at(&parent_id, inherent_digests.clone()).unwrap();
+									block_builder = cclient.new_block_at(&parent_id, inherent_digests.clone()).unwrap();
 									is_first=true;
 									continue;
 									}
@@ -912,87 +992,7 @@ S: Unpin
 
 			
 		 future::ready(())
-		  }) 
-   }
-
-}
-
-/*impl<D:ConsensusProtocol<NodeId=PeerIdW>,S: Stream<Item = D::Output>  ,N,Block:BlockT,TF: Sink<TransactionSet>+Unpin,C,A: txpool::ChainApi,I:BlockImport<Block>>
-  Future on BadgerProposerWorker<D,S,N,Block,TF,C,A,I>
-{
-	type Output=();
-	fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output>
-	{
-
-	}
-}*/
-/// Run a GRANDPA voter as a task. Provide configuration and a link to a
-/// block import worker that has already been instantiated with `block_import`.
-pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
-	client : Arc<Client<B, E, Block, RA>>,
-	t_pool: Arc<TransactionPool<A>>,
-	config: Config,
-    network:N,
-    on_exit: X,
-	block_import: Arc<Mutex<I>>,
-	inherent_data_providers: InherentDataProviders,
-	selch:SC,
-) -> ::client::error::Result<impl Future<Output=()> + Send+Unpin> where
-	Block::Hash: Ord,
-	B: Backend<Block, Blake2Hasher> + 'static,
-	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static+Clone,
-	N: Network<Block> + Send + Sync + Unpin +PollParameters,
-	N::In: Send,
-	SC: SelectChain<Block> + 'static,
-	NumberFor<Block>: BlockNumberOps,
-	DigestFor<Block>: Encode,
-	RA: Send + Sync + 'static,
-	X: Future<Output=()> + Clone + Send+Unpin,
-	A: txpool::ChainApi+'static,
-	I:BlockImport<Block>+Send+Sync+'static,
-	RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
-	<Client<B, E, Block, RA> as ProvideRuntimeApi>::Api: BlockBuilderApi<Block>
-{
-	let (network_bridge, network_startup) = NetworkBridge::new(
-		network,
-		config.clone(),
-		on_exit.clone(),
-	);
-
-	//let PersistentData { authority_set, set_state, consensus_changes } = persistent_data;
-
-
-
-//	register_finality_tracker_inherent_data_provider(client.clone(), &inherent_data_providers)?;
-	let (blk_out, mut tx_in) = global_communication(
-					&client,
-					&network_bridge,
-				);
-
-
-    let bworker= BadgerProposerWorker
-                {
-                 block_out: blk_out,
-               //  network: network,
-                 client: client.clone(),
-                 block_import: block_import.clone(),
-                 inherent_data_providers: inherent_data_providers,
-				 select_chain: selch,
-				 phb:PhantomData
-                };
-
-
-
-   let  aggregate=bworker.get_aggregate();
-   let tx_out= TxStream{transaction_pool:t_pool.clone()};
-  let sender= tx_out.for_each(move |data| 
-   {
-	   tx_in.send(data);
-	   future::ready(())
-   }
-   );
-
- 
+		  }) ;
 	
 	//.map(|_| ()).map_err(|e| 
 	//    {
@@ -1000,7 +1000,7 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 //			telemetry!(CONSENSUS_WARN; "afg.badger_failed"; "e" => ?e);
 //		}) ;
 
-	let with_start = network_startup.then(move |()| aggregate);
+	let with_start = network_startup.then(move |()| sender);
 
 	// Make sure that `telemetry_task` doesn't accidentally finish and kill grandpa.
 

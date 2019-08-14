@@ -126,12 +126,12 @@ pub enum GossipMessage {
 
 
 #[derive(Debug, Encode, Decode)]
-pub(super) struct GreetingMessage {
+pub struct GreetingMessage {
 
 	/// the badger ID of the peer
-	pub(super) myId: AuthorityId,
+	pub myId: AuthorityId,
 	/// Signature to verify id
-	pub(super) mySig: AuthoritySignature,
+	pub mySig: AuthoritySignature,
 
 }
 
@@ -142,7 +142,7 @@ impl From<GreetingMessage> for GossipMessage {
 }
 
 
-struct PeerInfo {
+pub struct PeerInfo {
 	//view: View<N>,
 	pub id: Option<AuthorityId> //public key
 }
@@ -207,7 +207,7 @@ impl Peers {
 }
 
 #[derive(Debug, PartialEq)]
-pub(super) enum Action<H>  {
+pub enum Action<H>  {
 	// repropagate under given topic, to the given peers, applying cost/benefit to originator.
 	Keep(),
 	// discard and process.

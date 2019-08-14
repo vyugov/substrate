@@ -118,7 +118,7 @@ pub trait Network<Block: BlockT>: Clone + Send + 'static {
 }
 
 /// Create a unique topic for a round and set-id combo.
-pub(crate) fn round_topic<B: BlockT>(round: u64, set_id: u64) -> B::Hash {
+pub fn round_topic<B: BlockT>(round: u64, set_id: u64) -> B::Hash {
 	<<B::Header as HeaderT>::Hashing as HashT>::hash(format!("{}-{}", set_id, round).as_bytes())
 }
 
@@ -128,7 +128,7 @@ pub fn badger_topic<B: BlockT>() -> B::Hash {
 
 
 /// Create a unique topic for global messages on a set ID.
-pub(crate) fn global_topic<B: BlockT>(set_id: u64) -> B::Hash {
+pub fn global_topic<B: BlockT>(set_id: u64) -> B::Hash {
 	<<B::Header as HeaderT>::Hashing as HashT>::hash(format!("{}-GLOBAL", set_id).as_bytes())
 }
 use parity_codec::alloc::collections::BTreeSet;
@@ -335,9 +335,8 @@ fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> PeerIdW
             *b = rng.gen();
         }
 
-        let mhash= Multihash {
-            bytes:  Bytes::from(output),}	;
-		PeerIdW {0:PeerId {multihash:mhash}}	
+        let mhash= Multihash::from_bytes(output).unwrap();
+		PeerIdW {0:PeerId::from_multihash(mhash).unwrap()}	
 	}
 }
 use std::convert::TryInto;
@@ -361,10 +360,8 @@ impl rand::distributions::Distribution<PeerIdW> for PeerIdW
         for b in output[header_len..].iter_mut() {
             *b = rng.gen();
         }
-
-        let mhash= Multihash {
-            bytes:  Bytes::from(output),}	;
-		PeerIdW {0:PeerId {multihash:mhash}}	
+let mhash= Multihash::from_bytes(output).unwrap();
+		PeerIdW {0:PeerId::from_multihash(mhash).unwrap()}		
 	}
 }
 
@@ -562,7 +559,7 @@ where D::Message: serde::Serialize + DeserializeOwned
 	}
 }
 use parking_lot::RwLock;
-pub(super) struct BadgerGossipValidator<Block: BlockT>
+pub struct BadgerGossipValidator<Block: BlockT>
  {
 	inner: parking_lot::RwLock<BadgerNode<Block,QHB>>,
 }
@@ -627,7 +624,7 @@ fn flush_message_net<N:Network<Block>>(&self,context: &N)
 		 }
    }
 	/// Create a new gossip-validator. 
-	pub(super) fn new(config: crate::Config, self_id:PeerId)
+	pub fn new(config: crate::Config, self_id:PeerId)
 		-> BadgerGossipValidator<Block>
 	{
 		let val = BadgerGossipValidator {
@@ -679,7 +676,7 @@ fn flush_message_net<N:Network<Block>>(&self,context: &N)
 
 	}
 
-	pub(super) fn do_validate(&self, who: &PeerId, mut data: &[u8])
+	pub fn do_validate(&self, who: &PeerId, mut data: &[u8])
 		-> (Action<Block::Hash>,  Option<GossipMessage>)
 	{
 
@@ -992,7 +989,7 @@ impl Stream for NetworkStream {
 }
 
 /// Bridge between the underlying network service, gossiping consensus messages and Grandpa
-pub(crate) struct NetworkBridge<B: BlockT, N: Network<B>> 
+pub struct NetworkBridge<B: BlockT, N: Network<B>> 
 where 
 {
 	service: N,
@@ -1005,7 +1002,7 @@ impl<B: BlockT, N: PollParameters + Network<B>> NetworkBridge<B, N>
 	/// handle and a future that must be polled to completion to finish startup.
 	/// If a voter set state is given it registers previous round votes with the
 	/// gossip service.
-	pub(crate) fn new(
+	pub fn new(
 		service: N,
 		config: crate::Config,
 		on_exit:  impl Future<Output = ()> + Clone + Send +Unpin,
@@ -1041,7 +1038,7 @@ pub  fn is_validator(&self) ->bool
 
 
 	/// Set up the global communication streams. blocks out transaction in. Maybe reverse of grandpa... 
-	pub(crate) fn global_communication(
+	pub fn global_communication(
 		&self,
 		is_voter: bool,
 	) -> (
@@ -1129,7 +1126,7 @@ struct TransactionFeed<Block: BlockT, N: Network<Block>>
 impl<Block: BlockT, N: Network<Block>> TransactionFeed<Block, N> 
 {
 	/// Create a new commit output stream.
-	pub(crate) fn new(
+	pub fn new(
 		network: N,
 		is_voter: bool,
 		gossip_validator: Arc<BadgerGossipValidator<Block>>,
