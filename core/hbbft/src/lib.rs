@@ -695,7 +695,7 @@ where A: txpool::ChainApi,
 	}
 }
 
-pub struct BadgerProposerWorker<S, N, Block:BlockT<Hash=H256>, TF,A,I,B,E,RA,SC>
+pub struct BadgerProposerWorker<S,  Block:BlockT<Hash=H256>, TF,A,I,B,E,RA,SC>
 where
 S : Stream<Item = <QHB as ConsensusProtocol>::Output> ,
 TF: Sink<TransactionSet>+Unpin,
@@ -710,16 +710,16 @@ I:BlockImport<Block>
 {
  pub block_out: S,
  pub transaction_in: TF,
- pub transaction_pool: Arc<TransactionPool<A>>,
- pub network: N,
+ pub transaction_out: TxStream<A>,//Arc<TransactionPool<A>>,
+ //pub network: N,
  pub client: Arc<Client<B, E, Block, RA>>,
  pub block_import: Arc<Mutex<I>>,
  pub inherent_data_providers: InherentDataProviders,
  pub select_chain: SC,
  phb:PhantomData<Block>,
-
+ 
 }
-impl<'a,S: Stream<Item = <QHB as ConsensusProtocol>::Output> +'a ,N:'a,Block:BlockT<Hash=H256>,TF: Sink<TransactionSet>+Unpin,A: txpool::ChainApi,I:BlockImport<Block>+'a,B,E,RA:'a,SC:'a>   BadgerProposerWorker<S,N,Block,TF,A,I,B,E,RA,SC>
+impl<S: Stream<Item = <QHB as ConsensusProtocol>::Output> +'static ,Block:BlockT<Hash=H256>,TF: Sink<TransactionSet>+Unpin+'static,A: txpool::ChainApi+'static,I:BlockImport<Block>+'static,B,E,RA:'static,SC:'static>   BadgerProposerWorker<S,Block,TF,A,I,B,E,RA,SC>
 where
 NumberFor<Block>: BlockNumberOps,
 Client<B, E, Block, RA>: ProvideRuntimeApi,
@@ -728,46 +728,13 @@ B: client::backend::Backend<Block, Blake2Hasher> + Send + Sync + 'static,
 E: CallExecutor<Block, Blake2Hasher> + Send + Sync + Clone + 'static,
 RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>+ Send + Sync,
 SC:SelectChain<Block> + Clone,
+S: Unpin
 {
-	pub fn make_sink(& mut self) -> SendAll<TF, TxStream<A>> 
+	 /* pub fn make_sink(& mut self) -> SendAll<TF, TxStream<A>> 
 	{
-		self.transaction_in.send_all(&mut Box::pin(TxStream{transaction_pool:self.transaction_pool.clone()}))
+		
 
-	}
-
-	pub fn make_block_spitter (&self) -> impl Future + '_
-	{
-		Box::pin( self.block_out.for_each(move |batch|
-		  {
-			let inherent_data = match self.inherent_data_providers.create_inherent_data() {
-				Ok(id) => id,
-				Err(err) => return future::ready(()),//future::err(err),
-			};
-			//empty for now?
-			let inherent_digests= generic::Digest {
-							logs: vec![],
-						};
-           	if let Ok(mut imp_blocks) =self.make_import_blocks(&mut batch, inherent_data,inherent_digests)
-			   {
-			  for import_block in imp_blocks.drain(..)
-			  { 
-				  let eh=import_block.header.parent_hash().clone();
-			if let Err(e) = self.block_import.lock().import_block(import_block, Default::default()) {
-				warn!(target: "badger", "Error with block built on {:?}: {:?}",
-						eh, e);
-				telemetry!(CONSENSUS_WARN; "mushroom.err_with_block_built_on";
-					"hash" => ?eh, "err" => ?e
-				);
-			  }
-			}
-
-			}
-		 future::ready(())
-		  }
-		)  ) //.map_err(|e| consensus_common::Error::ClientImport(format!("{:?}", e)).into())
-	
-	}
-
+	}*/
 
 	pub fn make_import_blocks(
 		&self,
@@ -789,7 +756,7 @@ SC:SelectChain<Block> + Clone,
         let mut parent_hash = chain_head.hash();
 		let mut pnumber= *chain_head.number();
 		let mut parent_id=BlockId::hash(parent_hash);
-		let mut block_builder = self.client.new_block_at(&parent_id, inherent_digests)?;
+		let mut block_builder = self.client.new_block_at(&parent_id, inherent_digests.clone())?;
 
 		// We don't check the API versions any further here since the dispatch compatibility
 		// check should be enough. 
@@ -809,10 +776,10 @@ SC:SelectChain<Block> + Clone,
 		let mut skipped = 0;
 		//let mut unqueue_invalid = Vec::new();
 		//let mut unqueue_valid = Vec::new();
-		let pending_iterator = self.transaction_pool.ready();
+		//let pending_iterator = self.transaction_pool.ready();
 
 		debug!("Attempting to push transactions from the batch.");
-		for  pending in batch.into_tx_iter() {
+		for  pending in batch.iter() {
             let data: Result<<Block as BlockT>::Extrinsic,_> =Decode::decode(&mut pending.as_slice());
 			//   <Transaction<ExHash<A>,<Block as BlockT>::Extrinsic> as Decode>::decode(&mut pending.as_slice());
 			let data= match data
@@ -891,7 +858,7 @@ SC:SelectChain<Block> + Clone,
 							parent_id = BlockId::hash(parent_hash);
 							// go on to next block
 							ret.push(import_block);
-							block_builder = self.client.new_block_at(&parent_id, inherent_digests)?;
+							block_builder = self.client.new_block_at(&parent_id, inherent_digests.clone())?;
 							is_first=true;
 							continue;
 					//	break;
@@ -911,9 +878,37 @@ SC:SelectChain<Block> + Clone,
 		Ok(ret)
 	}
 
-   pub fn  get_aggregate(mut self) -> futures03::future::Select< impl Future+ 'a, impl Future + 'a>
+   pub fn  get_aggregate(mut self) -> futures03::future::Select< impl Future, impl Future>
    {
-	   futures03::future::select(self.make_sink(),self.make_block_spitter())
+	   futures03::future::select(self.transaction_in.send_all(&mut self.transaction_out) ,
+	   self.block_out.for_each(move |mut batch|
+		  {
+			let inherent_data = match self.inherent_data_providers.create_inherent_data() {
+				Ok(id) => id,
+				Err(err) => return future::ready(()),//future::err(err),
+			};
+			//empty for now?
+			let inherent_digests= generic::Digest {
+							logs: vec![],
+						};
+           	if let Ok(mut imp_blocks) =self.make_import_blocks(&mut batch, inherent_data,inherent_digests)
+			   {
+			  for import_block in imp_blocks.drain(..)
+			  { 
+				  let eh=import_block.header.parent_hash().clone();
+			if let Err(e) = self.block_import.lock().import_block(import_block, Default::default()) {
+				warn!(target: "badger", "Error with block built on {:?}: {:?}",
+						eh, e);
+				telemetry!(CONSENSUS_WARN; "mushroom.err_with_block_built_on";
+					"hash" => ?eh, "err" => ?e
+				);
+			  }
+			}
+
+			}
+		 future::ready(())
+		  }
+		) )
    }
 
 }
@@ -949,7 +944,7 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 	DigestFor<Block>: Encode,
 	RA: Send + Sync + 'static,
 	X: Future<Output=()> + Clone + Send+Unpin,
-	A: txpool::ChainApi,
+	A: txpool::ChainApi+'static,
 	I:BlockImport<Block>+Send+Sync+'static,
 	RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
 	<Client<B, E, Block, RA> as ProvideRuntimeApi>::Api: BlockBuilderApi<Block>
@@ -975,8 +970,8 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
                 {
                  block_out: blk_out,
                  transaction_in: tx_in,
-                 transaction_pool: t_pool.clone(),
-                 network: network,
+                 transaction_out: TxStream{transaction_pool:t_pool.clone()},
+               //  network: network,
                  client: client.clone(),
                  block_import: block_import.clone(),
                  inherent_data_providers: inherent_data_providers,

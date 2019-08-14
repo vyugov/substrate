@@ -224,7 +224,7 @@ use parity_codec::Input;
 impl parity_codec::Decode for PeerIdW {
   fn decode<I: Input>(value: &mut I) -> Result<Self,parity_codec::Error>
   {
-	  let blen:[u8;8];
+	  let mut blen:[u8;8]=[0; 8];
 	   match value.read(&mut blen)
 	  {
 		  Ok(_) => {},
@@ -432,7 +432,14 @@ D::Message: Serialize + DeserializeOwned,
 	phantom: PhantomData<B>
 
 }
+impl <B:BlockT>BadgerNode<B,QHB>
+{	 
+fn push_transaction(&mut self,tx: Vec<u8>) -> Result<CpStep<QHB>, badger::sender_queue::Error<badger::queueing_honey_badger::Error>>
+{
+self.algo.push_transaction(tx,&mut self.main_rng)
+}
 
+}
 impl<B: BlockT,D: ConsensusProtocol<NodeId=PeerIdW> > BadgerNode<B,D>
 where D::Message: serde::Serialize + DeserializeOwned
 {
@@ -440,10 +447,7 @@ fn register_peer_public_key(&mut self,who :&PeerId, auth:AuthorityId)
  {
   self.peers.update_id(who,auth)
  }
-fn push_transaction(&mut self,tx: Vec<u8>) -> Result<CpStep<D>>
-{
-algo.push_transaction(tx,&self.rng)
-}
+
  fn is_authority(&self, who :&PeerId) -> bool
   {
 	  let auth=self.peers.peer(who);
@@ -451,7 +455,7 @@ algo.push_transaction(tx,&self.rng)
 	  {
 		  Some(info) =>
 		  {
-			  if let Some(iid) =info.id
+			  if let Some(iid) =&info.id
 			  {
 			   self.authorities.contains(&iid)
 			  }
@@ -476,7 +480,7 @@ where D::Message: serde::Serialize + DeserializeOwned
 	pub fn new(config: crate::Config, self_id:PeerId) -> BadgerNode<B,QHB>
 	{
 	let mut rng=OsRng::new().unwrap();
-	let secr=match config.secret_key_share
+	let secr=match config.secret_key_share.clone()
 	{
 		Some(wrap) => Some(wrap.0.clone()),
 		None => None
@@ -484,7 +488,7 @@ where D::Message: serde::Serialize + DeserializeOwned
 	let ni=NetworkInfo::<D::NodeId>::new(PeerIdW{ 0: self_id.clone() },secr,config.public_key_set.0.clone(),config.node_id.1.clone(),config.initial_validators.clone());
 	let peer_ids: Vec<_> = ni
             .all_ids()
-            .filter(|&&them| them != PeerIdW{ 0: self_id} )
+            .filter(|&them| *them != PeerIdW{ 0: self_id.clone()} )
             .cloned()
             .collect();
     let dhb = DynamicHoneyBadger::builder().build(ni);
@@ -581,7 +585,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
 				  },
               LocalTarget::AllExcept(exclude) => {
 				    let mut inner = self.inner.write();
-                    for pid in inner.peers.peer_list().iter().filter(|n| !exclude.contains(&PeerIdW{0:*(*n) })) {
+                    for pid in inner.peers.peer_list().iter().filter(|n| !exclude.contains(&PeerIdW{0:(*n).clone()})) {
 						let tmp=PeerIdW {0:pid.clone() } ;
                         if tmp != msg.sender_id {
                             context.send_message(pid, vdata.clone());
@@ -595,7 +599,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
    }
 fn flush_message_net<N:Network<Block>>(&self,context: &N)
    {
-    let locked= self.inner.write();
+    let mut locked= self.inner.write();
 	let topic = badger_topic::<Block>();    
 		 for msg in locked.out_queue.drain(..)
 		 {
@@ -611,7 +615,7 @@ fn flush_message_net<N:Network<Block>>(&self,context: &N)
               LocalTarget::AllExcept(exclude) => {
 				    let mut inner = self.inner.write();
                     for pid in inner.peers.peer_list().iter().filter(|n| !exclude.contains(&PeerIdW{0:(*n).clone() })) {
-						let tmp=PeerIdW {0:*pid } ;
+						let tmp=PeerIdW {0:pid.clone() } ;
                         if tmp != msg.sender_id {
                             context.send_message(vec![pid.clone()], vdata.clone());
                         }
