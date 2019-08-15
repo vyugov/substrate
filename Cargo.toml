@@ -19,6 +19,7 @@ vergen = "3"
 
 [workspace]
 members = [
+        "nodehb/hbcli",
 	"core/hbbft",
         "core/application-crypto",
 	"core/cli",

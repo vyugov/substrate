@@ -542,7 +542,86 @@ impl<B, E, Block: BlockT<Hash=H256>, RA> BlockStatus<Block> for Arc<Client<B, E,
 }
 
 
+/*
+pub struct BadgerBlockImport<B, E, Block: BlockT<Hash=H256>, RA, PRA, SC> {
+	inner: Arc<Client<B, E, Block, RA>>,
+	select_chain: SC,
+	//authority_set: SharedAuthoritySet<Block::Hash, NumberFor<Block>>,
+	//send_voter_commands: mpsc::UnboundedSender<VoterCommand<Block::Hash, NumberFor<Block>>>,
+	consensus_changes: SharedConsensusChanges<Block::Hash, NumberFor<Block>>,
+	api: Arc<PRA>,
+}
 
+impl<B, E, Block: BlockT<Hash=H256>, RA, PRA, SC: Clone> Clone for
+	GrandpaBlockImport<B, E, Block, RA, PRA, SC>
+{
+	fn clone(&self) -> Self {
+		GrandpaBlockImport {
+			inner: self.inner.clone(),
+			select_chain: self.select_chain.clone(),
+			authority_set: self.authority_set.clone(),
+			send_voter_commands: self.send_voter_commands.clone(),
+			consensus_changes: self.consensus_changes.clone(),
+			api: self.api.clone(),
+		}
+	}
+}
+
+impl<B, E, Block: BlockT<Hash=H256>, RA, PRA, SC> JustificationImport<Block>
+	for GrandpaBlockImport<B, E, Block, RA, PRA, SC> where
+		NumberFor<Block>: grandpa::BlockNumberOps,
+		B: Backend<Block, Blake2Hasher> + 'static,
+		E: CallExecutor<Block, Blake2Hasher> + 'static + Clone + Send + Sync,
+		DigestFor<Block>: Encode,
+		RA: Send + Sync,
+		PRA: ProvideRuntimeApi,
+		PRA::Api: GrandpaApi<Block>,
+		SC: SelectChain<Block>,
+{
+	type Error = ConsensusError;
+
+	fn on_start(&mut self) -> Vec<(Block::Hash, NumberFor<Block>)> {
+		let mut out = Vec::new();
+		let chain_info = self.inner.info().chain;
+
+		// request justifications for all pending changes for which change blocks have already been imported
+		let authorities = self.authority_set.inner().read();
+		for pending_change in authorities.pending_changes() {
+			if pending_change.delay_kind == DelayKind::Finalized &&
+				pending_change.effective_number() > chain_info.finalized_number &&
+				pending_change.effective_number() <= chain_info.best_number
+			{
+				let effective_block_hash = self.select_chain.finality_target(
+					pending_change.canon_hash,
+					Some(pending_change.effective_number()),
+				);
+
+				if let Ok(Some(hash)) = effective_block_hash {
+					if let Ok(Some(header)) = self.inner.header(&BlockId::Hash(hash)) {
+						if *header.number() == pending_change.effective_number() {
+							out.push((header.hash(), *header.number()));
+						}
+					}
+				}
+			}
+		}
+
+		out
+	}
+
+	fn import_justification(
+		&mut self,
+		hash: Block::Hash,
+		number: NumberFor<Block>,
+		justification: Justification,
+	) -> Result<(), Self::Error> {
+		self.import_justification(hash, number, justification, false)
+	}
+}
+
+
+
+*/
 
 //pub struct LinkHalf<B, E, Block: BlockT<Hash=H256>, RA, SC> {
 //	client: Arc<Client<B, E, Block, RA>>,
@@ -553,14 +632,11 @@ impl<B, E, Block: BlockT<Hash=H256>, RA> BlockStatus<Block> for Arc<Client<B, E,
 
 /// Make block importer and link half necessary to tie the background voter
 /// to it.
-/* pub fn block_import<B, E, Block: BlockT<Hash=H256>, RA, PRA, SC>(
+/*pub fn block_import<B, E, Block: BlockT<Hash=H256>, RA, PRA, SC>(
 	client: Arc<Client<B, E, Block, RA>>,
 	api: Arc<PRA>,
 	select_chain: SC,
-) -> Result<(
-		GrandpaBlockImport<B, E, Block, RA, PRA, SC>,
-		LinkHalf<B, E, Block, RA, SC>
-	), ClientError>
+) -> Result<BadgerBlockImport<B, E, Block, RA, PRA, SC>, ClientError>
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
 	E: CallExecutor<Block, Blake2Hasher> + 'static + Clone + Send + Sync,
@@ -643,7 +719,7 @@ fn global_communication<Block: BlockT<Hash=H256>, B, E, N, RA>(
 
 
 
-/// Parameters used to run Grandpa.
+/// Parameters used to run Honeyed Badger.
 pub struct BadgerStartParams< Block: BlockT<Hash=H256>, N :Network<Block>,  X> 
 
 {
@@ -809,7 +885,7 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 
   // let  aggregate=bworker.get_aggregate();
    let mut tx_out= TxStream{transaction_pool:t_pool.clone()};
-  //let sender= tx_out.forward(tx_in);
+  //let sender= tx_out.forward(tx_in); 
   //let sender=tx_in.send_all(&mut tx_out);
  let sender=tx_out.for_each( move |data: std::vec::Vec<std::vec::Vec<u8>>| 
    {

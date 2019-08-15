@@ -24,6 +24,7 @@ use rand::rngs::StdRng;
 use parity_codec::Decode;
 use keyring::sr25519::Keyring;
 use node_primitives::Hash;
+use node_primitives::Balance;
 use node_runtime::{Call, CheckedExtrinsic, UncheckedExtrinsic, BalancesCall};
 use primitives::sr25519;
 use primitives::crypto::Pair;
@@ -120,28 +121,27 @@ impl RuntimeAdapter for FactoryState<Number> {
 		self.round = val;
 	}
 
-	fn transfer_extrinsic(
+		fn transfer_extrinsic(
 		&self,
 		sender: &Self::AccountId,
 		key: &Self::Secret,
 		destination: &Self::AccountId,
-		amount: &Self::Number,
+		amount: &Self::Balance,
+		genesis_hash: &<Self::Block as BlockT>::Hash,
 		prior_block_hash: &<Self::Block as BlockT>::Hash,
 	) -> <Self::Block as BlockT>::Extrinsic {
 		let index = self.extract_index(&sender, prior_block_hash);
 		let phase = self.extract_phase(*prior_block_hash);
 
-		sign::<service::Factory, Self>(CheckedExtrinsic {
-			signed: Some((sender.clone(), index)),
+		sign::<Self>(CheckedExtrinsic {
+			signed: Some((sender.clone(), Self::build_extra(index, phase))),
 			function: Call::Balances(
 				BalancesCall::transfer(
-					indices::address::Address::Id(
-						destination.clone().into()
-					),
+					indices::address::Address::Id(destination.clone().into()),
 					(*amount).into()
 				)
 			)
-		}, key, &prior_block_hash, phase)
+		}, key, (genesis_hash.clone(), prior_block_hash.clone(), (), (), ()))
 	}
 
 	fn inherent_extrinsics(&self) -> InherentData {
@@ -155,7 +155,7 @@ impl RuntimeAdapter for FactoryState<Number> {
 		inherent
 	}
 
-	fn minimum_balance() -> Self::Number {
+	fn minimum_balance() -> Balance {
 		// TODO get correct amount via api. See #2587.
 		1337
 	}
