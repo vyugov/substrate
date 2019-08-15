@@ -29,9 +29,9 @@ use substrate_executor::native_executor_instance;
 // equivalent wasm code.
 native_executor_instance!(
 	pub Executor,
-	node_runtime::api::dispatch,
-	node_runtime::native_version,
-	node_runtime::WASM_BINARY
+	hb_node_runtime::api::dispatch,
+	hb_node_runtime::native_version,
+	hb_node_runtime::WASM_BINARY
 );
 
 #[cfg(test)]

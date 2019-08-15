@@ -123,13 +123,12 @@ use fg_primitives::PublicKeySetWrap;
 use fg_primitives::PublicKeyWrap;
 use std::path::PathBuf;
 //use fg_primitives::AuthorityId;
-use fg_primitives::HbbftApi;
+use substrate_badger_rapi::HbbftApi;
 use fg_primitives::AuthorityPair;
 //use fg_primitives::AuthoritySignature;
 use serde_json::Value::Object;
 use serde_json::Value::Number;
 use serde_json::Value;
-use libp2p::swarm::{ PollParameters};
 
 use std::fs::File;
 use inherents::{InherentDataProviders, InherentData};
@@ -263,7 +262,7 @@ pub fn badger_import_queue<B, C, Pub,Sig>(
 	C: 'static + ProvideRuntimeApi + ProvideCache<B> + Send + Sync + AuxStore,
 	C::Api: BlockBuilderApi<B> + HbbftApi<B>,
 	//DigestItemFor<B>: CompatibleDigestItem<P>,
-	Pub: Clone + Eq + Send + Sync + Hash + Debug + Encode + Decode + AsRef<Pub>+'static,
+	Pub: Clone + Eq + Send + Sync + Hash + Debug + Encode + Decode +'static,
 	Sig: Encode + Decode+ Send + Sync+'static,
 {
 	register_badger_inherent_data_provider(&inherent_data_providers, 1)?;
@@ -694,7 +693,7 @@ fn global_communication<Block: BlockT<Hash=H256>, B, E, N, RA>(
 ) where
 	B: Backend<Block, Blake2Hasher>,
 	E: CallExecutor<Block, Blake2Hasher> + Send + Sync,
-	N: Network<Block>+PollParameters,
+	N: Network<Block>,
 	RA: Send + Sync,
 	NumberFor<Block>: BlockNumberOps,
 {
@@ -841,13 +840,13 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 	Block::Hash: Ord,
 	B: Backend<Block, Blake2Hasher> + 'static,
 	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static+Clone,
-	N: Network<Block> + Send + Sync + Unpin +PollParameters,
+	N: Network<Block> + Send + Sync + Unpin,
 	N::In: Send,
 	SC: SelectChain<Block> + 'static,
 	NumberFor<Block>: BlockNumberOps,
 	DigestFor<Block>: Encode,
 	RA: Send + Sync + 'static,
-	X: Future<Output=()> + Clone + Send+Unpin,
+	X: futures03::future::Future<Output=()> + Send+Unpin,
 	A: txpool::ChainApi+'static,
 	I:BlockImport<Block>+Send+Sync+'static,
 	RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
@@ -856,7 +855,6 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 	let (network_bridge, network_startup) = NetworkBridge::new(
 		network,
 		config.clone(),
-		on_exit.clone(),
 	);
 
 	//let PersistentData { authority_set, set_state, consensus_changes } = persistent_data;

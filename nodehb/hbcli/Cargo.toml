@@ -12,7 +12,7 @@ tokio = "0.1.7"
 futures = "0.1"
 exit-future = "0.1"
 cli = { package = "substrate-cli", path = "../../core/cli" }
-parity-codec = { version = "4.1.1" }
+parity-codec = { package = "parity-scale-codec", version = "1.0.0", features = ["derive"] }
 sr-io = { path = "../../core/sr-io" }
 client = { package = "substrate-client", path = "../../core/client" }
 primitives = { package = "substrate-primitives", path = "../../core/primitives" }
@@ -38,7 +38,10 @@ indices = { package = "srml-indices", path = "../../srml/indices" }
 timestamp = { package = "srml-timestamp", path = "../../srml/timestamp", default-features = false }
 rand = "0.6"
 finality_tracker = { package = "srml-finality-tracker", path = "../../srml/finality-tracker", default-features = false }
-contracts = { package = "srml-contracts", path = "../../srml/contracts" }
+system = { package = "srml-system", path = "../../srml/system" }
+balances = { package = "srml-balances", path = "../../srml/balances", default-features = false }
+futures03 = { package = "futures-preview", version = "=0.3.0-alpha.17", features = ["compat"] }
+parking_lot = "0.8.0"
 
 [dev-dependencies]
 consensus-common = { package = "substrate-consensus-common", path = "../../core/consensus/common" }

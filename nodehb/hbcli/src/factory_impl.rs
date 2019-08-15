@@ -21,25 +21,18 @@
 use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
 
-use parity_codec::Decode;
+use parity_codec::{Encode, Decode};
 use keyring::sr25519::Keyring;
-use node_primitives::Hash;
-use node_primitives::Balance;
-use node_runtime::{Call, CheckedExtrinsic, UncheckedExtrinsic, BalancesCall};
-use primitives::sr25519;
-use primitives::crypto::Pair;
-use parity_codec::Encode;
-use sr_primitives::generic::Era;
-use sr_primitives::traits::{Block as BlockT, Header as HeaderT};
-use substrate_service::ServiceFactory;
+use hb_node_runtime::{Call, CheckedExtrinsic, UncheckedExtrinsic, SignedExtra, BalancesCall, ExistentialDeposit};
+use primitives::{sr25519, crypto::Pair};
+use sr_primitives::{generic::Era, traits::{Block as BlockT, Header as HeaderT, SignedExtension}};
 use transaction_factory::RuntimeAdapter;
 use transaction_factory::modes::Mode;
-use crate::service;
 use inherents::InherentData;
 use timestamp;
 use finality_tracker;
 
-// TODO get via api: <timestamp::Module<T>>::minimum_period(). See #2587.
+// TODO get via api: <T as timestamp::Trait>::MinimumPeriod::get(). See #2587.
 const MINIMUM_PERIOD: u64 = 99;
 
 pub struct FactoryState<N> {
@@ -53,15 +46,27 @@ pub struct FactoryState<N> {
 	num: u64,
 }
 
-type Number = <<node_primitives::Block as BlockT>::Header as HeaderT>::Number;
+type Number = <<hb_node_primitives::Block as BlockT>::Header as HeaderT>::Number;
+
+impl<Number> FactoryState<Number> {
+	fn build_extra(index: hb_node_primitives::Index, phase: u64) -> hb_node_runtime::SignedExtra {
+		(
+			system::CheckGenesis::new(),
+			system::CheckEra::from(Era::mortal(256, phase)),
+			system::CheckNonce::from(index),
+			system::CheckWeight::new(),
+			balances::TakeFees::from(0)
+		)
+	}
+}
 
 impl RuntimeAdapter for FactoryState<Number> {
-	type AccountId = node_primitives::AccountId;
-	type Balance = node_primitives::Balance;
-	type Block = node_primitives::Block;
+	type AccountId = hb_node_primitives::AccountId;
+	type Balance = hb_node_primitives::Balance;
+	type Block = hb_node_primitives::Block;
 	type Phase = sr_primitives::generic::Phase;
 	type Secret = sr25519::Pair;
-	type Index = node_primitives::Index;
+	type Index = hb_node_primitives::Index;
 
 	type Number = Number;
 
@@ -72,9 +77,9 @@ impl RuntimeAdapter for FactoryState<Number> {
 	) -> FactoryState<Self::Number> {
 		FactoryState {
 			mode,
-			num: num,
+			num: num as u64,
 			round: 0,
-			rounds,
+			rounds: rounds as u64,
 			block_in_round: 0,
 			block_no: 0,
 			start_number: 0,
@@ -121,7 +126,7 @@ impl RuntimeAdapter for FactoryState<Number> {
 		self.round = val;
 	}
 
-		fn transfer_extrinsic(
+	fn transfer_extrinsic(
 		&self,
 		sender: &Self::AccountId,
 		key: &Self::Secret,
@@ -145,7 +150,7 @@ impl RuntimeAdapter for FactoryState<Number> {
 	}
 
 	fn inherent_extrinsics(&self) -> InherentData {
-		let timestamp = self.block_no * MINIMUM_PERIOD;
+		let timestamp = self.block_no as u64 * MINIMUM_PERIOD;
 
 		let mut inherent = InherentData::new();
 		inherent.put_data(timestamp::INHERENT_IDENTIFIER, &timestamp)
@@ -155,9 +160,9 @@ impl RuntimeAdapter for FactoryState<Number> {
 		inherent
 	}
 
-	fn minimum_balance() -> Balance {
+	fn minimum_balance() -> Self::Balance {
 		// TODO get correct amount via api. See #2587.
-		1337
+		ExistentialDeposit::get()
 	}
 
 	fn master_account_id() -> Self::AccountId {
@@ -189,12 +194,12 @@ impl RuntimeAdapter for FactoryState<Number> {
 		// This currently prevents the factory from being used
 		// without a preceding purge of the database.
 		if self.mode == Mode::MasterToN || self.mode == Mode::MasterTo1 {
-			self.block_no()
+			self.block_no() as Self::Index
 		} else {
 			match self.round() {
 				0 =>
 					// if round is 0 all transactions will be done with master as a sender
-					self.block_no(),
+					self.block_no() as Self::Index,
 				_ =>
 					// if round is e.g. 1 every sender account will be new and not yet have
 					// any transactions done
@@ -210,12 +215,12 @@ impl RuntimeAdapter for FactoryState<Number> {
 		// TODO get correct phase via api. See #2587.
 		// This currently prevents the factory from being used
 		// without a preceding purge of the database.
-		self.block_no
+		self.block_no() as Self::Phase
 	}
 }
 
 fn gen_seed_bytes(seed: u64) -> [u8; 32] {
-	let mut rng: StdRng = SeedableRng::seed_from_u64(seed);
+	let mut rng: StdRng = SeedableRng::seed_from_u64(seed as u64);
 
 	let mut seed_bytes = [0u8; 32];
 	for i in 0..32 {
@@ -226,16 +231,14 @@ fn gen_seed_bytes(seed: u64) -> [u8; 32] {
 
 /// Creates an `UncheckedExtrinsic` containing the appropriate signature for
 /// a `CheckedExtrinsics`.
-fn sign<F: ServiceFactory, RA: RuntimeAdapter>(
+fn sign<RA: RuntimeAdapter>(
 	xt: CheckedExtrinsic,
 	key: &sr25519::Pair,
-	prior_block_hash: &Hash,
-	phase: u64,
+	additional_signed: <SignedExtra as SignedExtension>::AdditionalSigned,
 ) -> <RA::Block as BlockT>::Extrinsic {
 	let s = match xt.signed {
-		Some((signed, index)) => {
-			let era = Era::mortal(256, phase);
-			let payload = (index.into(), xt.function, era, prior_block_hash);
+		Some((signed, extra)) => {
+			let payload = (xt.function, extra.clone(), additional_signed);
 			let signature = payload.using_encoded(|b| {
 				if b.len() > 256 {
 					key.sign(&sr_io::blake2_256(b))
@@ -244,8 +247,8 @@ fn sign<F: ServiceFactory, RA: RuntimeAdapter>(
 				}
 			}).into();
 			UncheckedExtrinsic {
-				signature: Some((indices::address::Address::Id(signed), signature, payload.0, era)),
-				function: payload.1,
+				signature: Some((indices::address::Address::Id(signed), signature, extra)),
+				function: payload.0,
 			}
 		}
 		None => UncheckedExtrinsic {

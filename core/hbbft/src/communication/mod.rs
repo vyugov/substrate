@@ -32,7 +32,7 @@ use std::collections::{VecDeque};
 use futures03::core_reexport::marker::PhantomData;
 use std::time::{Duration, Instant};
 use network::consensus_gossip:: MessageIntent;
-use libp2p::swarm::{ PollParameters};
+use libp2p::swarm::{ PollParameters,Swarm};
 //use runtime_primitives::traits::NumberFor;
 use badger::dynamic_honey_badger::DynamicHoneyBadger;
 use badger::queueing_honey_badger::{ QueueingHoneyBadger};
@@ -113,6 +113,8 @@ pub trait Network<Block: BlockT>: Clone + Send + 'static {
 
 	/// Inform peers that a block with given hash should be downloaded.
 	fn announce(&self, block: Block::Hash);
+
+	fn local_id(&self) ->PeerId;
 }
 
 /// Create a unique topic for a round and set-id combo.
@@ -891,6 +893,10 @@ impl<B, S, H> Network<B> for Arc<NetworkService<B, S, H>> where
 	H: network::ExHashT,
 {
 	type In = NetworkStream;
+	fn local_id(&self) ->PeerId
+	{
+    self.local_peer_id()
+	}
 
 	fn messages_for(&self, topic: B::Hash) -> Self::In {
 		let (tx, rx) = futures03::channel::oneshot::channel::<futures03::channel::mpsc::UnboundedReceiver<_>>();
@@ -993,7 +999,7 @@ where
 	node: Arc<BadgerGossipValidator<B>>,
 }
 
-impl<B: BlockT, N: PollParameters + Network<B>> NetworkBridge<B, N> 
+impl<B: BlockT, N:  Network<B>> NetworkBridge<B, N> 
 {
 	/// Create a new NetworkBridge to the given NetworkService. Returns the service
 	/// handle and a future that must be polled to completion to finish startup.
@@ -1002,13 +1008,12 @@ impl<B: BlockT, N: PollParameters + Network<B>> NetworkBridge<B, N>
 	pub fn new(
 		service: N,
 		config: crate::Config,
-		on_exit:  impl Future<Output = ()> + Clone + Send +Unpin,
 	) -> (
 		Self,
 		impl futures03::future::Future<Output = ()> + Send + Unpin,
 	) {
 
-		let validator= BadgerGossipValidator::new(config, service.local_peer_id().clone());
+		let validator= BadgerGossipValidator::new(config, service.local_id().clone());
 		let validator_arc = Arc::new(validator);
 		service.register_validator(validator_arc.clone());
 

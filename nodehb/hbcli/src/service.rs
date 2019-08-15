@@ -20,7 +20,11 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-
+use std::path::PathBuf;
+use futures03::compat;
+use futures03::future::TryFutureExt;
+use futures03::compat::Future01CompatExt;
+use futures03::future::FutureExt;
 use badger::{badger_import_queue,  BadgerImportQueue,Config as BadgerConfig,run_honey_badger};
 use badger_primitives::{SignatureWrap};
 use client::{self, LongestChain};
@@ -39,9 +43,12 @@ use substrate_service::{
 use transaction_pool::{self, txpool::{Pool as TransactionPool}};
 use inherents::InherentDataProviders;
 use network::construct_simple_protocol;
+use network::{config::DummyFinalityProofRequestBuilder};
+
 use substrate_service::construct_service_factory;
 use log::info;
 use substrate_service::TelemetryOnConnect;
+use parking_lot::Mutex;
 
 construct_simple_protocol! {
 	/// Demo protocol attachment for substrate.
@@ -63,7 +70,6 @@ pub struct NodeConfig {
 impl Default for NodeConfig {
 	fn default() -> NodeConfig {
 		NodeConfig {
-			grandpa_import_setup: None,
 			inherent_data_providers: InherentDataProviders::new(),
 			num_validators:4,
 			secret_key_share:None,
@@ -102,7 +108,7 @@ construct_service_factory! {
 		Block = Block,
 		RuntimeApi = RuntimeApi,
 		NetworkProtocol = NodeProtocol { |config| Ok(NodeProtocol::new()) },
-		RuntimeDispatch = node_executor::Executor,
+		RuntimeDispatch = hb_node_executor::Executor,
 		FullTransactionPoolApi = transaction_pool::ChainApi<client::Client<FullBackend<Self>, FullExecutor<Self>, Block, RuntimeApi>, Block>
 			{ |config, client| Ok(TransactionPool::new(config, transaction_pool::ChainApi::new(client))) },
 		LightTransactionPoolApi = transaction_pool::ChainApi<client::Client<LightBackend<Self>, LightExecutor<Self>, Block, RuntimeApi>, Block>
@@ -115,21 +121,23 @@ construct_service_factory! {
 		AuthoritySetup = {
 			|mut service: Self::FullService| {
 
-				    let client = service.client();
+				    let client = service.client().clone();
                     let t_pool = service.transaction_pool();
 					let select_chain = service.select_chain()
 						.ok_or(ServiceError::SelectChainRequired)?;
 					let badger = run_honey_badger(
 						client,
 						t_pool,
-						BadgerConfig::from_json_file_with_name("/store/nodess.json",&service.config.name),
+						BadgerConfig::from_json_file_with_name(PathBuf::from("/store/nodess.json"),&service.config().name).unwrap(),
 						service.network(),
-						service.on_exit(),
-						Box::new(client.clone()), //block_import?
-						service.config.custom.inherent_data_providers.clone(),
+						service.on_exit().clone().compat().map(|_| ()),
+						Arc::new(Mutex::new(service.client().clone())), //block_import?
+						service.config().custom.inherent_data_providers.clone(),
 						select_chain,
 					)?;
-                    service.spawn_task(Box::new(badger));
+                    service.spawn_task(badger.unit_error()
+    .boxed()
+    .compat());
 
 				Ok(service)
 			}
@@ -139,16 +147,16 @@ construct_service_factory! {
 		FullImportQueue = BadgerImportQueue<Self::Block>
 			{ |config: &mut FactoryFullConfiguration<Self> , client: Arc<FullClient<Self>>, select_chain: Self::SelectChain| {
 			   
-			    let block_import=client.clone();
+			  #[allow(deprecated)]
+				let fprb = Box::new(DummyFinalityProofRequestBuilder::default()) as Box<_>;
+   			    let block_import=client.clone();
 				/*let (block_import, link_half) =
 					grandpa::block_import::<_, _, _, RuntimeApi, FullClient<Self>, _>(
 						client.clone(), client.clone(), select_chain
 					)?;*/
-				let justification_import = block_import.clone();
-
+				//let justification_import = block_import.clone();
 				badger_import_queue::<_, _, PublicKeyWrap,SignatureWrap>(
 					Box::new(block_import),
-					Some(Box::new(justification_import)),
 					None,
 					None,
 					client,
@@ -158,20 +166,20 @@ construct_service_factory! {
 		LightImportQueue = BadgerImportQueue<Self::Block>
 			{ |config: &FactoryFullConfiguration<Self>, client: Arc<LightClient<Self>>| {
 				#[allow(deprecated)]
+				let fprb = Box::new(DummyFinalityProofRequestBuilder::default()) as Box<_>;
    			    let block_import=client.clone();
 				/*let (block_import, link_half) =
 					grandpa::block_import::<_, _, _, RuntimeApi, FullClient<Self>, _>(
 						client.clone(), client.clone(), select_chain
 					)?;*/
-				let justification_import = block_import.clone();
+				//let justification_import = block_import.clone();
 				badger_import_queue::<_, _, PublicKeyWrap,SignatureWrap>(
 					Box::new(block_import),
-					Some(Box::new(justification_import)),
 					None,
 					None,
 					client,
 					config.custom.inherent_data_providers.clone(),
-				).map_err(Into::into)
+				).map(|q| (q, fprb)).map_err(Into::into)
 			}},
 		SelectChain = LongestChain<FullBackend<Self>, Self::Block>
 			{ |config: &FactoryFullConfiguration<Self>, client: Arc<FullClient<Self>>| {

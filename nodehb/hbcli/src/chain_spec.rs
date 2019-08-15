@@ -17,22 +17,22 @@
 //! Substrate chain configurations.
 
 use primitives::{ed25519, sr25519, Pair, crypto::UncheckedInto};
-use node_primitives::{AccountId,  Balance};
+use hb_node_primitives::{AccountId,  Balance};
 use substrate_service;
 use hex_literal::hex;
 use substrate_telemetry::TelemetryEndpoints;
 use badger_primitives::AuthorityId as BadgerId;
 
-use node_runtime::{
+use hb_node_runtime::{
 	GenesisConfig,  BalancesConfig,
 	SudoConfig, IndicesConfig, SystemConfig, WASM_BINARY
 };
-use node_runtime::SessionKeys;
-use node_runtime::constants::currency::DOLLARS;
-use node_runtime::ContractsConfig;
+//use hb_node_runtime::SessionKeys;
+use hb_node_runtime::constants::currency::DOLLARS;
+//use hb_node_runtime::ContractsConfig;
 
-use node_runtime::constants::time::SECS_PER_BLOCK;
-use node_runtime::constants::currency::MILLICENTS;
+use hb_node_runtime::constants::time::SECS_PER_BLOCK;
+use hb_node_runtime::constants::currency::MILLICENTS;
 
 const STAGING_TELEMETRY_URL: &str = "wss://telemetry.polkadot.io/submit/";
 
@@ -73,10 +73,6 @@ fn staging_testnet_config_genesis() -> GenesisConfig {
 		indices: Some(IndicesConfig {
 			ids: endowed_accounts.iter().cloned()
 				.collect::<Vec<_>>(),
-		}),
-		contracts: Some(ContractsConfig {
-			current_schedule: Default::default(),
-			gas_price: 1 * MILLICENTS,
 		}),
 		sudo: Some(SudoConfig {
 			key: endowed_accounts[0].clone(),
@@ -187,9 +183,8 @@ impl Alternative {
 
 fn development_config_genesis() -> GenesisConfig {
 	testnet_genesis(
-		vec![ get_account_id_from_seed::<AccountId>("Alice")],
-		None,
-		true,
+		vec![ get_account_id_from_seed("Alice")],
+		get_account_id_from_seed("Alice"),
 	)
 }
 
@@ -208,11 +203,10 @@ pub fn local_testnet_config() -> ChainSpec {
 fn local_testnet_genesis() -> GenesisConfig {
 	testnet_genesis(
 		vec![
-			get_account_id_from_seed::<AccountId>("Alice"),
-			get_account_id_from_seed::<AccountId>("Bob")
+			get_account_id_from_seed("Alice"),
+			get_account_id_from_seed("Bob")
 		],
-		None,
-		false,
+		get_account_id_from_seed("Alice"),
 	)
 }
 

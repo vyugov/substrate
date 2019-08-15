@@ -27,6 +27,7 @@ network = { package = "substrate-network", path = "../network" }
 service = { package = "substrate-service", path = "../service", optional = true }
 srml-finality-tracker = { path = "../../srml/finality-tracker" }
 fg_primitives = { package = "substrate-badger-primitives", path = "primitives" }
+substrate-badger-rapi = { package="substrate-badger-rapi", path="runtime_api"}
 hex = "0.3.2"
 badger = { package= "hbbft", path="../../../hbbft" }
 bincode = "1.0.1"
