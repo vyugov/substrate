@@ -5,9 +5,10 @@ extern crate alloc;
 use client::decl_runtime_apis;
 
 decl_runtime_apis! {
-    
+
     #[api_version(2)]
     pub trait HbbftApi {
+        fn do_nothing();
     }
 }
 

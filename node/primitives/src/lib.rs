@@ -25,7 +25,7 @@ use sr_primitives::{
 };
 
 /// An index to a block.
-pub type BlockNumber = u64;
+pub type BlockNumber = u32;
 
 /// Alias to 512-bit hash when used in the context of a transaction signature on the chain.
 pub type Signature = AnySignature;
@@ -36,7 +36,7 @@ pub type AccountId = <Signature as Verify>::Signer;
 
 /// The type for looking up accounts. We don't expect more than 4 billion of them, but you
 /// never know...
-pub type AccountIndex = u64;
+pub type AccountIndex = u32;
 
 /// Balance of an account.
 pub type Balance = u128;

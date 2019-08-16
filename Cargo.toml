@@ -1,6 +1,6 @@
 [[bin]]
 name = "substrate"
-path = "node/src/main.rs"
+path = "nodehb/src/main.rs"
 
 [package]
 name = "substrate"
@@ -10,7 +10,8 @@ build = "build.rs"
 edition = "2018"
 
 [dependencies]
-cli = { package = "node-cli", path = "node/cli" }
+#cli = { package = "node-cli", path = "node/cli" }
+hbcli = { package = "hbnode-cli", path = "nodehb/hbcli" }
 futures = "0.1"
 ctrlc = { version = "3.0", features = ["termination"] }
 
@@ -19,6 +20,7 @@ vergen = "3"
 
 [workspace]
 members = [
+        "nodehb", 
         "nodehb/hbcli",
 	"core/hbbft",
         "core/application-crypto",

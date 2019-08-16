@@ -145,7 +145,7 @@ construct_service_factory! {
 		LightService = LightComponents<Self>
 			{ |config| <LightComponents<Factory>>::new(config) },
 		FullImportQueue = BadgerImportQueue<Self::Block>
-			{ |config: &mut FactoryFullConfiguration<Self> , client: Arc<FullClient<Self>>, select_chain: Self::SelectChain| {
+			{ |config: &mut FactoryFullConfiguration<Self> , client: Arc<FullClient<Self>>, select_chain: Self::SelectChain,_| {
 			   
 			  #[allow(deprecated)]
 				let fprb = Box::new(DummyFinalityProofRequestBuilder::default()) as Box<_>;

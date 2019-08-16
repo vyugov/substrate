@@ -356,7 +356,10 @@ impl_runtime_apis! {
 	}
     impl substrate_badger_rapi::HbbftApi<Block> for Runtime 
 	{
-
+ fn do_nothing()
+ {
+	 
+ }
 	}
 	//not used for now and has no_std problems
 	/*	impl HbbftApi<Block> for Runtime 

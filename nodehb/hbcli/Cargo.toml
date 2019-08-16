@@ -26,7 +26,6 @@ transaction_pool = { package = "substrate-transaction-pool", path = "../../core/
 network = { package = "substrate-network", path = "../../core/network" }
 badger = { package = "substrate-badger-mushroom", path = "../../core/hbbft" }
 badger_primitives = { package = "substrate-badger-primitives", path = "../../core/hbbft/primitives" }
-grandpa_primitives = { package = "substrate-finality-grandpa-primitives", path = "../../core/finality-grandpa/primitives" }
 sr-primitives = { path = "../../core/sr-primitives" }
 hb-node-executor = { path = "../executor" }
 substrate-keystore = { path = "../../core/keystore" }

@@ -22,7 +22,15 @@ use std::sync::Arc;
 use std::iter;
 use std::time;
 use log::{trace, debug};
+
+#[cfg(feature = "upgraded")]
 use futures03::channel::mpsc;
+
+#[cfg(not(feature = "upgraded"))]
+use futures::sync::mpsc;
+
+
+
 use lru_cache::LruCache;
 use libp2p::PeerId;
 use sr_primitives::traits::{Block as BlockT, Hash, HashFor};

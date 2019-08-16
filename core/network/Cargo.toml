@@ -59,3 +59,4 @@ tokio = "0.1.11"
 [features]
 default = []
 test-helpers = ["keyring", "test-client", "tokio"]
+upgraded = []
