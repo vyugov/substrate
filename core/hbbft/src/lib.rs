@@ -754,6 +754,7 @@ where A: txpool::ChainApi,
         cx: &mut futures03::task::Context
     ) -> Poll<Option<Self::Item>>
 	{
+		info!("BADgER! Polled stream!");
      let pending_iterator = self.transaction_pool.ready();
 	  let batch:Vec<_>=pending_iterator.map(|a| a.data.encode()).collect();
 	  if batch.len()==0

@@ -93,6 +93,7 @@ pub struct Configuration<C, G> {
 	///
 	/// Should only be set when `node` is running development mode.
 	pub dev_key_seed: Option<String>,
+	pub n_conf_file: Option<String>
 }
 
 impl<C: Default, G: Serialize + DeserializeOwned + BuildStorage> Configuration<C, G> {
@@ -127,6 +128,7 @@ impl<C: Default, G: Serialize + DeserializeOwned + BuildStorage> Configuration<C
 			disable_grandpa: false,
 			keystore_password: None,
 			dev_key_seed: None,
+			n_conf_file:None
 		};
 		configuration.network.boot_nodes = configuration.chain_spec.boot_nodes().to_vec();
 

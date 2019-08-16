@@ -433,7 +433,10 @@ impl <B:BlockT>BadgerNode<B,QHB>
 {	 
 fn push_transaction(&mut self,tx: Vec<u8>) -> Result<CpStep<QHB>, badger::sender_queue::Error<badger::queueing_honey_badger::Error>>
 {
-self.algo.push_transaction(tx,&mut self.main_rng)
+	info!("BaDGER pushing transaction");
+let ret=self.algo.push_transaction(tx,&mut self.main_rng);
+info!("BaDGER pushed: complete");
+ret
 }
 
 }
@@ -569,10 +572,15 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
 {
 	   fn flush_messages(&self,context: &mut dyn ValidatorContext<Block>)
    {
-    let mut locked= self.inner.write();
+    let mut drain :Vec<_>;
+	{
+	let mut locked= self.inner.write();
+	info!("BaDGER!! Flushing {} messages",&locked.out_queue.len());
+	drain=locked.out_queue.drain(..).collect();
+	}
 	let topic = badger_topic::<Block>();    
-		info!("BaDGER!! Flushing {} messages",&locked.out_queue.len());
-		 for msg in locked.out_queue.drain(..)
+		
+		 for msg in drain
 		 {
 			 let vdata=GossipMessage::BadgerData(msg.message).encode();
 			 match &msg.target
@@ -612,9 +620,15 @@ fn flush_message_net<N:Network<Block>>(&self,context: &N)
 			 let vdata=GossipMessage::BadgerData(msg.message).encode();
 			 match &msg.target
 			 {
-				 LocalTarget::All  => context.gossip_message(topic,vdata,true), 
+				 LocalTarget::All  => 
+				 {
+					  info!("BaDGER!! All_net");
+					 context.gossip_message(topic,vdata,true)
+					 }
+					 , 
 				LocalTarget::Node(to_id) => 
 				  {
+					   info!("BaDGER!! Id_net {}",&to_id.0);
 				  context.send_message(vec![to_id.0.clone()], vdata);
 
 				  },
@@ -657,10 +671,13 @@ fn flush_message_net<N:Network<Block>>(&self,context: &N)
 	}
     pub fn push_transaction<N:Network<Block>>(&self,tx: Vec<u8>,net: &N) ->Result<(),Error>
 	{
+		let mut do_flush=false;
+		{
        let mut locked=self.inner.write();
-	   match locked.push_transaction(tx)
+	   do_flush = match locked.push_transaction(tx)
 	   {
 		   Ok(step) => {
+			   info!("Push OK");
 			let out_msgs: Vec<_> = step
              .messages
              .into_iter()
@@ -668,21 +685,30 @@ fn flush_message_net<N:Network<Block>>(&self,context: &N)
                 let ser_msg = bincode::serialize(&mmsg.message).expect("serialize");
                 (mmsg.target, ser_msg)
                 }).collect();
+
 		    locked.outputs.extend(step.output.into_iter());	
+             let cloneid=locked.id.clone();
 			    for (target, message) in out_msgs 
 				{
                  locked.out_queue.push_back(SourcedMessage {
-                   sender_id: PeerIdW{0:self.inner.read().id.clone()},
+                   sender_id: PeerIdW{0:cloneid.clone()},
                    target: target.into(),
                    message,});
-				}
-				//send messages out
-				self.flush_message_net(net);
-				Ok(())
+				};
+
+				true
 		   },
 		   Err(e) => return Err(Error::Badger(e.to_string()))
 	   }
 
+		}
+				//send messages out
+				if do_flush 
+				{
+				self.flush_message_net(net);
+				}
+
+         Ok(())
 	}
 
 	pub fn do_validate(&self, who: &PeerId, mut data: &[u8])

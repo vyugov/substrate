@@ -125,10 +125,15 @@ construct_service_factory! {
                     let t_pool = service.transaction_pool();
 					let select_chain = service.select_chain()
 						.ok_or(ServiceError::SelectChainRequired)?;
+					let nconf= match &service.config().n_conf_file	
+					{
+						Some(name) => PathBuf::from(name),
+						None => PathBuf::from("./nodes.json")
+					};
 					let badger = run_honey_badger(
 						client,
 						t_pool,
-						BadgerConfig::from_json_file_with_name(PathBuf::from("/store/nodess.json"),&service.config().name).unwrap(),
+						BadgerConfig::from_json_file_with_name(nconf,&service.config().name).unwrap(),
 						service.network(),
 						service.on_exit().clone().compat().map(|_| ()),
 						Arc::new(Mutex::new(service.client().clone())), //block_import?
