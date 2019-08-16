@@ -356,13 +356,13 @@ impl Config {
          name: Some(name.to_string()),
          num_validators: match &spec["num_validators"]
 		   {
-			   Number(x) => match x.as_u64() {Some(y)=> y as usize, None => return Err("Invalid num_validators".to_string())},
+			   Number(x) => match x.as_u64() {Some(y)=> y as usize, None => return Err("Invalid num_validators 1".to_string())},
                Value::String(st) => match st.parse::<usize>()
 			     {
 					 Ok(v) =>v,
-					 Err(_) => return Err("Invalid num_validators".to_string())
+					 Err(_) => return Err("Invalid num_validators 2".to_string())
 				 },
-			   _ => return Err("Invalid num_validators".to_string())
+			   _ => return Err("Invalid num_validators 3".to_string())
 		   },
 		 secret_key_share: match &nodedata["secret_key_share"]
 		            {

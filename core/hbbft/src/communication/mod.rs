@@ -46,7 +46,7 @@ use fg_primitives::{SignatureWrap,PublicKeyWrap};
 //use grandpa::Message::{Prevote, Precommit, PrimaryPropose};
 use futures03::prelude::*;
 use futures03::channel::{oneshot, mpsc};
-use log::{debug, };// trace};
+use log::{debug,info};// trace};
 use parity_codec::{Encode, Decode};
 use substrate_telemetry::{telemetry, CONSENSUS_DEBUG,};
 use runtime_primitives::traits::{Block as BlockT, Hash as HashT, Header as HeaderT};
@@ -511,6 +511,7 @@ where D::Message: serde::Serialize + DeserializeOwned
             .output
             .into_iter()
             .collect();
+	info!("BaDGER!! Initializing node");		
      let mut node=BadgerNode {
 		 id: self_id,
 		 algo: sq,
@@ -532,6 +533,7 @@ where D::Message: serde::Serialize + DeserializeOwned
 
 	pub fn  handle_message(&mut self, who: &PeerIdW, msg:  D::Message) -> Result<(),&'static str>
 	{
+		debug!("BaDGER!! Handling message from {}",who.0);
 		match   self.algo.handle_message(who, msg, &mut self.main_rng) 
 		{
 			Ok(step) => 
@@ -569,14 +571,20 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
    {
     let mut locked= self.inner.write();
 	let topic = badger_topic::<Block>();    
+		info!("BaDGER!! Flushing {} messages",&locked.out_queue.len());
 		 for msg in locked.out_queue.drain(..)
 		 {
 			 let vdata=GossipMessage::BadgerData(msg.message).encode();
 			 match &msg.target
 			 {
-				 LocalTarget::All  => context.broadcast_message(topic,vdata,true), 
+				 LocalTarget::All  => 
+				 {
+					 info!("BaDGER!! All");
+					 context.broadcast_message(topic,vdata,true) 
+				 },
 				LocalTarget::Node(to_id) => 
 				  {
+					   info!("BaDGER!! Id {}",&to_id.0);
 				  context.send_message(&to_id.0, vdata);
 
 				  },
@@ -593,6 +601,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
 			 }
 			
 		 }
+		 info!("BaDGER!! Flushing done");
    }
 fn flush_message_net<N:Network<Block>>(&self,context: &N)
    {
@@ -818,7 +827,7 @@ impl<Block: BlockT > network_gossip::Validator<Block> for BadgerGossipValidator<
 	fn message_allowed<'b>(&'b self) //todo: not sure what this is for
 		-> Box<dyn FnMut(&PeerId, MessageIntent, &Block::Hash, &[u8]) -> bool + 'b>
 	{
-		let (inner, do_rebroadcast) = {
+		/*let (inner, do_rebroadcast) = {
 			use parking_lot::RwLockWriteGuard;
 
 			let mut inner = self.inner.write();
@@ -834,17 +843,17 @@ impl<Block: BlockT > network_gossip::Validator<Block> for BadgerGossipValidator<
 
 			// downgrade to read-lock.
 			(RwLockWriteGuard::downgrade(inner), do_rebroadcast)
-		};
-
+		};*/
+        //info!("MessageAllowed 2");
 		Box::new(move |who, intent, topic, mut data| {
 			if let MessageIntent::PeriodicRebroadcast = intent {
 				return false; //rebroadcast not needed, I hope?
 			}
 
-			let peer = match inner.peers.peer(who) {
-				None => return false,
-				Some(x) => x,
-			};
+			//let peer = match inner.peers.peer(who) {
+			//	None => return false,
+			//	Some(x) => x,
+			//};
 
             if *topic!= badger_topic::<Block>() //only one topic, i guess we may add epochs eventually
 			{
@@ -1179,6 +1188,7 @@ impl<'g, 'p, B: BlockT> ValidatorContext<B> for NetworkSubtext<'g, 'p, B> {
 
 	/// Broadcast a message to all peers that have not received it previously.
 	fn broadcast_message(&mut self, topic: B::Hash, message: Vec<u8>, force: bool) {
+		info!("mcast");
 		self.gossip.multicast(
 			self.protocol,
 			topic,

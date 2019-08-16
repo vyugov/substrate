@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet, hash_map::Entry};
 use std::sync::Arc;
 use std::iter;
 use std::time;
-use log::{trace, debug};
+use log::{trace, debug,info};
 
 #[cfg(feature = "upgraded")]
 use futures03::channel::mpsc;
@@ -161,9 +161,11 @@ fn propagate<'a, B: BlockT, I>(
 )
 	where I: IntoIterator<Item=(&'a B::Hash, &'a B::Hash, &'a ConsensusMessage)>,  // (msg_hash, topic, message)
 {
+			
 	let mut check_fns = HashMap::new();
 	let mut message_allowed = move |who: &PeerId, intent: MessageIntent, topic: &B::Hash, message: &ConsensusMessage| {
 		let engine_id = message.engine_id;
+		
 		let check_fn = match check_fns.entry(engine_id) {
 			Entry::Occupied(entry) => entry.into_mut(),
 			Entry::Vacant(vacant) => match validators.get(&engine_id) {
