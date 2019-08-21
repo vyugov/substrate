@@ -160,7 +160,11 @@ construct_service_factory! {
 					// fails we take down the service with it.
 					service.spawn_essential_task(select);
 
-					let key_gen = keygen::run_key_gen(service.client(), service.network())?;
+					let key_gen = keygen::run_key_gen(
+						service.network().local_peer_id(),
+						service.client(),
+						service.network()
+					)?;
 					service.spawn_essential_task(key_gen.select(service.on_exit()).then(|_| Ok(())));
 				}
 

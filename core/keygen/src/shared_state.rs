@@ -16,21 +16,18 @@ use client::{
 use codec::{Decode, Encode};
 use consensus_common::SelectChain;
 use futures::{future::Loop as FutureLoop, prelude::*, stream::Fuse, sync::mpsc};
-use hbbft::crypto::{PublicKey, SecretKey, SignatureShare};
 use hbbft_primitives::HbbftApi;
 use inherents::InherentDataProviders;
 use log::{debug, error, info, warn};
-use network;
-use runtime_primitives::generic::BlockId;
-use runtime_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
+use network::{self, PeerId};
+use sr_primitives::generic::BlockId;
+use sr_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
 
-const INDEX_KEY: &[u8] = b"multi_ecdsa_index";
+const SIGNER_SET_KEY: &[u8] = b"multi_ecdsa_signers";
 
-type Index = u16;
-
-#[derive(Debug)]
+#[derive(Debug, Encode, Decode)]
 pub struct SharedState {
-	pub current_index: Index,
+	pub signer_set: Vec<Vec<u8>>,
 }
 
 pub(crate) fn load_decode<B: AuxStore, T: Decode>(
@@ -40,7 +37,7 @@ pub(crate) fn load_decode<B: AuxStore, T: Decode>(
 	match backend.get_aux(key)? {
 		None => Ok(None),
 		Some(t) => T::decode(&mut &t[..])
-			.map_err(|e| ClientError::Backend(format!("GRANDPA DB is corrupted: {}", e.what())))
+			.map_err(|e| ClientError::Backend(format!("Multi ecdsa DB is corrupted: {}", e.what())))
 			.map(Some),
 	}
 }
@@ -49,22 +46,18 @@ pub(crate) fn load_persistent<B>(backend: &B) -> ClientResult<SharedState>
 where
 	B: AuxStore,
 {
-	let index: Option<Index> = load_decode(backend, INDEX_KEY)?;
-	match index {
-		Some(index) => {
-			let current_index: Index = index;
-			Ok(SharedState { current_index })
-		}
-		_ => {
-			let index: Index = 0;
-			backend.insert_aux(&[(INDEX_KEY, Encode::encode(&index).as_slice())], &[]);
-			Ok(SharedState {
-				current_index: index,
-			})
-		}
+	let res: Option<Vec<Vec<u8>>> = load_decode(backend, SIGNER_SET_KEY)?;
+	match res {
+		Some(signer_set) => Ok(SharedState { signer_set }),
+		None => Ok(SharedState {
+			signer_set: Vec::new(),
+		}),
 	}
 }
 
-pub(crate) fn set_index<B: AuxStore>(backend: &B, index: Index) -> ClientResult<()> {
-	backend.insert_aux(&[(INDEX_KEY, Encode::encode(&index).as_slice())], &[])
+pub(crate) fn set_signers<B: AuxStore>(backend: &B, signers: Vec<Vec<u8>>) -> ClientResult<()> {
+	backend.insert_aux(
+		&[(SIGNER_SET_KEY, Encode::encode(&signers).as_slice())],
+		&[],
+	)
 }

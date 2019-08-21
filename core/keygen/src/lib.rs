@@ -18,7 +18,7 @@ use hbbft::crypto::{PublicKey, SecretKey, SignatureShare};
 use hbbft_primitives::HbbftApi;
 use inherents::InherentDataProviders;
 use log::{debug, error, info, warn};
-use network;
+use network::{self, PeerId};
 use primitives::{Blake2Hasher, H256};
 use sr_primitives::generic::BlockId;
 use sr_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
@@ -33,12 +33,12 @@ mod tests;
 
 mod communication;
 mod periodic_stream;
+mod shared_state;
 mod signer;
-// mod shared_state;
 
 use communication::{gossip::GossipMessage, Message, NetworkBridge, SignedMessage};
 use periodic_stream::PeriodicStream;
-// use shared_state::{load_persistent, set_index, SharedState};
+use shared_state::{load_persistent, set_signers, SharedState};
 use signer::Signer;
 
 #[derive(Clone)]
@@ -126,7 +126,7 @@ where
 	fn rebuild(&mut self) {
 		let should_rebuild = true;
 		if should_rebuild {
-			let (mut incoming, mut outgoing) = global_comm(&self.env.bridge);
+			let (incoming, outgoing) = global_comm(&self.env.bridge);
 			let signer = Signer::new(self.env.clone(), incoming, outgoing);
 			self.key_gen = Box::new(signer);
 		} else {
@@ -175,10 +175,10 @@ where
 {
 	let persistent_data: SharedState = load_persistent(&**client.backend()).unwrap();
 	persistent_data
-	// set_index(&**client.backend(), persistent_data.current_index + 1);
 }
 
 pub fn run_key_gen<B, E, Block, N, RA>(
+	current_id: PeerId,
 	client: Arc<Client<B, E, Block, RA>>,
 	network: N,
 ) -> ClientResult<impl Future<Item = (), Error = ()> + Send + 'static>
@@ -197,10 +197,16 @@ where
 		parties: 3,
 	};
 
-	// let persistent_data: SharedState = load_persistent(&**client.backend()).unwrap();
-	// println!("{:?}", persistent_data);
-	// set_index(&**client.backend(), persistent_data.current_index + 1);
+	let persistent_data: SharedState = load_persistent(&**client.backend()).unwrap();
+	println!("{:?}", persistent_data);
+	// println!("Local peer ID {:?}", current_id.as_bytes());
 
+	let mut signers = persistent_data.signer_set;
+	let current_id = current_id.into_bytes();
+	if !signers.contains(&current_id) {
+		signers.push(current_id);
+		set_signers(&**client.backend(), signers);
+	}
 	let bridge = NetworkBridge::new(network, config.clone());
 
 	let key_gen_work = KeyGenWork::new(client, config, bridge).map_err(|e| error!("Error {:?}", e));
