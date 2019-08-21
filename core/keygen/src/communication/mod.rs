@@ -11,7 +11,7 @@ use hbbft::{
 use hbbft_primitives::{AuthorityId, Keypair};
 use network::{consensus_gossip as network_gossip, NetworkService};
 use network_gossip::ConsensusMessage;
-use runtime_primitives::traits::{
+use sr_primitives::traits::{
 	Block as BlockT, DigestFor, Hash as HashT, Header as HeaderT, NumberFor, ProvideRuntimeApi,
 };
 

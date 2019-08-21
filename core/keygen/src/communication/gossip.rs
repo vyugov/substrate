@@ -5,8 +5,8 @@ use hbbft_primitives::AuthorityId;
 use log::{debug, error, trace, warn};
 use network::consensus_gossip::{self as network_gossip, MessageIntent, ValidatorContext};
 use network::{config::Roles, PeerId};
-use runtime_primitives::traits::{Block as BlockT, NumberFor, Zero};
 use serde::{Deserialize, Serialize};
+use sr_primitives::traits::{Block as BlockT, NumberFor, Zero};
 use std::{
 	collections::{HashMap, VecDeque},
 	marker::PhantomData,

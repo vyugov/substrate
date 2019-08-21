@@ -19,9 +19,9 @@ use hbbft_primitives::HbbftApi;
 use inherents::InherentDataProviders;
 use log::{debug, info, warn};
 use network;
-use runtime_primitives::generic::BlockId;
-use runtime_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
-use substrate_primitives::H256;
+use primitives::H256;
+use sr_primitives::generic::BlockId;
+use sr_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
 use substrate_telemetry::{telemetry, CONSENSUS_DEBUG, CONSENSUS_INFO, CONSENSUS_WARN};
 use tokio_timer::Interval;
 

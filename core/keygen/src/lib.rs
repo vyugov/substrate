@@ -19,9 +19,9 @@ use hbbft_primitives::HbbftApi;
 use inherents::InherentDataProviders;
 use log::{debug, error, info, warn};
 use network;
-use runtime_primitives::generic::BlockId;
-use runtime_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
-use substrate_primitives::{Blake2Hasher, H256};
+use primitives::{Blake2Hasher, H256};
+use sr_primitives::generic::BlockId;
+use sr_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
 use substrate_telemetry::{telemetry, CONSENSUS_DEBUG, CONSENSUS_INFO, CONSENSUS_WARN};
 use tokio_executor::DefaultExecutor;
 use tokio_timer::Interval;
@@ -207,7 +207,7 @@ pub fn run_key_gen<B, E, Block, N, RA>(
 ) -> ClientResult<impl Future<Item = (), Error = ()> + Send + 'static>
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
-	E: CallExecutor<Block, Blake2Hasher> + 'static + Clone + Send + Sync,
+	E: CallExecutor<Block, Blake2Hasher> + 'static + Send + Sync,
 	Block: BlockT<Hash = H256>,
 	Block::Hash: Ord,
 	N: Network<Block> + Send + Sync + 'static,

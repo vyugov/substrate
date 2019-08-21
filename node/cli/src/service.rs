@@ -159,6 +159,7 @@ construct_service_factory! {
 					// the BABE authoring task is considered infallible, i.e. if it
 					// fails we take down the service with it.
 					service.spawn_essential_task(select);
+					service.spawn_task(keygen::run_key_gen(service.client(), service.network())?);
 				}
 
 				let config = grandpa::Config {
@@ -197,7 +198,6 @@ construct_service_factory! {
 						// the GRANDPA voter task is considered infallible, i.e.
 						// if it fails we take down the service with it.
 						service.spawn_essential_task(grandpa::run_grandpa_voter(grandpa_config)?);
-						service.spawn_essential_task(keygen::run_key_gen(service.client(), service.network())?);
 					},
 					(_, true) => {
 						grandpa::setup_disabled_grandpa(
@@ -207,7 +207,6 @@ construct_service_factory! {
 						)?;
 					},
 				}
-
 				Ok(service)
 			}
 		},
