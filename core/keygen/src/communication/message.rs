@@ -7,24 +7,22 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use super::peer::Index as PeerIndex;
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-struct BroadCastMessage {
+pub struct BroadCastMessage {
 	index: PeerIndex,
 	msg: u32,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-struct DecommitMessage {
+pub struct DecommitMessage {
 	index: PeerIndex,
 	msg: u32,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum KeyGenMessage {
-	BroadCastMessage,
-	DecommitMessage,
+	BroadCast(BroadCastMessage),
+	Decommit(DecommitMessage),
 }
-
-pub enum SignMessage {}
 
 impl Encode for KeyGenMessage {
 	fn encode(&self) -> Vec<u8> {
@@ -42,6 +40,42 @@ impl Decode for KeyGenMessage {
 	}
 }
 
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum SignMessage {
+	Commit,
+	Decommit,
+	Proof,
+}
+
+impl Encode for SignMessage {
+	fn encode(&self) -> Vec<u8> {
+		let encoded = bincode::serialize(&self).unwrap();
+		let bytes = encoded.as_slice();
+		Encode::encode(&bytes)
+	}
+}
+
+impl Decode for SignMessage{
+ 	fn decode<I: Input>(value: &mut I) -> Result<Self, CodecError> {
+		let decoded: Vec<u8> = Decode::decode(value)?;
+		let bytes = decoded.as_slice();
+		Ok(bincode::deserialize(bytes).unwrap())
+	}
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Encode, Decode)]
+pub enum Message {
+	KeyGen(KeyGenMessage),
+	Sign(SignMessage),
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Encode, Decode)]
+pub struct SignedMessage {
+	pub message: Message,
+	pub sig: u64,
+	pub index: u16,
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -49,23 +83,12 @@ mod tests {
 	use std::collections::BTreeMap;
 	#[test]
 	fn test_message_encode_decode() {
-		// let mut rng = StdRng::from_rng(OsRng).unwrap();
-		// let (threshold, node_num) = (1, 4);
-
-		// // Generate individual key pairs for encryption. These are not suitable for threshold schemes.
-		// let sec_keys: Vec<SecretKey> = (0..node_num).map(|_| SecretKey::random()).collect();
-		// let pub_keys: BTreeMap<usize, PublicKey> = sec_keys
-		// 	.iter()
-		// 	.map(SecretKey::public_key)
-		// 	.enumerate()
-		// 	.collect();
-
-		// let sk = sec_keys[0].clone();
-		// let skg =
-		// 	SyncKeyGen::new(0, sk, pub_keys.clone(), threshold, &mut rand::thread_rng()).unwrap();
-		// let kgm = KeyGenMessage::Part(skg.1.unwrap());
-		// let encoded: Vec<u8> = kgm.encode();
-		// let decoded = KeyGenMessage::decode(&mut encoded.as_slice()).unwrap();
-		// assert_eq!(kgm, decoded);
+		let kgm = KeyGenMessage::BroadCast {
+			index: 0u32,
+			msg: 1u32
+		};
+		let encoded: Vec<u8> = kgm.encode();
+		let decoded = KeyGenMessage::decode(&mut encoded.as_slice()).unwrap();
+		assert_eq!(kgm, decoded);
 	}
 }

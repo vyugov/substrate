@@ -159,7 +159,9 @@ construct_service_factory! {
 					// the BABE authoring task is considered infallible, i.e. if it
 					// fails we take down the service with it.
 					service.spawn_essential_task(select);
-					service.spawn_task(keygen::run_key_gen(service.client(), service.network())?);
+
+					let key_gen = keygen::run_key_gen(service.client(), service.network())?;
+					service.spawn_essential_task(key_gen.select(service.on_exit()).then(|_| Ok(())));
 				}
 
 				let config = grandpa::Config {

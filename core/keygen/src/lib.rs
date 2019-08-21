@@ -33,11 +33,13 @@ mod tests;
 
 mod communication;
 mod periodic_stream;
+mod signer;
 // mod shared_state;
 
 use communication::{gossip::GossipMessage, Message, NetworkBridge, SignedMessage};
 use periodic_stream::PeriodicStream;
 // use shared_state::{load_persistent, set_index, SharedState};
+use signer::Signer;
 
 #[derive(Clone)]
 pub struct NodeConfig {
@@ -74,7 +76,7 @@ where
 	(global_in, global_out)
 }
 
-struct Environment<B, E, Block: BlockT, N: Network<Block>, RA> {
+pub(crate) struct Environment<B, E, Block: BlockT, N: Network<Block>, RA> {
 	pub client: Arc<Client<B, E, Block, RA>>,
 	pub config: NodeConfig,
 	pub bridge: NetworkBridge<Block, N>,
@@ -125,32 +127,8 @@ where
 		let should_rebuild = true;
 		if should_rebuild {
 			let (mut incoming, mut outgoing) = global_comm(&self.env.bridge);
-			let poll_key_gen = futures::future::poll_fn(move || -> ClientResult<_> {
-				match incoming.poll() {
-					Ok(r) => match r {
-						Async::Ready(Some(item)) => {
-							info!("incoming polling ready {:?}", item);
-							// let message = Message {
-							// 	data: 100,
-							// 	_phantom: PhantomData,
-							// };
-							// outgoing.start_send(message);
-							// self.handle_message(item);
-							return Ok(Async::NotReady);
-						}
-						Async::Ready(None) => {
-							info!("incoming polling None");
-							return Ok(Async::Ready(()));
-						}
-						Async::NotReady => {
-							info!("incoming polling Not ready");
-							return Ok(Async::NotReady);
-						}
-					},
-					Err(e) => return Err(e),
-				}
-			});
-			self.key_gen = Box::new(poll_key_gen);
+			let signer = Signer::new(self.env.clone(), incoming, outgoing);
+			self.key_gen = Box::new(signer);
 		} else {
 			self.key_gen = Box::new(futures::empty());
 		}
@@ -176,30 +154,29 @@ where
 				return Ok(Async::NotReady);
 			}
 			Ok(Async::Ready(())) => {
-				// voters don't conclude naturally
 				return Ok(Async::Ready(()));
 			}
 			Err(e) => {
 				// return inner observer error
-				// error!("error from poll {:?}", e);
+				println!("error from poll {:?}", e);
 				return Err(e);
 			}
 		}
 	}
 }
 
-// pub fn init_shared_state<B, E, Block, RA>(client: Arc<Client<B, E, Block, RA>>) -> SharedState
-// where
-// 	B: Backend<Block, Blake2Hasher> + 'static,
-// 	E: CallExecutor<Block, Blake2Hasher> + 'static + Clone + Send + Sync,
-// 	Block: BlockT<Hash = H256>,
-// 	Block::Hash: Ord,
-// 	RA: Send + Sync + 'static,
-// {
-// 	let persistent_data: SharedState = load_persistent(&**client.backend()).unwrap();
-// 	persistent_data
-// 	// set_index(&**client.backend(), persistent_data.current_index + 1);
-// }
+pub fn init_shared_state<B, E, Block, RA>(client: Arc<Client<B, E, Block, RA>>) -> SharedState
+where
+	B: Backend<Block, Blake2Hasher> + 'static,
+	E: CallExecutor<Block, Blake2Hasher> + 'static + Clone + Send + Sync,
+	Block: BlockT<Hash = H256>,
+	Block::Hash: Ord,
+	RA: Send + Sync + 'static,
+{
+	let persistent_data: SharedState = load_persistent(&**client.backend()).unwrap();
+	persistent_data
+	// set_index(&**client.backend(), persistent_data.current_index + 1);
+}
 
 pub fn run_key_gen<B, E, Block, N, RA>(
 	client: Arc<Client<B, E, Block, RA>>,
@@ -226,48 +203,6 @@ where
 
 	let bridge = NetworkBridge::new(network, config.clone());
 
-	// let key_gen_work = KeyGenWork::new(client, config, bridge).map_err(|e| error!("Error {:?}", e));
-
-	let initial_state = 1;
-
-	let key_gen_work = futures::future::loop_fn(initial_state, move |params| {
-		let (mut incoming, mut outgoing) = global_comm(&bridge);
-
-		let poll_voter = futures::future::poll_fn(move || -> ClientResult<_> {
-			println!("in poll_fn");
-
-			match incoming.poll() {
-				Ok(r) => match r {
-					Async::Ready(Some(item)) => {
-						println!("incoming polling ready {:?}", item);
-						// let message = Message {
-						// 	data: 100,
-						// 	_phantom: PhantomData,
-						// };
-						// outgoing.start_send(message);
-						return Ok(Async::Ready(Some(item)));
-					}
-					Async::Ready(None) => {
-						println!("incoming polling None");
-						return Ok(Async::Ready(None));
-					}
-					Async::NotReady => {
-						println!("incoming polling NotReady");
-						return Ok(Async::NotReady);
-					}
-				},
-				Err(e) => return Err(e),
-			}
-		});
-
-		poll_voter.then(move |res| {
-			println!("poll voter res {:?}", res);
-			match res {
-				Ok(_) => Ok(FutureLoop::Continue((1))), // Ready(None)
-				Err(_) => Ok(FutureLoop::Break(())),
-			}
-		})
-	});
-
+	let key_gen_work = KeyGenWork::new(client, config, bridge).map_err(|e| error!("Error {:?}", e));
 	Ok(key_gen_work)
 }

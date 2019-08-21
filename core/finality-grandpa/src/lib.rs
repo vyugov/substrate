@@ -760,6 +760,7 @@ where
 				return Err(Error::Safety("GRANDPA voter has concluded.".into()))
 			}
 			Err(CommandOrError::Error(e)) => {
+				println!("Grandpa voter error {:?}", e);
 				// return inner observer error
 				return Err(e)
 			}
@@ -772,8 +773,9 @@ where
 
 		match self.voter_commands_rx.poll() {
 			Ok(Async::NotReady) => {}
-			Err(_) => {
+			Err(e) => {
 				// the `voter_commands_rx` stream should not fail.
+				println!("Grandpa voter cmd error {:?}", e);
 				return Ok(Async::Ready(()))
 			}
 			Ok(Async::Ready(None)) => {

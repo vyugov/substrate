@@ -28,9 +28,9 @@ pub(super) enum KeyGenState {
 }
 
 #[derive(Debug, Encode, Decode)]
-pub enum GossipMessage<Block: BlockT> {
+pub enum GossipMessage {
 	KeyGen(KeyGenMessage),
-	Message(super::SignedMessage<Block>),
+	Sign(SignMessage),
 }
 
 #[derive(Debug)]

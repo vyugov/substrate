@@ -35,7 +35,9 @@ pub(crate) struct Peers {
 
 impl Default for Peers {
 	fn default() -> Self {
-		Self::default()
+		Self {
+			map: HashMap::default(),
+		}
 	}
 }
 
