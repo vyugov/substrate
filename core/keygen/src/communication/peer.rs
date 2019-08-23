@@ -1,15 +1,15 @@
 use codec::{Decode, Encode, Error as CodecError, Input};
-use hbbft_primitives::PublicKey;
 use log::{debug, error, trace, warn};
 use multihash::Multihash as PkHash;
-use network::{config::Roles, PeerId};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::cmp::{min, Ordering};
-use std::collections::{BTreeSet, HashMap, VecDeque};
-use std::convert::From;
 
-pub type Index = usize;
+use std::cmp::{min, Ordering};
+use std::collections::{hash_map::DefaultHasher, BTreeSet, HashMap, VecDeque};
+use std::convert::From;
+use std::hash::{Hash, Hasher};
+
+use network::{config::Roles, PeerId};
 
 #[derive(Debug)]
 pub enum PeerState {
@@ -73,12 +73,19 @@ impl Peers {
 		peer.state = state;
 	}
 
-	pub fn set_joining(&mut self, who: &PeerId) {
-		self.set_state(who, PeerState::Joining);
+	pub fn get_hash(&self) -> u64 {
+		// self.set
+		let mut hasher = DefaultHasher::new();
+		self.set.hash(&mut hasher);
+		hasher.finish()
 	}
 
-	pub fn set_finished(&mut self, who: &PeerId) {
-		self.set_state(who, PeerState::Finished);
+	pub fn set_generating(&mut self, who: &PeerId) {
+		self.set_state(who, PeerState::Generating);
+	}
+
+	pub fn set_complete(&mut self, who: &PeerId) {
+		self.set_state(who, PeerState::Complete);
 	}
 
 	pub fn get_position(&self, who: &PeerId) -> Option<usize> {

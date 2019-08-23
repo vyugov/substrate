@@ -26,12 +26,68 @@ use substrate_telemetry::{telemetry, CONSENSUS_DEBUG, CONSENSUS_INFO, CONSENSUS_
 use tokio_executor::DefaultExecutor;
 use tokio_timer::Interval;
 
-use super::{Environment, Message, Network, SignedMessage};
+use super::{Environment, GossipMessage, Message, Network};
 
-pub(crate) struct Signer<B, E, Block: BlockT, N: Network<Block>, RA, In, Out> {
+struct Buffered<S: Sink> {
+	inner: S,
+	buffer: VecDeque<S::SinkItem>,
+}
+
+impl<S: Sink> Buffered<S> {
+	fn new(inner: S) -> Buffered<S> {
+		Buffered {
+			buffer: VecDeque::new(),
+			inner,
+		}
+	}
+
+	// push an item into the buffered sink.
+	// the sink _must_ be driven to completion with `poll` afterwards.
+	fn push(&mut self, item: S::SinkItem) {
+		self.buffer.push_back(item);
+	}
+
+	// returns ready when the sink and the buffer are completely flushed.
+	fn poll(&mut self) -> Poll<(), S::SinkError> {
+		let polled = self.schedule_all()?;
+
+		match polled {
+			Async::Ready(()) => self.inner.poll_complete(),
+			Async::NotReady => {
+				self.inner.poll_complete()?;
+				Ok(Async::NotReady)
+			}
+		}
+	}
+
+	fn schedule_all(&mut self) -> Poll<(), S::SinkError> {
+		while let Some(front) = self.buffer.pop_front() {
+			match self.inner.start_send(front) {
+				Ok(AsyncSink::Ready) => continue,
+				Ok(AsyncSink::NotReady(front)) => {
+					self.buffer.push_front(front);
+					break;
+				}
+				Err(e) => return Err(e),
+			}
+		}
+
+		if self.buffer.is_empty() {
+			Ok(Async::Ready(()))
+		} else {
+			Ok(Async::NotReady)
+		}
+	}
+}
+
+pub(crate) struct Signer<B, E, Block: BlockT, N: Network<Block>, RA, In, Out>
+where
+	In: Stream<Item = Message, Error = ClientError>,
+	Out: Sink<SinkItem = Message, SinkError = ClientError>,
+{
 	env: Arc<Environment<B, E, Block, N, RA>>,
 	global_in: In,
-	global_out: Out,
+	global_out: Buffered<Out>,
 }
 
 impl<B, E, Block, N, RA, In, Out> Signer<B, E, Block, N, RA, In, Out>
@@ -43,14 +99,14 @@ where
 	N: Network<Block> + Sync,
 	N::In: Send + 'static,
 	RA: Send + Sync + 'static,
-	In: Stream<Item = SignedMessage<Block>, Error = ClientError>,
-	Out: Sink<SinkItem = Message<Block>, SinkError = ClientError>,
+	In: Stream<Item = Message, Error = ClientError>,
+	Out: Sink<SinkItem = Message, SinkError = ClientError>,
 {
 	pub fn new(env: Arc<Environment<B, E, Block, N, RA>>, global_in: In, global_out: Out) -> Self {
 		Signer {
 			env,
 			global_in,
-			global_out,
+			global_out: Buffered::new(global_out),
 		}
 	}
 	// fn handle_incoming(&self) ->
@@ -65,8 +121,8 @@ where
 	N: Network<Block> + Sync,
 	N::In: Send + 'static,
 	RA: Send + Sync + 'static,
-	In: Stream<Item = SignedMessage<Block>, Error = ClientError>,
-	Out: Sink<SinkItem = Message<Block>, SinkError = ClientError>,
+	In: Stream<Item = Message, Error = ClientError>,
+	Out: Sink<SinkItem = Message, SinkError = ClientError>,
 {
 	type Item = ();
 	type Error = ClientError;
@@ -74,6 +130,7 @@ where
 		while let Async::Ready(Some(item)) = self.global_in.poll()? {
 			println!("Item: {:?}", item);
 		}
+		self.global_out.poll()?;
 		Ok(Async::NotReady)
 	}
 }

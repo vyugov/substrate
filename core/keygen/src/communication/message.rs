@@ -4,7 +4,7 @@ use rand::rngs::{OsRng, StdRng};
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use super::peer::Index as PeerIndex;
+type PeerIndex = u16;
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct BroadCastMessage {
@@ -55,8 +55,8 @@ impl Encode for SignMessage {
 	}
 }
 
-impl Decode for SignMessage{
- 	fn decode<I: Input>(value: &mut I) -> Result<Self, CodecError> {
+impl Decode for SignMessage {
+	fn decode<I: Input>(value: &mut I) -> Result<Self, CodecError> {
 		let decoded: Vec<u8> = Decode::decode(value)?;
 		let bytes = decoded.as_slice();
 		Ok(bincode::deserialize(bytes).unwrap())
@@ -65,15 +65,9 @@ impl Decode for SignMessage{
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Encode, Decode)]
 pub enum Message {
+	ConfirmPeers(u64),
 	KeyGen(KeyGenMessage),
 	Sign(SignMessage),
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Encode, Decode)]
-pub struct SignedMessage {
-	pub message: Message,
-	pub sig: u64,
-	pub index: u16,
 }
 
 #[cfg(test)]
@@ -85,7 +79,7 @@ mod tests {
 	fn test_message_encode_decode() {
 		let kgm = KeyGenMessage::BroadCast {
 			index: 0u32,
-			msg: 1u32
+			msg: 1u32,
 		};
 		let encoded: Vec<u8> = kgm.encode();
 		let decoded = KeyGenMessage::decode(&mut encoded.as_slice()).unwrap();

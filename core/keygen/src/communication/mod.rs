@@ -9,7 +9,7 @@ use hbbft::{
 	sync_key_gen::{Ack, AckOutcome, Part, PartOutcome, SyncKeyGen},
 };
 use hbbft_primitives::{AuthorityId, Keypair};
-use network::{consensus_gossip as network_gossip, NetworkService};
+use network::{consensus_gossip as network_gossip, NetworkService, PeerId};
 use network_gossip::ConsensusMessage;
 use sr_primitives::traits::{
 	Block as BlockT, DigestFor, Hash as HashT, Header as HeaderT, NumberFor, ProvideRuntimeApi,
@@ -20,6 +20,8 @@ pub use hbbft_primitives::HBBFT_ENGINE_ID;
 pub mod gossip;
 mod message;
 mod peer;
+
+pub use message::{KeyGenMessage, Message};
 
 pub struct NetworkStream {
 	inner: Option<mpsc::UnboundedReceiver<network_gossip::TopicNotification>>,
@@ -46,13 +48,12 @@ impl Stream for NetworkStream {
 	}
 }
 
-/// Create a unique topic for a round and set-id combo.
-pub(crate) fn round_topic<B: BlockT>(round: u64, set_id: u64) -> B::Hash {
-	<<B::Header as HeaderT>::Hashing as HashT>::hash(format!("{}-{}", set_id, round).as_bytes())
+pub(crate) fn hash_topic<B: BlockT>(hash: u64) -> B::Hash {
+	<<B::Header as HeaderT>::Hashing as HashT>::hash(&hash.to_be_bytes())
 }
 
-pub(crate) fn global_topic<B: BlockT>(epoch: u64) -> B::Hash {
-	<<B::Header as HeaderT>::Hashing as HashT>::hash(format!("{}-GLOBAL", epoch).as_bytes())
+pub(crate) fn string_topic<B: BlockT>(input: &str) -> B::Hash {
+	<<B::Header as HeaderT>::Hashing as HashT>::hash(input.as_bytes())
 }
 
 pub trait Network<Block: BlockT>: Clone + Send + 'static {
@@ -153,46 +154,36 @@ where
 	}
 }
 
-#[derive(Debug, Encode, Decode)]
-pub struct SignedMessage<B: BlockT> {
-	pub data: u64,
-	pub sig: u64,
-	pub _phantom: PhantomData<B>,
-}
-
-#[derive(Debug, Encode, Decode)]
-pub struct Message<B: BlockT> {
-	pub data: u64,
-	pub _phantom: PhantomData<B>,
-}
-
 #[derive(Debug)]
 pub enum Error {
 	Network(String),
 }
 
 struct MessageSender<Block: BlockT, N: Network<Block>> {
-	locals: Option<(Arc<Keypair>, AuthorityId)>,
-	sender: mpsc::UnboundedSender<SignedMessage<Block>>,
+	sender: mpsc::UnboundedSender<Message>,
 	network: N,
+	_phantom: PhantomData<Block>,
 }
 
 impl<Block: BlockT, N: Network<Block>> Sink for MessageSender<Block, N> {
-	type SinkItem = Message<Block>;
+	type SinkItem = Message;
 	type SinkError = Error;
 
-	fn start_send(&mut self, mut msg: Message<Block>) -> StartSend<Message<Block>, Error> {
-		let signed = SignedMessage {
-			data: msg.data,
-			sig: 0,
-			_phantom: PhantomData,
-		};
-
-		let topic = global_topic::<Block>(2);
-		self.network.gossip_message(topic, msg.encode(), false);
-
-		// forward the message to the inner sender.
-		let _ = self.sender.unbounded_send(signed);
+	fn start_send(
+		&mut self,
+		mut msg: Self::SinkItem,
+	) -> StartSend<Self::SinkItem, Self::SinkError> {
+		match msg {
+			Message::ConfirmPeers(hash) => {
+				let topic = string_topic::<Block>("hash");
+				let gossip_msg = GossipMessage::Message(msg.clone());
+				self.network
+					.gossip_message(topic, gossip_msg.encode(), false);
+				// forward message
+				let _ = self.sender.unbounded_send(msg);
+			}
+			_ => {}
+		}
 
 		Ok(AsyncSink::Ready)
 	}
@@ -213,50 +204,43 @@ pub(crate) struct NetworkBridge<B: BlockT, N: Network<B>> {
 }
 
 impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
-	pub fn new(service: N, config: crate::NodeConfig) -> Self {
-		let validator = Arc::new(GossipValidator::new(config));
+	pub fn new(service: N, config: crate::NodeConfig, local_peer_id: PeerId) -> Self {
+		let validator = Arc::new(GossipValidator::new(config, local_peer_id));
 		service.register_validator(validator.clone());
 
-		let topic = global_topic::<B>(1);
-		let message = SignedMessage::<B> {
-			data: 1,
-			sig: 1,
-			_phantom: PhantomData,
-		};
-		// service.register_gossip_message(topic, message.encode());
 		Self { service, validator }
 	}
 
 	pub fn global(
 		&self,
 	) -> (
-		impl Stream<Item = SignedMessage<B>, Error = Error>,
-		impl Sink<SinkItem = Message<B>, SinkError = Error>,
+		impl Stream<Item = Message, Error = Error>,
+		impl Sink<SinkItem = Message, SinkError = Error>,
 	) {
-		let topic = global_topic::<B>(1);
+		let topic = string_topic::<B>("hash");
 
 		let incoming = self
 			.service
 			.messages_for(topic)
 			.filter_map(|notification| {
-				let decoded = SignedMessage::<B>::decode(&mut &notification.message[..]);
+				let decoded = GossipMessage::decode(&mut &notification.message[..]);
 				println!("messages for {:?} {:?}", notification, decoded);
 				decoded.ok()
 			})
-			.and_then(move |msg| {
+			.filter_map(move |msg| {
 				println!("incoming message: {:?}", msg);
 				match msg {
-					_ => Ok(Some(msg)),
+					GossipMessage::Message(message) => Some(message),
+					_ => None,
 				}
 			})
-			.filter_map(|x| x)
 			.map_err(|()| Error::Network(format!("Failed to receive message on unbounded stream")));
 
 		let (tx, out_rx) = mpsc::unbounded();
 		let sender = MessageSender::<B, N> {
-			locals: None,
 			sender: tx,
 			network: self.service.clone(),
+			_phantom: PhantomData,
 		};
 
 		let out_rx = out_rx.map_err(move |()| Error::Network(format!("Network Error!")));
@@ -269,7 +253,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 
 impl<B: BlockT, N: Network<B>> Clone for NetworkBridge<B, N> {
 	fn clone(&self) -> Self {
-		NetworkBridge {
+		Self {
 			service: self.service.clone(),
 			validator: Arc::clone(&self.validator),
 		}

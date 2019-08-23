@@ -15,31 +15,48 @@ use std::{
 use substrate_telemetry::{telemetry, CONSENSUS_DEBUG};
 
 use super::{
-	message::{KeyGenMessage, SignMessage},
+	message::{KeyGenMessage, Message, SignMessage},
 	peer::{PeerInfo, PeerState, Peers},
+	string_topic,
 };
 use hbbft_primitives::PublicKey;
 
 #[derive(Debug, Encode, Decode)]
 pub enum GossipMessage {
-	KeyGen(KeyGenMessage),
-	Sign(SignMessage),
+	Message(Message),
 }
 
 #[derive(Debug)]
 struct Inner {
+	local_peer_id: PeerId,
 	local_peer_info: PeerInfo,
 	peers: Peers,
 	config: crate::NodeConfig,
 }
 
 impl Inner {
-	fn new(config: crate::NodeConfig) -> Self {
+	fn new(config: crate::NodeConfig, local_peer_id: PeerId) -> Self {
+		let mut peers = Peers::default();
+		peers.add(local_peer_id.clone());
+
 		Self {
 			config,
+			local_peer_id,
 			local_peer_info: PeerInfo::default(),
-			peers: Peers::default(),
+			peers,
 		}
+	}
+
+	fn get_peer_index(&self, who: &PeerId) -> usize {
+		self.peers.get_position(who).unwrap()
+	}
+
+	fn add_peer(&mut self, who: PeerId) {
+		self.peers.add(who);
+	}
+
+	fn del_peer(&mut self, who: &PeerId) {
+		self.peers.del(who);
 	}
 
 	fn set_local_state(&mut self, state: PeerState) {
@@ -57,9 +74,9 @@ pub struct GossipValidator<Block: BlockT> {
 }
 
 impl<Block: BlockT> GossipValidator<Block> {
-	pub fn new(config: crate::NodeConfig) -> Self {
+	pub fn new(config: crate::NodeConfig, local_peer_id: PeerId) -> Self {
 		Self {
-			inner: parking_lot::RwLock::new(Inner::new(config)),
+			inner: parking_lot::RwLock::new(Inner::new(config, local_peer_id)),
 			_phantom: PhantomData,
 		}
 	}
@@ -75,15 +92,15 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 		}
 
 		let inner = self.inner.read();
-		if inner.config.players as usize - 1 == inner.peers.len(){
+		if inner.config.players as usize == inner.peers.len() {
+			let peers_hash = inner.peers.get_hash();
+			let hash_topic = string_topic::<Block>("hash");
+			let msg = Message::ConfirmPeers(peers_hash);
+			context.broadcast_message(hash_topic, GossipMessage::Message(msg).encode(), false);
+			// need to handle ">" case
 			println!("SHOULD START KEY GEN");
+			// broadcast message to check all peers are the same
 		}
-		// if inner.config
-
-		// 2. key gen?
-		// awaiting peers -> send all my peer public keys to peer
-		// generating ->
-		// finished ->
 	}
 
 	fn peer_disconnected(&self, _context: &mut dyn ValidatorContext<Block>, who: &PeerId) {
@@ -97,7 +114,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 		data: &[u8],
 	) -> network_gossip::ValidationResult<Block::Hash> {
 		println!("in validate {:?}", data);
-		let topic = super::global_topic::<Block>(1);
+		let topic = super::string_topic::<Block>("hash");
 		network_gossip::ValidationResult::ProcessAndKeep(topic)
 	}
 

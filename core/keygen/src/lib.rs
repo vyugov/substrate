@@ -36,7 +36,7 @@ mod periodic_stream;
 mod shared_state;
 mod signer;
 
-use communication::{gossip::GossipMessage, Message, NetworkBridge, SignedMessage};
+use communication::{gossip::GossipMessage, Message, NetworkBridge};
 use periodic_stream::PeriodicStream;
 use shared_state::{load_persistent, set_signers, SharedState};
 use signer::Signer;
@@ -60,15 +60,15 @@ impl NodeConfig {
 fn global_comm<Block, N>(
 	bridge: &NetworkBridge<Block, N>,
 ) -> (
-	impl Stream<Item = SignedMessage<Block>, Error = ClientError>,
-	impl Sink<SinkItem = Message<Block>, SinkError = ClientError>,
+	impl Stream<Item = Message, Error = ClientError>,
+	impl Sink<SinkItem = Message, SinkError = ClientError>,
 )
 where
 	Block: BlockT<Hash = H256>,
 	N: Network<Block>,
 {
 	let (global_in, global_out) = bridge.global();
-	let global_in = PeriodicStream::<Block, _, SignedMessage<Block>>::new(global_in);
+	let global_in = PeriodicStream::<Block, _, Message>::new(global_in);
 
 	let global_in = global_in.map_err(|_| ClientError::Msg("error global in".to_string()));
 	let global_out = global_out.sink_map_err(|_| ClientError::Msg("error global out".to_string()));
@@ -119,10 +119,10 @@ where
 		work
 	}
 
-	fn handle_message(&self, msg: SignedMessage<Block>) -> Result<(), &'static str> {
-		println!("handle message {:?}", msg);
-		Ok(())
-	}
+	// fn handle_message(&self, msg: GossipMessage) -> Result<(), &'static str> {
+	// 	println!("handle message {:?}", msg);
+	// 	Ok(())
+	// }
 
 	fn rebuild(&mut self) {
 		let should_rebuild = true;
@@ -180,7 +180,7 @@ where
 
 pub fn run_key_gen<B, E, Block, N, RA>(
 	index: usize,
-	current_id: PeerId,
+	local_peer_id: PeerId,
 	client: Arc<Client<B, E, Block, RA>>,
 	network: N,
 ) -> ClientResult<impl Future<Item = (), Error = ()> + Send + 'static>
@@ -201,8 +201,8 @@ where
 
 	println!("index {:?}", index);
 
-	let persistent_data: SharedState = load_persistent(&**client.backend()).unwrap();
-	println!("{:?}", persistent_data);
+	// let persistent_data: SharedState = load_persistent(&**client.backend()).unwrap();
+	// println!("{:?}", persistent_data);
 	// println!("Local peer ID {:?}", current_id.as_bytes());
 
 	// let mut signers = persistent_data.signer_set;
@@ -212,7 +212,7 @@ where
 	// 	signers.push(current_id);
 	// 	set_signers(&**client.backend(), signers);
 	// }
-	let bridge = NetworkBridge::new(network, config.clone());
+	let bridge = NetworkBridge::new(network, config.clone(), local_peer_id);
 
 	let key_gen_work = KeyGenWork::new(client, config, bridge).map_err(|e| error!("Error {:?}", e));
 	Ok(key_gen_work)
