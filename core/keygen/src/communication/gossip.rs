@@ -94,9 +94,9 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 		let inner = self.inner.read();
 		if inner.config.players as usize == inner.peers.len() {
 			let peers_hash = inner.peers.get_hash();
-			let hash_topic = string_topic::<Block>("hash");
+			// let hash_topic = string_topic::<Block>("hash");
 			let msg = Message::ConfirmPeers(peers_hash);
-			context.broadcast_message(hash_topic, GossipMessage::Message(msg).encode(), false);
+			context.send_message(who, GossipMessage::Message(msg).encode());
 			// need to handle ">" case
 			println!("SHOULD START KEY GEN");
 			// broadcast message to check all peers are the same
