@@ -298,6 +298,9 @@ pub struct ExecutionStrategies {
 /// The `run` command used to run a node.
 #[derive(Debug, StructOpt, Clone)]
 pub struct RunCmd {
+	#[structopt(long="ecdsa-index")]
+	pub ecdsa_index: usize,
+
 	/// Enable validator mode
 	#[structopt(long = "validator")]
 	pub validator: bool,

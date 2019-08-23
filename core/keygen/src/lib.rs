@@ -41,10 +41,10 @@ use periodic_stream::PeriodicStream;
 use shared_state::{load_persistent, set_signers, SharedState};
 use signer::Signer;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NodeConfig {
-	pub threshold: u32,
-	pub parties: u32,
+	pub threshold: u16,
+	pub players: u16,
 	pub name: Option<String>,
 }
 
@@ -80,6 +80,7 @@ pub(crate) struct Environment<B, E, Block: BlockT, N: Network<Block>, RA> {
 	pub client: Arc<Client<B, E, Block, RA>>,
 	pub config: NodeConfig,
 	pub bridge: NetworkBridge<Block, N>,
+	// pub peer_
 }
 
 #[must_use]
@@ -178,6 +179,7 @@ where
 }
 
 pub fn run_key_gen<B, E, Block, N, RA>(
+	index: usize,
 	current_id: PeerId,
 	client: Arc<Client<B, E, Block, RA>>,
 	network: N,
@@ -194,19 +196,22 @@ where
 	let config = NodeConfig {
 		name: None,
 		threshold: 1,
-		parties: 3,
+		players: 3,
 	};
+
+	println!("index {:?}", index);
 
 	let persistent_data: SharedState = load_persistent(&**client.backend()).unwrap();
 	println!("{:?}", persistent_data);
 	// println!("Local peer ID {:?}", current_id.as_bytes());
 
-	let mut signers = persistent_data.signer_set;
-	let current_id = current_id.into_bytes();
-	if !signers.contains(&current_id) {
-		signers.push(current_id);
-		set_signers(&**client.backend(), signers);
-	}
+	// let mut signers = persistent_data.signer_set;
+	// let current_id = current_id.into_bytes();
+	// if !signers.contains(&current_id) {
+	// 	// if our id is not in it, add our self
+	// 	signers.push(current_id);
+	// 	set_signers(&**client.backend(), signers);
+	// }
 	let bridge = NetworkBridge::new(network, config.clone());
 
 	let key_gen_work = KeyGenWork::new(client, config, bridge).map_err(|e| error!("Error {:?}", e));

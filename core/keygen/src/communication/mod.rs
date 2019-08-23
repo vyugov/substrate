@@ -214,7 +214,7 @@ pub(crate) struct NetworkBridge<B: BlockT, N: Network<B>> {
 
 impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 	pub fn new(service: N, config: crate::NodeConfig) -> Self {
-		let validator = Arc::new(GossipValidator::new());
+		let validator = Arc::new(GossipValidator::new(config));
 		service.register_validator(validator.clone());
 
 		let topic = global_topic::<B>(1);

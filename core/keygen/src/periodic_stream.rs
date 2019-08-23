@@ -81,7 +81,6 @@ where
 			.poll()
 			.map_err(|e| communication::Error::Network("pending err".to_string()))?
 		{
-			println!("Check pending {:?}", p);
 		}
 
 		if let Some(ready) = self.ready.pop_front() {

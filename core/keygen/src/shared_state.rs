@@ -20,6 +20,7 @@ use hbbft_primitives::HbbftApi;
 use inherents::InherentDataProviders;
 use log::{debug, error, info, warn};
 use network::{self, PeerId};
+use parking_lot::RwLock;
 use sr_primitives::generic::BlockId;
 use sr_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
 

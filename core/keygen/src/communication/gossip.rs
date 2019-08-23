@@ -16,16 +16,9 @@ use substrate_telemetry::{telemetry, CONSENSUS_DEBUG};
 
 use super::{
 	message::{KeyGenMessage, SignMessage},
-	peer::{Index as PeerIndex, PeerInfo, Peers},
+	peer::{PeerInfo, PeerState, Peers},
 };
 use hbbft_primitives::PublicKey;
-
-#[derive(Debug)]
-pub(super) enum KeyGenState {
-	AwaitingPeers,
-	Generating,
-	Complete,
-}
 
 #[derive(Debug, Encode, Decode)]
 pub enum GossipMessage {
@@ -37,23 +30,24 @@ pub enum GossipMessage {
 struct Inner {
 	local_peer_info: PeerInfo,
 	peers: Peers,
+	config: crate::NodeConfig,
 }
+
 impl Inner {
-	fn set_local_index(&mut self, index: PeerIndex) {
-		self.local_peer_info.index = index;
-	}
-
-	fn set_peer_index(&mut self, who: &PeerId, index: PeerIndex) {
-		self.peers.set_index(who, index);
-	}
-}
-
-impl Default for Inner {
-	fn default() -> Self {
+	fn new(config: crate::NodeConfig) -> Self {
 		Self {
+			config,
 			local_peer_info: PeerInfo::default(),
 			peers: Peers::default(),
 		}
+	}
+
+	fn set_local_state(&mut self, state: PeerState) {
+		self.local_peer_info.state = state;
+	}
+
+	fn set_peer_state(&mut self, who: &PeerId, state: PeerState) {
+		self.peers.set_state(who, state);
 	}
 }
 
@@ -63,9 +57,9 @@ pub struct GossipValidator<Block: BlockT> {
 }
 
 impl<Block: BlockT> GossipValidator<Block> {
-	pub fn new() -> Self {
+	pub fn new(config: crate::NodeConfig) -> Self {
 		Self {
-			inner: parking_lot::RwLock::new(Inner::default()),
+			inner: parking_lot::RwLock::new(Inner::new(config)),
 			_phantom: PhantomData,
 		}
 	}
@@ -73,17 +67,23 @@ impl<Block: BlockT> GossipValidator<Block> {
 
 impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> {
 	fn new_peer(&self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, _roles: Roles) {
-		// 1. add peer info
+		println!("in new peer");
 		{
 			let mut inner = self.inner.write();
 			inner.peers.add(who.clone());
 			println!("{:?}", inner.peers);
 		}
+
+		let inner = self.inner.read();
+		if inner.config.players as usize - 1 == inner.peers.len(){
+			println!("SHOULD START KEY GEN");
+		}
+		// if inner.config
+
 		// 2. key gen?
 		// awaiting peers -> send all my peer public keys to peer
 		// generating ->
 		// finished ->
-		println!("in new peer");
 	}
 
 	fn peer_disconnected(&self, _context: &mut dyn ValidatorContext<Block>, who: &PeerId) {

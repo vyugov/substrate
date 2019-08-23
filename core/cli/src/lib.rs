@@ -728,6 +728,7 @@ where
 
 	config.roles = role;
 	config.disable_grandpa = cli.no_grandpa;
+	config.ecdsa_index = cli.ecdsa_index;
 
 	let client_id = config.client_id();
 	fill_network_configuration(

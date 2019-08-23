@@ -32,6 +32,7 @@ use tel::TelemetryEndpoints;
 /// Service configuration.
 #[derive(Clone)]
 pub struct Configuration<C, G> {
+	pub ecdsa_index: usize,
 	/// Implementation name
 	pub impl_name: &'static str,
 	/// Implementation version
@@ -99,6 +100,7 @@ impl<C: Default, G: Serialize + DeserializeOwned + BuildStorage> Configuration<C
 	/// Create default config for given chain spec.
 	pub fn default_with_spec(chain_spec: ChainSpec<G>) -> Self {
 		let mut configuration = Configuration {
+			ecdsa_index: 0,
 			impl_name: "parity-substrate",
 			impl_version: "0.0.0",
 			impl_commit: "",
