@@ -65,7 +65,7 @@ impl Decode for SignMessage {
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Encode, Decode)]
 pub enum Message {
-	ConfirmPeers(u64),
+	ConfirmPeers(u16, u64), // from_index, hash
 	KeyGen(KeyGenMessage),
 	Sign(SignMessage),
 }

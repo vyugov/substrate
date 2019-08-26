@@ -80,7 +80,6 @@ pub(crate) struct Environment<B, E, Block: BlockT, N: Network<Block>, RA> {
 	pub client: Arc<Client<B, E, Block, RA>>,
 	pub config: NodeConfig,
 	pub bridge: NetworkBridge<Block, N>,
-	// pub peer_
 }
 
 #[must_use]
@@ -179,7 +178,6 @@ where
 }
 
 pub fn run_key_gen<B, E, Block, N, RA>(
-	index: usize,
 	local_peer_id: PeerId,
 	client: Arc<Client<B, E, Block, RA>>,
 	network: N,
@@ -198,8 +196,6 @@ where
 		threshold: 1,
 		players: 3,
 	};
-
-	println!("index {:?}", index);
 
 	// let persistent_data: SharedState = load_persistent(&**client.backend()).unwrap();
 	// println!("{:?}", persistent_data);

@@ -109,7 +109,17 @@ where
 			global_out: Buffered::new(global_out),
 		}
 	}
-	// fn handle_incoming(&self) ->
+
+	fn handle_incoming(&mut self, msg: &Message) {
+		match msg {
+			Message::ConfirmPeers(index, hash) => {
+				println!("Receiving hash {:?} from {:?}", hash, index);
+				self.global_out.push(Message::ConfirmPeers(255, 0));
+			}
+			Message::KeyGen(_) => {}
+			Message::Sign(_) => {}
+		}
+	}
 }
 
 impl<B, E, Block, N, RA, In, Out> Future for Signer<B, E, Block, N, RA, In, Out>
@@ -129,6 +139,7 @@ where
 	fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
 		while let Async::Ready(Some(item)) = self.global_in.poll()? {
 			println!("Item: {:?}", item);
+			// self.handle_incoming(&item);
 		}
 		self.global_out.poll()?;
 		Ok(Async::NotReady)

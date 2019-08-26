@@ -207,7 +207,6 @@ construct_service_factory! {
 					},
 				}
 				let key_gen = keygen::run_key_gen(
-					service.config().ecdsa_index,
 					service.network().local_peer_id(),
 					service.client(),
 					service.network()

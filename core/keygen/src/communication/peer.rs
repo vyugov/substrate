@@ -8,10 +8,11 @@ use std::cmp::{min, Ordering};
 use std::collections::{hash_map::DefaultHasher, BTreeSet, HashMap, VecDeque};
 use std::convert::From;
 use std::hash::{Hash, Hasher};
+use std::iter::Iterator;
 
 use network::{config::Roles, PeerId};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum PeerState {
 	AwaitingPeers,
 	Generating,
@@ -66,6 +67,10 @@ impl Peers {
 
 	pub fn len(&self) -> usize {
 		self.map.len()
+	}
+
+	pub fn iter(&self) -> impl Iterator<Item = (&PeerId, &PeerInfo)> {
+		self.map.iter()
 	}
 
 	pub fn set_state(&mut self, who: &PeerId, state: PeerState) {

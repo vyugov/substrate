@@ -80,6 +80,16 @@ impl<Block: BlockT> GossipValidator<Block> {
 			_phantom: PhantomData,
 		}
 	}
+
+	pub fn broadcast(&self, context: &mut dyn ValidatorContext<Block>, msg: Vec<u8>) {
+		let inner = self.inner.read();
+		let local_peer_id = &inner.local_peer_id;
+		for (peer_id, _) in inner.peers.iter() {
+			if peer_id != local_peer_id {
+				context.send_message(peer_id, msg.clone())
+			}
+		}
+	}
 }
 
 impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> {
@@ -93,13 +103,15 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 
 		let inner = self.inner.read();
 		if inner.config.players as usize == inner.peers.len() {
-			let peers_hash = inner.peers.get_hash();
-			// let hash_topic = string_topic::<Block>("hash");
-			let msg = Message::ConfirmPeers(peers_hash);
-			context.send_message(who, GossipMessage::Message(msg).encode());
-			// need to handle ">" case
-			println!("SHOULD START KEY GEN");
 			// broadcast message to check all peers are the same
+			// may need to handle ">" case
+			let peers_hash = inner.peers.get_hash();
+			let from_index = inner.peers.get_position(&inner.local_peer_id).unwrap() as u16;
+			let msg = Message::ConfirmPeers(from_index, peers_hash);
+			self.broadcast(context, GossipMessage::Message(msg).encode());
+			// let topic = string_topic::<Block>("hash");
+			// context.broadcast_message(topic, GossipMessage::Message(msg).encode(), false);
+			println!("SHOULD START KEY GEN");
 		}
 	}
 
@@ -133,19 +145,40 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 		};
 
 		Box::new(move |who, intent, topic, mut data| {
-			println!("message_allowed  inner: {:?}, data: {:?}", inner, data);
+			let gossip_msg = GossipMessage::decode(&mut data);
+			if let Ok(gossip_msg) = gossip_msg {
+				println!(
+					"In `message_allowed` inner: {:?}, msg: {:?}",
+					inner, gossip_msg
+				);
+				return true;
+			}
 			false
 		})
 	}
 
 	fn message_expired<'a>(&'a self) -> Box<dyn FnMut(Block::Hash, &[u8]) -> bool + 'a> {
 		let inner = self.inner.read();
+
 		Box::new(move |topic, mut data| {
-			println!("message_expired {:?}", data);
-			// match *inner {
-			// 	1 => false,
-			// 	_ => true,
-			// }
+			println!("In `message_expired`");
+			let gossip_msg = GossipMessage::decode(&mut data);
+			if let Ok(gossip_msg) = gossip_msg {
+				match gossip_msg {
+					GossipMessage::Message(msg) => match msg {
+						Message::ConfirmPeers(from, _) => {
+							if inner.config.players as usize != inner.peers.len()
+								&& inner.local_peer_info.state == PeerState::AwaitingPeers
+							{
+								return false;
+							} else {
+								return true;
+							}
+						}
+						_ => return false,
+					},
+				}
+			}
 			true
 		})
 	}

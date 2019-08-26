@@ -174,7 +174,8 @@ impl<Block: BlockT, N: Network<Block>> Sink for MessageSender<Block, N> {
 		mut msg: Self::SinkItem,
 	) -> StartSend<Self::SinkItem, Self::SinkError> {
 		match msg {
-			Message::ConfirmPeers(hash) => {
+			Message::ConfirmPeers(from, hash) => {
+				println!("MessageSender::start_send");
 				let topic = string_topic::<Block>("hash");
 				let gossip_msg = GossipMessage::Message(msg.clone());
 				self.network
@@ -224,7 +225,6 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 			.messages_for(topic)
 			.filter_map(|notification| {
 				let decoded = GossipMessage::decode(&mut &notification.message[..]);
-				println!("messages for {:?} {:?}", notification, decoded);
 				decoded.ok()
 			})
 			.filter_map(move |msg| {
