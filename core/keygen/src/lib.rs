@@ -36,7 +36,11 @@ mod periodic_stream;
 mod shared_state;
 mod signer;
 
-use communication::{gossip::GossipMessage, Message, NetworkBridge};
+use communication::{
+	gossip::GossipMessage,
+	message::{ConfirmPeersMessage, KeyGenMessage, Message, SignMessage},
+	NetworkBridge,
+};
 use periodic_stream::PeriodicStream;
 use shared_state::{load_persistent, set_signers, SharedState};
 use signer::Signer;

@@ -26,7 +26,9 @@ use substrate_telemetry::{telemetry, CONSENSUS_DEBUG, CONSENSUS_INFO, CONSENSUS_
 use tokio_executor::DefaultExecutor;
 use tokio_timer::Interval;
 
-use super::{Environment, GossipMessage, Message, Network};
+use super::{
+	ConfirmPeersMessage, Environment, GossipMessage, KeyGenMessage, Message, Network, SignMessage,
+};
 
 struct Buffered<S: Sink> {
 	inner: S,
@@ -112,10 +114,16 @@ where
 
 	fn handle_incoming(&mut self, msg: &Message) {
 		match msg {
-			Message::ConfirmPeers(index, hash) => {
-				println!("Receiving hash {:?} from {:?}", hash, index);
-				self.global_out.push(Message::ConfirmPeers(255, 0));
-			}
+			Message::ConfirmPeers(cpm) => match cpm {
+				ConfirmPeersMessage::Confirming(index, hash) => {
+					println!("Receiving hash {:?} from {:?}", hash, index);
+					self.global_out
+						.push(Message::ConfirmPeers(ConfirmPeersMessage::Confirmed));
+				}
+				ConfirmPeersMessage::Confirmed => {
+					println!("Received confirmed hash");
+				}
+			},
 			Message::KeyGen(_) => {}
 			Message::Sign(_) => {}
 		}
@@ -138,8 +146,8 @@ where
 	type Error = ClientError;
 	fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
 		while let Async::Ready(Some(item)) = self.global_in.poll()? {
-			println!("Item: {:?}", item);
-			// self.handle_incoming(&item);
+			println!("global_in item: {:?}", item);
+			self.handle_incoming(&item);
 		}
 		self.global_out.poll()?;
 		Ok(Async::NotReady)

@@ -18,10 +18,10 @@ use sr_primitives::traits::{
 pub use hbbft_primitives::HBBFT_ENGINE_ID;
 
 pub mod gossip;
-mod message;
+pub mod message;
 mod peer;
 
-pub use message::{KeyGenMessage, Message};
+use message::{ConfirmPeersMessage, KeyGenMessage, Message, SignMessage};
 
 pub struct NetworkStream {
 	inner: Option<mpsc::UnboundedReceiver<network_gossip::TopicNotification>>,
@@ -160,6 +160,7 @@ pub enum Error {
 }
 
 struct MessageSender<Block: BlockT, N: Network<Block>> {
+	// inner message sender
 	sender: mpsc::UnboundedSender<Message>,
 	network: N,
 	_phantom: PhantomData<Block>,
@@ -174,7 +175,7 @@ impl<Block: BlockT, N: Network<Block>> Sink for MessageSender<Block, N> {
 		mut msg: Self::SinkItem,
 	) -> StartSend<Self::SinkItem, Self::SinkError> {
 		match msg {
-			Message::ConfirmPeers(from, hash) => {
+			Message::ConfirmPeers(_) => {
 				println!("MessageSender::start_send");
 				let topic = string_topic::<Block>("hash");
 				let gossip_msg = GossipMessage::Message(msg.clone());

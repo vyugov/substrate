@@ -15,7 +15,7 @@ use std::{
 use substrate_telemetry::{telemetry, CONSENSUS_DEBUG};
 
 use super::{
-	message::{KeyGenMessage, Message, SignMessage},
+	message::{ConfirmPeersMessage, KeyGenMessage, Message, SignMessage},
 	peer::{PeerInfo, PeerState, Peers},
 	string_topic,
 };
@@ -107,7 +107,8 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 			// may need to handle ">" case
 			let peers_hash = inner.peers.get_hash();
 			let from_index = inner.peers.get_position(&inner.local_peer_id).unwrap() as u16;
-			let msg = Message::ConfirmPeers(from_index, peers_hash);
+			let confirm_peers_msg = ConfirmPeersMessage::Confirming(from_index, peers_hash);
+			let msg = Message::ConfirmPeers(confirm_peers_msg);
 			self.broadcast(context, GossipMessage::Message(msg).encode());
 			// let topic = string_topic::<Block>("hash");
 			// context.broadcast_message(topic, GossipMessage::Message(msg).encode(), false);
@@ -125,9 +126,13 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 		who: &PeerId,
 		data: &[u8],
 	) -> network_gossip::ValidationResult<Block::Hash> {
-		println!("in validate {:?}", data);
-		let topic = super::string_topic::<Block>("hash");
-		network_gossip::ValidationResult::ProcessAndKeep(topic)
+		println!("in validate");
+		let gossip_msg = GossipMessage::decode(&mut data);
+		if let Ok(gossip_msg) = gossip_msg {
+			let topic = super::string_topic::<Block>("hash");
+			return substrate_network::ValidationResult::ProcessAndKeep(topic);
+		}
+		network_gossip::ValidationResult::Discard
 	}
 
 	fn message_allowed<'a>(
@@ -166,7 +171,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 			if let Ok(gossip_msg) = gossip_msg {
 				match gossip_msg {
 					GossipMessage::Message(msg) => match msg {
-						Message::ConfirmPeers(from, _) => {
+						Message::ConfirmPeers(_) => {
 							if inner.config.players as usize != inner.peers.len()
 								&& inner.local_peer_info.state == PeerState::AwaitingPeers
 							{

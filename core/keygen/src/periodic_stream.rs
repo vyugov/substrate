@@ -68,7 +68,6 @@ where
 			match self.incoming.poll()? {
 				Async::Ready(None) => return Ok(Async::Ready(None)),
 				Async::Ready(Some(input)) => {
-					println!("worker poll {:?}", input);
 					let ready = &mut self.ready;
 					ready.push_back(input);
 				}
@@ -80,8 +79,7 @@ where
 			.check_pending
 			.poll()
 			.map_err(|e| communication::Error::Network("pending err".to_string()))?
-		{
-		}
+		{}
 
 		if let Some(ready) = self.ready.pop_front() {
 			return Ok(Async::Ready(Some(ready)));
