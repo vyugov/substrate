@@ -100,6 +100,7 @@ parameter_types! {
 	pub const MaximumBlockWeight: Weight = 1_000_000_000;
 	pub const AvailableBlockRatio: Perbill = Perbill::from_percent(75);
 	pub const MaximumBlockLength: u32 = 5 * 1024 * 1024;
+		pub const Version: RuntimeVersion = VERSION;
 }
 
 impl system::Trait for Runtime {
@@ -118,6 +119,7 @@ impl system::Trait for Runtime {
 	type MaximumBlockWeight = MaximumBlockWeight;
 	type MaximumBlockLength = MaximumBlockLength;
 	type AvailableBlockRatio = AvailableBlockRatio;
+	type Version = Version;
 }
 
 parameter_types! {
@@ -342,11 +344,6 @@ impl_runtime_apis! {
 	}
 
 
-	impl consensus_primitives::ConsensusApi<Block,AuthorityId> for Runtime {
-		fn authorities() -> Vec<AuthorityId> {
-			Vec::new()
-		}
-	}
 
 	impl substrate_session::SessionKeys<Block> for Runtime {
 		fn generate_session_keys(seed: Option<Vec<u8>>) -> Vec<u8> {
@@ -358,7 +355,7 @@ impl_runtime_apis! {
 	{
  fn do_nothing()
  {
-	 
+
  }
 	}
 	//not used for now and has no_std problems

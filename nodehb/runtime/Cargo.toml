@@ -20,7 +20,7 @@ authorship = { package = "srml-authorship", path = "../../srml/authorship", defa
 #badger = { package = "substrate-badger-mushroom", path = "../../core/hbbft" }
 #badger-primitives = { package = "substrate-badger-primitives", path = "../../core/hbbft/primitives" }
 
-consensus-primitives = { package = "substrate-consensus-common-primitives", path = "../../core/consensus/common/primitives", default-features = false }
+#consensus-primitives = { package = "substrate-consensus-common-primitives", path = "../../core/consensus/common/primitives", default-features = false }
 balances = { package = "srml-balances", path = "../../srml/balances", default-features = false }
 elections = { package = "srml-elections", path = "../../srml/elections", default-features = false }
 executive = { package = "srml-executive", path = "../../srml/executive", default-features = false }
@@ -54,7 +54,6 @@ std = [
 	"sr-primitives/std",
 	"support/std",
 	"authorship/std",
-	"consensus-primitives/std",
 	"balances/std",
 	"elections/std",
 	"executive/std",

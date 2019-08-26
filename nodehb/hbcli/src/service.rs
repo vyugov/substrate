@@ -111,6 +111,7 @@ construct_service_factory! {
 		RuntimeDispatch = hb_node_executor::Executor,
 		FullTransactionPoolApi = transaction_pool::ChainApi<client::Client<FullBackend<Self>, FullExecutor<Self>, Block, RuntimeApi>, Block>
 			{ |config, client| Ok(TransactionPool::new(config, transaction_pool::ChainApi::new(client))) },
+
 		LightTransactionPoolApi = transaction_pool::ChainApi<client::Client<LightBackend<Self>, LightExecutor<Self>, Block, RuntimeApi>, Block>
 			{ |config, client| Ok(TransactionPool::new(config, transaction_pool::ChainApi::new(client))) },
 		Genesis = GenesisConfig,
@@ -147,6 +148,7 @@ construct_service_factory! {
 				Ok(service)
 			}
 		},
+		
 		LightService = LightComponents<Self>
 			{ |config| <LightComponents<Factory>>::new(config) },
 		FullImportQueue = BadgerImportQueue<Self::Block>
@@ -195,6 +197,6 @@ construct_service_factory! {
 		FinalityProofProvider = { |_client: Arc<FullClient<Self>>| {
 			Ok(None)
 		}},
+		RpcExtensions = (),
 	}
 }
-

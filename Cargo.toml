@@ -22,8 +22,7 @@ vergen = "3"
 members = [
         "nodehb", 
         "nodehb/hbcli",
-	"core/hbbft",
-        "core/application-crypto",
+	"core/application-crypto",
 	"core/cli",
 	"core/client",
 	"core/client/db",
