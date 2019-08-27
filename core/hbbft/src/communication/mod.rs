@@ -613,9 +613,15 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
    }
 fn flush_message_net<N:Network<Block>>(&self,context: &N)
    {
-    let mut locked= self.inner.write();
-	let topic = badger_topic::<Block>();    
-		 for msg in locked.out_queue.drain(..)
+  
+	let topic = badger_topic::<Block>(); 
+	   let mut drain :Vec<_>;
+		{
+	let mut locked= self.inner.write();
+	info!("BaDGER!! Flushing {} messages",&locked.out_queue.len());
+	drain=locked.out_queue.drain(..).collect();
+	}   
+		 for msg in drain
 		 {
 			 let vdata=GossipMessage::BadgerData(msg.message).encode();
 			 match &msg.target
@@ -633,8 +639,9 @@ fn flush_message_net<N:Network<Block>>(&self,context: &N)
 
 				  },
               LocalTarget::AllExcept(exclude) => {
-				    let mut inner = self.inner.write();
-                    for pid in inner.peers.peer_list().iter().filter(|n| !exclude.contains(&PeerIdW{0:(*n).clone() })) {
+				  		   info!("BaDGER!! AllExcept  {}",exclude.len());
+				      let mut locked= self.inner.write();
+                    for pid in locked.peers.peer_list().iter().filter(|n| !exclude.contains(&PeerIdW{0:(*n).clone() })) {
 						let tmp=PeerIdW {0:pid.clone() } ;
                         if tmp != msg.sender_id {
                             context.send_message(vec![pid.clone()], vdata.clone());
@@ -645,6 +652,7 @@ fn flush_message_net<N:Network<Block>>(&self,context: &N)
 			 }
 			
 		 }
+		  info!("BaDGER!! Exit flush");
    }
 	/// Create a new gossip-validator. 
 	pub fn new(config: crate::Config, self_id:PeerId)
@@ -696,7 +704,7 @@ fn flush_message_net<N:Network<Block>>(&self,context: &N)
                    message,});
 				};
 
-				true
+				locked.outputs.len()>0
 		   },
 		   Err(e) => return Err(Error::Badger(e.to_string()))
 	   }

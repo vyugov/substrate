@@ -737,16 +737,23 @@ pub struct BadgerStartParams< Block: BlockT<Hash=H256>, N :Network<Block>,  X>
 	ph: PhantomData<Block>
 }
 
-pub struct TxStream<A>
-where A: txpool::ChainApi
+pub struct TxStream<A,B,E,RA,Block:BlockT<Hash=H256>>
+where A: txpool::ChainApi,
+B: client::backend::Backend<Block, Blake2Hasher> + Send + Sync + 'static,
+E: CallExecutor<Block, Blake2Hasher> + Send + Sync + Clone + 'static,
+RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
 {
  pub transaction_pool: Arc<TransactionPool<A>>,
+ pub client:  Arc<Client<B, E, Block, RA>>,
 }
 
 
-impl<A> Stream for TxStream<A>
+impl<A,B,E,RA,Block:BlockT<Hash=H256>> Stream for TxStream<A,B,E,RA,Block>
 where A: txpool::ChainApi,
-
+<A as txpool::ChainApi>::Block :BlockT<Hash=H256>,
+B: client::backend::Backend<Block, Blake2Hasher> + Send + Sync + 'static,
+E: CallExecutor<Block, Blake2Hasher> + Send + Sync + Clone + 'static,
+RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
 {
 	type Item=TransactionSet;
 	fn poll_next(
@@ -757,10 +764,17 @@ where A: txpool::ChainApi,
 		info!("BADgER! Polled stream!");
      let pending_iterator = self.transaction_pool.ready();
 	  let batch:Vec<_>=pending_iterator.map(|a| a.data.encode()).collect();
+	  let pending_iterator = self.transaction_pool.ready();
+	  let tags:Vec<_>=pending_iterator.flat_map(|a| a.provides.clone().into_iter()).collect();
+	   let pending_iterator = self.transaction_pool.ready();
+	  let hashes:Vec<_>=pending_iterator.map(|a| a.hash.clone()).collect();
 	  if batch.len()==0
 	  {
 		  return Poll::Pending;
 	  }
+	  info!("BADgER! Ready stream!");
+	   let best_block_hash = self.client.info().chain.best_hash;
+	  self.transaction_pool.prune_tags(&generic::BlockId::hash(best_block_hash),tags,hashes);
 	  Poll::Ready(Some(batch))
 	}
 }
@@ -826,7 +840,9 @@ S: Unpin
 
 	}
 }*/
-/// Run a GRANDPA voter as a task. Provide configuration and a link to a
+use futures_timer::Interval;
+
+/// Run a HBBFT churn as a task. Provide configuration and a link to a
 /// block import worker that has already been instantiated with `block_import`.
 pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 	client : Arc<Client<B, E, Block, RA>>,
@@ -849,6 +865,7 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 	RA: Send + Sync + 'static,
 	X: futures03::future::Future<Output=()> + Send+Unpin,
 	A: txpool::ChainApi+'static,
+	<A as txpool::ChainApi>::Block :BlockT<Hash=H256>,
 	I:BlockImport<Block>+Send+Sync+'static,
 	RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
 	<Client<B, E, Block, RA> as ProvideRuntimeApi>::Api: BlockBuilderApi<Block>
@@ -883,11 +900,12 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 
 
   // let  aggregate=bworker.get_aggregate();
-   let mut tx_out= TxStream{transaction_pool:t_pool.clone()};
+   let mut tx_out= TxStream{transaction_pool:t_pool.clone(),client:client.clone()};
   //let sender= tx_out.forward(tx_in); 
   //let sender=tx_in.send_all(&mut tx_out);
  let sender=tx_out.for_each( move |data: std::vec::Vec<std::vec::Vec<u8>>| 
    {
+	 
 	   match tx_in.send_out(data)
 	   {
 		   Ok(_) =>{},
@@ -1081,11 +1099,17 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 //			telemetry!(CONSENSUS_WARN; "afg.badger_failed"; "e" => ?e);
 //		}) ;
 
-	let with_start = network_startup.then(move |()| futures03::future::select(sender,receiver));
-
+	let with_start = network_startup.then(move |()| futures03::future::join(sender,receiver));
+     let ping=Interval::new(Duration::from_secs(1));
+	 let pinged=futures03::future::select(with_start,ping.for_each(|_|{future::ready(())}));
 	// Make sure that `telemetry_task` doesn't accidentally finish and kill grandpa.
 
-	Ok(futures03::future::select(with_start,on_exit).then(|_| future::ready( () ) ))
+	Ok(futures03::future::select(on_exit.then(|_| {info!("READY");  future::ready(())}),pinged   ).then(|_| 
+	{
+		
+	future::ready( () ) 
+	}
+	))
 
 }
 
