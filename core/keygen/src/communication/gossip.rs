@@ -27,7 +27,7 @@ pub enum GossipMessage {
 }
 
 #[derive(Debug)]
-struct Inner {
+pub struct Inner {
 	local_peer_id: PeerId,
 	local_peer_info: PeerInfo,
 	peers: Peers,
@@ -59,17 +59,25 @@ impl Inner {
 		self.peers.del(who);
 	}
 
-	fn set_local_state(&mut self, state: PeerState) {
+	pub fn local_id(&self) -> String {
+		self.local_peer_id.to_base58()
+	}
+
+	pub fn local_info(&self) -> PeerInfo {
+		self.local_peer_info.clone()
+	}
+
+	pub fn set_local_state(&mut self, state: PeerState) {
 		self.local_peer_info.state = state;
 	}
 
-	fn set_peer_state(&mut self, who: &PeerId, state: PeerState) {
+	pub fn set_peer_state(&mut self, who: &PeerId, state: PeerState) {
 		self.peers.set_state(who, state);
 	}
 }
 
 pub struct GossipValidator<Block: BlockT> {
-	inner: parking_lot::RwLock<Inner>,
+	pub inner: parking_lot::RwLock<Inner>,
 	_phantom: PhantomData<Block>,
 }
 
@@ -86,6 +94,7 @@ impl<Block: BlockT> GossipValidator<Block> {
 		let local_peer_id = &inner.local_peer_id;
 		for (peer_id, _) in inner.peers.iter() {
 			if peer_id != local_peer_id {
+				println!("broadcast to {:?}", peer_id);
 				context.send_message(peer_id, msg.clone())
 			}
 		}
@@ -94,11 +103,9 @@ impl<Block: BlockT> GossipValidator<Block> {
 
 impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> {
 	fn new_peer(&self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, _roles: Roles) {
-		println!("in new peer");
 		{
 			let mut inner = self.inner.write();
-			inner.peers.add(who.clone());
-			println!("{:?}", inner.peers);
+			inner.add_peer(who.clone());
 		}
 
 		let inner = self.inner.read();
@@ -118,19 +125,23 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 
 	fn peer_disconnected(&self, _context: &mut dyn ValidatorContext<Block>, who: &PeerId) {
 		println!("in peer disconnected");
+		{
+			let mut inner = self.inner.write();
+			inner.del_peer(who);
+		}
 	}
 
 	fn validate(
 		&self,
 		context: &mut dyn ValidatorContext<Block>,
 		who: &PeerId,
-		data: &[u8],
+		mut data: &[u8],
 	) -> network_gossip::ValidationResult<Block::Hash> {
 		println!("in validate");
 		let gossip_msg = GossipMessage::decode(&mut data);
 		if let Ok(gossip_msg) = gossip_msg {
 			let topic = super::string_topic::<Block>("hash");
-			return substrate_network::ValidationResult::ProcessAndKeep(topic);
+			return network_gossip::ValidationResult::ProcessAndKeep(topic);
 		}
 		network_gossip::ValidationResult::Discard
 	}
@@ -172,12 +183,12 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 				match gossip_msg {
 					GossipMessage::Message(msg) => match msg {
 						Message::ConfirmPeers(_) => {
-							if inner.config.players as usize != inner.peers.len()
-								&& inner.local_peer_info.state == PeerState::AwaitingPeers
+							if inner.config.players as usize == inner.peers.len()
+								&& inner.local_peer_info.state != PeerState::AwaitingPeers
 							{
-								return false;
-							} else {
 								return true;
+							} else {
+								return false;
 							}
 						}
 						_ => return false,

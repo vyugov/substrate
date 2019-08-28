@@ -14,7 +14,6 @@ use client::{
 use codec::{Decode, Encode};
 use consensus_common::SelectChain;
 use futures::{future::Loop as FutureLoop, prelude::*, stream::Fuse, sync::mpsc};
-use hbbft::crypto::{PublicKey, SecretKey, SignatureShare};
 use hbbft_primitives::HbbftApi;
 use inherents::InherentDataProviders;
 use log::{debug, info, warn};
@@ -22,7 +21,6 @@ use network;
 use primitives::H256;
 use sr_primitives::generic::BlockId;
 use sr_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
-use substrate_telemetry::{telemetry, CONSENSUS_DEBUG, CONSENSUS_INFO, CONSENSUS_WARN};
 use tokio_timer::Interval;
 
 use crate::communication;

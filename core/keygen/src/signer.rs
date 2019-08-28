@@ -14,11 +14,10 @@ use client::{
 use codec::{Decode, Encode};
 use consensus_common::SelectChain;
 use futures::{future::Loop as FutureLoop, prelude::*, stream::Fuse, sync::mpsc};
-use hbbft::crypto::{PublicKey, SecretKey, SignatureShare};
 use hbbft_primitives::HbbftApi;
 use inherents::InherentDataProviders;
 use log::{debug, error, info, warn};
-use network;
+use network::PeerId;
 use primitives::{Blake2Hasher, H256};
 use sr_primitives::generic::BlockId;
 use sr_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
@@ -27,7 +26,8 @@ use tokio_executor::DefaultExecutor;
 use tokio_timer::Interval;
 
 use super::{
-	ConfirmPeersMessage, Environment, GossipMessage, KeyGenMessage, Message, Network, SignMessage,
+	ConfirmPeersMessage, Environment, GossipMessage, KeyGenMessage, Message, MessageWithSender,
+	Network, SignMessage,
 };
 
 struct Buffered<S: Sink> {
@@ -84,8 +84,8 @@ impl<S: Sink> Buffered<S> {
 
 pub(crate) struct Signer<B, E, Block: BlockT, N: Network<Block>, RA, In, Out>
 where
-	In: Stream<Item = Message, Error = ClientError>,
-	Out: Sink<SinkItem = Message, SinkError = ClientError>,
+	In: Stream<Item = MessageWithSender, Error = ClientError>,
+	Out: Sink<SinkItem = MessageWithSender, SinkError = ClientError>,
 {
 	env: Arc<Environment<B, E, Block, N, RA>>,
 	global_in: In,
@@ -101,8 +101,8 @@ where
 	N: Network<Block> + Sync,
 	N::In: Send + 'static,
 	RA: Send + Sync + 'static,
-	In: Stream<Item = Message, Error = ClientError>,
-	Out: Sink<SinkItem = Message, SinkError = ClientError>,
+	In: Stream<Item = MessageWithSender, Error = ClientError>,
+	Out: Sink<SinkItem = MessageWithSender, SinkError = ClientError>,
 {
 	pub fn new(env: Arc<Environment<B, E, Block, N, RA>>, global_in: In, global_out: Out) -> Self {
 		Signer {
@@ -112,18 +112,20 @@ where
 		}
 	}
 
-	fn handle_incoming(&mut self, msg: &Message) {
+	fn handle_incoming(&mut self, msg: &Message, sender: &Option<PeerId>) {
 		match msg {
-			Message::ConfirmPeers(cpm) => match cpm {
-				ConfirmPeersMessage::Confirming(index, hash) => {
-					println!("Receiving hash {:?} from {:?}", hash, index);
-					self.global_out
-						.push(Message::ConfirmPeers(ConfirmPeersMessage::Confirmed));
-				}
-				ConfirmPeersMessage::Confirmed => {
-					println!("Received confirmed hash");
-				}
-			},
+			Message::ConfirmPeers(ConfirmPeersMessage::Confirming(index, hash)) => {
+				println!("Receiving hash {:?} from {:?}", hash, index);
+				let inner = self.env.bridge.validator.inner.read();
+				self.global_out.push((
+					Message::ConfirmPeers(ConfirmPeersMessage::Confirmed(inner.local_id())),
+					sender.clone(),
+				));
+			}
+			Message::ConfirmPeers(ConfirmPeersMessage::Confirmed(_)) => {
+				// change state
+				println!("Received confirmed hash");
+			}
 			Message::KeyGen(_) => {}
 			Message::Sign(_) => {}
 		}
@@ -139,16 +141,18 @@ where
 	N: Network<Block> + Sync,
 	N::In: Send + 'static,
 	RA: Send + Sync + 'static,
-	In: Stream<Item = Message, Error = ClientError>,
-	Out: Sink<SinkItem = Message, SinkError = ClientError>,
+	In: Stream<Item = MessageWithSender, Error = ClientError>,
+	Out: Sink<SinkItem = MessageWithSender, SinkError = ClientError>,
 {
 	type Item = ();
 	type Error = ClientError;
 	fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
 		while let Async::Ready(Some(item)) = self.global_in.poll()? {
-			println!("global_in item: {:?}", item);
-			self.handle_incoming(&item);
+			let (msg, sender) = item;
+			println!("global_in msg: {:?} from: {:?}", msg, sender);
+			self.handle_incoming(&msg, &sender);
 		}
+		// send messages
 		self.global_out.poll()?;
 		Ok(Async::NotReady)
 	}

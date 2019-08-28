@@ -12,7 +12,7 @@ use std::iter::Iterator;
 
 use network::{config::Roles, PeerId};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum PeerState {
 	AwaitingPeers,
 	Generating,
@@ -25,8 +25,8 @@ impl Default for PeerState {
 	}
 }
 
-#[derive(Debug)]
-pub(crate) struct PeerInfo {
+#[derive(Debug, Clone)]
+pub struct PeerInfo {
 	pub state: PeerState,
 }
 

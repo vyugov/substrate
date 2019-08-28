@@ -3,11 +3,9 @@ use std::{marker::PhantomData, sync::Arc};
 use codec::{Decode, Encode};
 use futures::prelude::*;
 use futures::sync::{mpsc, oneshot};
+use log::{error, info};
+
 use gossip::{GossipMessage, GossipValidator};
-use hbbft::{
-	crypto::{PublicKey, SecretKey},
-	sync_key_gen::{Ack, AckOutcome, Part, PartOutcome, SyncKeyGen},
-};
 use hbbft_primitives::{AuthorityId, Keypair};
 use network::{consensus_gossip as network_gossip, NetworkService, PeerId};
 use network_gossip::ConsensusMessage;
@@ -21,7 +19,7 @@ pub mod gossip;
 pub mod message;
 mod peer;
 
-use message::{ConfirmPeersMessage, KeyGenMessage, Message, SignMessage};
+use message::{ConfirmPeersMessage, KeyGenMessage, Message, MessageWithSender, SignMessage};
 
 pub struct NetworkStream {
 	inner: Option<mpsc::UnboundedReceiver<network_gossip::TopicNotification>>,
@@ -160,29 +158,25 @@ pub enum Error {
 }
 
 struct MessageSender<Block: BlockT, N: Network<Block>> {
-	// inner message sender
-	sender: mpsc::UnboundedSender<Message>,
 	network: N,
-	_phantom: PhantomData<Block>,
+	validator: Arc<GossipValidator<Block>>,
 }
 
 impl<Block: BlockT, N: Network<Block>> Sink for MessageSender<Block, N> {
-	type SinkItem = Message;
+	type SinkItem = MessageWithSender;
 	type SinkError = Error;
 
 	fn start_send(
 		&mut self,
-		mut msg: Self::SinkItem,
+		msg_with_sender: Self::SinkItem,
 	) -> StartSend<Self::SinkItem, Self::SinkError> {
+		let (msg, sender) = msg_with_sender;
 		match msg {
-			Message::ConfirmPeers(_) => {
-				println!("MessageSender::start_send");
-				let topic = string_topic::<Block>("hash");
-				let gossip_msg = GossipMessage::Message(msg.clone());
-				self.network
-					.gossip_message(topic, gossip_msg.encode(), false);
-				// forward message
-				let _ = self.sender.unbounded_send(msg);
+			Message::ConfirmPeers(cpm) => {
+				info!("MessageSender::start_send send to {:?}", sender);
+				let receiver = vec![sender.unwrap()];
+				let gossip_msg = GossipMessage::Message(Message::ConfirmPeers(cpm));
+				self.network.send_message(receiver, gossip_msg.encode());
 			}
 			_ => {}
 		}
@@ -195,14 +189,13 @@ impl<Block: BlockT, N: Network<Block>> Sink for MessageSender<Block, N> {
 	}
 
 	fn close(&mut self) -> Poll<(), Error> {
-		// ignore errors since we allow this inner sender to be closed already.
-		self.sender.close().or_else(|_| Ok(Async::Ready(())))
+		Ok(Async::Ready(()))
 	}
 }
 
 pub(crate) struct NetworkBridge<B: BlockT, N: Network<B>> {
-	service: N,
-	validator: Arc<GossipValidator<B>>,
+	pub service: N,
+	pub validator: Arc<GossipValidator<B>>,
 }
 
 impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
@@ -216,8 +209,8 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 	pub fn global(
 		&self,
 	) -> (
-		impl Stream<Item = Message, Error = Error>,
-		impl Sink<SinkItem = Message, SinkError = Error>,
+		impl Stream<Item = MessageWithSender, Error = Error>,
+		impl Sink<SinkItem = MessageWithSender, SinkError = Error>,
 	) {
 		let topic = string_topic::<B>("hash");
 
@@ -226,27 +219,21 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 			.messages_for(topic)
 			.filter_map(|notification| {
 				let decoded = GossipMessage::decode(&mut &notification.message[..]);
-				decoded.ok()
-			})
-			.filter_map(move |msg| {
-				println!("incoming message: {:?}", msg);
-				match msg {
-					GossipMessage::Message(message) => Some(message),
-					_ => None,
+				if let Err(e) = decoded {
+					error!("notification error {:?}", e);
+					return None;
 				}
+				Some((decoded.unwrap(), notification.sender))
+			})
+			.filter_map(move |(msg, sender)| match msg {
+				GossipMessage::Message(message) => Some((message, sender)),
 			})
 			.map_err(|()| Error::Network(format!("Failed to receive message on unbounded stream")));
 
-		let (tx, out_rx) = mpsc::unbounded();
 		let sender = MessageSender::<B, N> {
-			sender: tx,
 			network: self.service.clone(),
-			_phantom: PhantomData,
+			validator: self.validator.clone(),
 		};
-
-		let out_rx = out_rx.map_err(move |()| Error::Network(format!("Network Error!")));
-
-		let incoming = incoming.select(out_rx);
 
 		(incoming, sender)
 	}

@@ -14,10 +14,9 @@ use client::{
 use codec::{Decode, Encode};
 use consensus_common::SelectChain;
 use futures::{future::Loop as FutureLoop, prelude::*, stream::Fuse, sync::mpsc};
-use hbbft::crypto::{PublicKey, SecretKey, SignatureShare};
 use hbbft_primitives::HbbftApi;
 use inherents::InherentDataProviders;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use network::{self, PeerId};
 use primitives::{Blake2Hasher, H256};
 use sr_primitives::generic::BlockId;
@@ -38,7 +37,7 @@ mod signer;
 
 use communication::{
 	gossip::GossipMessage,
-	message::{ConfirmPeersMessage, KeyGenMessage, Message, SignMessage},
+	message::{ConfirmPeersMessage, KeyGenMessage, Message, MessageWithSender, SignMessage},
 	NetworkBridge,
 };
 use periodic_stream::PeriodicStream;
@@ -64,15 +63,15 @@ impl NodeConfig {
 fn global_comm<Block, N>(
 	bridge: &NetworkBridge<Block, N>,
 ) -> (
-	impl Stream<Item = Message, Error = ClientError>,
-	impl Sink<SinkItem = Message, SinkError = ClientError>,
+	impl Stream<Item = MessageWithSender, Error = ClientError>,
+	impl Sink<SinkItem = MessageWithSender, SinkError = ClientError>,
 )
 where
 	Block: BlockT<Hash = H256>,
 	N: Network<Block>,
 {
 	let (global_in, global_out) = bridge.global();
-	let global_in = PeriodicStream::<Block, _, Message>::new(global_in);
+	let global_in = PeriodicStream::<Block, _, MessageWithSender>::new(global_in);
 
 	let global_in = global_in.map_err(|_| ClientError::Msg("error global in".to_string()));
 	let global_out = global_out.sink_map_err(|_| ClientError::Msg("error global out".to_string()));

@@ -4,7 +4,11 @@ use rand::rngs::{OsRng, StdRng};
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use network::PeerId;
+
 type PeerIndex = u16;
+
+pub type MessageWithSender = (Message, Option<PeerId>);
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct BroadCastMessage {
@@ -66,7 +70,7 @@ impl Decode for SignMessage {
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Encode, Decode)]
 pub enum ConfirmPeersMessage {
 	Confirming(u16, u64), // from_index, hash
-	Confirmed,
+	Confirmed(String),
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Encode, Decode)]
