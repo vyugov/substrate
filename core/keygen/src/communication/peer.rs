@@ -73,7 +73,7 @@ impl Peers {
 		self.map.iter()
 	}
 
-	pub fn set_state(&mut self, who: &PeerId, state: PeerState) {
+	fn set_state(&mut self, who: &PeerId, state: PeerState) {
 		let peer = self.map.get_mut(who).expect("Peer not found!");
 		peer.state = state;
 	}

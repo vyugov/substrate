@@ -118,13 +118,26 @@ where
 				println!("Receiving hash {:?} from {:?}", hash, index);
 				let inner = self.env.bridge.validator.inner.read();
 				self.global_out.push((
-					Message::ConfirmPeers(ConfirmPeersMessage::Confirmed(inner.local_id())),
+					Message::ConfirmPeers(ConfirmPeersMessage::Confirmed(inner.local_string_id())),
 					sender.clone(),
 				));
 			}
 			Message::ConfirmPeers(ConfirmPeersMessage::Confirmed(_)) => {
-				// change state
 				println!("Received confirmed hash");
+				let sender = sender.clone().unwrap();
+
+				let mut state = self.env.state.write();
+				state.confirmations += 1;
+
+				{
+					let mut inner = self.env.bridge.validator.inner.write();
+					inner.set_peer_generating(&sender);
+				}
+
+				if state.confirmations == self.env.config.players - 1 {
+					let mut inner = self.env.bridge.validator.inner.write();
+					inner.set_local_generating();
+				}
 			}
 			Message::KeyGen(_) => {}
 			Message::Sign(_) => {}
@@ -154,6 +167,10 @@ where
 		}
 		// send messages
 		self.global_out.poll()?;
+		println!(
+			"signer polling {:?}",
+			self.env.bridge.validator.inner.read()
+		);
 		Ok(Async::NotReady)
 	}
 }

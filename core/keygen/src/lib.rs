@@ -18,14 +18,13 @@ use hbbft_primitives::HbbftApi;
 use inherents::InherentDataProviders;
 use log::{debug, error, info};
 use network::{self, PeerId};
+use parking_lot::RwLock;
 use primitives::{Blake2Hasher, H256};
 use sr_primitives::generic::BlockId;
 use sr_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
 use substrate_telemetry::{telemetry, CONSENSUS_DEBUG, CONSENSUS_INFO, CONSENSUS_WARN};
 use tokio_executor::DefaultExecutor;
 use tokio_timer::Interval;
-
-pub use communication::Network;
 
 #[cfg(test)]
 mod tests;
@@ -38,16 +37,18 @@ mod signer;
 use communication::{
 	gossip::GossipMessage,
 	message::{ConfirmPeersMessage, KeyGenMessage, Message, MessageWithSender, SignMessage},
-	NetworkBridge,
+	Network, NetworkBridge,
 };
 use periodic_stream::PeriodicStream;
 use shared_state::{load_persistent, set_signers, SharedState};
 use signer::Signer;
 
+pub type Count = u16;
+
 #[derive(Clone, Debug)]
 pub struct NodeConfig {
-	pub threshold: u16,
-	pub players: u16,
+	pub threshold: Count,
+	pub players: Count,
 	pub name: Option<String>,
 }
 
@@ -57,6 +58,20 @@ impl NodeConfig {
 			.as_ref()
 			.map(|s| s.as_str())
 			.unwrap_or("<unknown>")
+	}
+}
+
+pub struct KeyGenState {
+	pub confirmations: Count,
+	pub local_key: Option<u64>,
+}
+
+impl Default for KeyGenState {
+	fn default() -> Self {
+		Self {
+			confirmations: 0,
+			local_key: None,
+		}
 	}
 }
 
@@ -83,6 +98,7 @@ pub(crate) struct Environment<B, E, Block: BlockT, N: Network<Block>, RA> {
 	pub client: Arc<Client<B, E, Block, RA>>,
 	pub config: NodeConfig,
 	pub bridge: NetworkBridge<Block, N>,
+	pub state: Arc<RwLock<KeyGenState>>,
 }
 
 #[must_use]
@@ -110,6 +126,7 @@ where
 			client,
 			config,
 			bridge,
+			state: Arc::new(RwLock::new(KeyGenState::default())),
 		});
 		let mut work = Self {
 			// `voter` is set to a temporary value and replaced below when

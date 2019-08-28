@@ -59,7 +59,11 @@ impl Inner {
 		self.peers.del(who);
 	}
 
-	pub fn local_id(&self) -> String {
+	pub fn local_id(&self) -> PeerId {
+		self.local_peer_id.clone()
+	}
+
+	pub fn local_string_id(&self) -> String {
 		self.local_peer_id.to_base58()
 	}
 
@@ -67,12 +71,22 @@ impl Inner {
 		self.local_peer_info.clone()
 	}
 
-	pub fn set_local_state(&mut self, state: PeerState) {
-		self.local_peer_info.state = state;
+	pub fn set_local_generating(&mut self) {
+		self.set_peer_generating(&self.local_id());
+		self.local_peer_info.state = PeerState::Generating;
 	}
 
-	pub fn set_peer_state(&mut self, who: &PeerId, state: PeerState) {
-		self.peers.set_state(who, state);
+	pub fn set_local_complete(&mut self) {
+		self.set_peer_complete(&self.local_id());
+		self.local_peer_info.state = PeerState::Complete;
+	}
+
+	pub fn set_peer_generating(&mut self, who: &PeerId) {
+		self.peers.set_generating(who);
+	}
+
+	pub fn set_peer_complete(&mut self, who: &PeerId) {
+		self.peers.set_complete(who);
 	}
 }
 
@@ -94,7 +108,6 @@ impl<Block: BlockT> GossipValidator<Block> {
 		let local_peer_id = &inner.local_peer_id;
 		for (peer_id, _) in inner.peers.iter() {
 			if peer_id != local_peer_id {
-				println!("broadcast to {:?}", peer_id);
 				context.send_message(peer_id, msg.clone())
 			}
 		}
@@ -149,16 +162,8 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 	fn message_allowed<'a>(
 		&'a self,
 	) -> Box<dyn FnMut(&PeerId, MessageIntent, &Block::Hash, &[u8]) -> bool + 'a> {
-		let (inner, do_rebroadcast) = {
-			use parking_lot::RwLockWriteGuard;
-
-			let mut inner = self.inner.write();
-
-			let now = Instant::now();
-			let do_rebroadcast = false;
-			// downgrade to read-lock.
-			(RwLockWriteGuard::downgrade(inner), do_rebroadcast)
-		};
+		// rebroadcasted message
+		let inner = self.inner.read();
 
 		Box::new(move |who, intent, topic, mut data| {
 			let gossip_msg = GossipMessage::decode(&mut data);
@@ -167,7 +172,10 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 					"In `message_allowed` inner: {:?}, msg: {:?}",
 					inner, gossip_msg
 				);
-				return true;
+				match gossip_msg {
+					GossipMessage::Message(Message::ConfirmPeers(_)) => return true,
+					_ => return false,
+				}
 			}
 			false
 		})
@@ -177,22 +185,21 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 		let inner = self.inner.read();
 
 		Box::new(move |topic, mut data| {
-			println!("In `message_expired`");
 			let gossip_msg = GossipMessage::decode(&mut data);
 			if let Ok(gossip_msg) = gossip_msg {
+				println!("In `message_expired` msg: {:?}", gossip_msg);
+
 				match gossip_msg {
-					GossipMessage::Message(msg) => match msg {
-						Message::ConfirmPeers(_) => {
-							if inner.config.players as usize == inner.peers.len()
-								&& inner.local_peer_info.state != PeerState::AwaitingPeers
-							{
-								return true;
-							} else {
-								return false;
-							}
+					GossipMessage::Message(Message::ConfirmPeers(_)) => {
+						if inner.config.players as usize == inner.peers.len()
+							&& inner.local_peer_info.state != PeerState::AwaitingPeers
+						{
+							return true;
+						} else {
+							return false;
 						}
-						_ => return false,
-					},
+					}
+					_ => return false,
 				}
 			}
 			true
