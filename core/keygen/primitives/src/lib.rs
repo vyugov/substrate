@@ -3,10 +3,7 @@
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 
-use hbbft::{
-	crypto::{PublicKey as HBPublicKey, SecretKey, Signature, PK_SIZE},
-	sync_key_gen::{Ack, AckOutcome, Part, PartOutcome, SyncKeyGen},
-};
+use hbbft::crypto::{PublicKey as HBPublicKey, SecretKey, Signature, PK_SIZE};
 
 use client::decl_runtime_apis;
 use codec::{Codec, Decode, Encode, Error as CodecError, Input};

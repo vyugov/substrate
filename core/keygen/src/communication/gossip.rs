@@ -2,7 +2,7 @@ use codec::{Decode, Encode};
 use futures::prelude::*;
 use futures::sync::mpsc;
 use hbbft_primitives::AuthorityId;
-use log::{debug, error, trace, warn};
+use log::{debug, error, info, trace, warn};
 use network::consensus_gossip::{self as network_gossip, MessageIntent, ValidatorContext};
 use network::{config::Roles, PeerId};
 use serde::{Deserialize, Serialize};
@@ -46,17 +46,20 @@ impl Inner {
 			peers,
 		}
 	}
-
-	fn get_peer_index(&self, who: &PeerId) -> usize {
-		self.peers.get_position(who).unwrap()
-	}
-
 	fn add_peer(&mut self, who: PeerId) {
 		self.peers.add(who);
 	}
 
 	fn del_peer(&mut self, who: &PeerId) {
 		self.peers.del(who);
+	}
+
+	pub fn get_local_index(&self) -> usize {
+		self.get_peer_index(&self.local_id())
+	}
+
+	pub fn get_peer_index(&self, who: &PeerId) -> usize {
+		self.peers.get_position(who).unwrap()
 	}
 
 	pub fn local_id(&self) -> PeerId {
@@ -112,6 +115,18 @@ impl<Block: BlockT> GossipValidator<Block> {
 			}
 		}
 	}
+
+	pub fn start_peer_confirmation(
+		&self,
+		context: &mut dyn ValidatorContext<Block>,
+		sender_index: u16,
+		peers_hash: u64,
+	) {
+		info!("Start peer confirmation");
+		let confirm_peers_msg = ConfirmPeersMessage::Confirming(sender_index, peers_hash);
+		let msg = Message::ConfirmPeers(confirm_peers_msg);
+		self.broadcast(context, GossipMessage::Message(msg).encode());
+	}
 }
 
 impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> {
@@ -127,17 +142,11 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 			// may need to handle ">" case
 			let peers_hash = inner.peers.get_hash();
 			let from_index = inner.peers.get_position(&inner.local_peer_id).unwrap() as u16;
-			let confirm_peers_msg = ConfirmPeersMessage::Confirming(from_index, peers_hash);
-			let msg = Message::ConfirmPeers(confirm_peers_msg);
-			self.broadcast(context, GossipMessage::Message(msg).encode());
-			// let topic = string_topic::<Block>("hash");
-			// context.broadcast_message(topic, GossipMessage::Message(msg).encode(), false);
-			println!("SHOULD START KEY GEN");
+			self.start_peer_confirmation(context, from_index, peers_hash);
 		}
 	}
 
 	fn peer_disconnected(&self, _context: &mut dyn ValidatorContext<Block>, who: &PeerId) {
-		println!("in peer disconnected");
 		{
 			let mut inner = self.inner.write();
 			inner.del_peer(who);

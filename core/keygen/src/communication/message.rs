@@ -12,13 +12,11 @@ pub type MessageWithSender = (Message, Option<PeerId>);
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct BroadCastMessage {
-	index: PeerIndex,
 	msg: u32,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct DecommitMessage {
-	index: PeerIndex,
 	msg: u32,
 }
 
@@ -26,6 +24,9 @@ pub struct DecommitMessage {
 pub enum KeyGenMessage {
 	BroadCast(BroadCastMessage),
 	Decommit(DecommitMessage),
+	VSS,
+	SecretShares,
+	Proof,
 }
 
 impl Encode for KeyGenMessage {
@@ -46,7 +47,7 @@ impl Decode for KeyGenMessage {
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum SignMessage {
-	Commit,
+	BroadCast,
 	Decommit,
 	Proof,
 }

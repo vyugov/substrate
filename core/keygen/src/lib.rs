@@ -13,7 +13,7 @@ use client::{
 };
 use codec::{Decode, Encode};
 use consensus_common::SelectChain;
-use futures::{future::Loop as FutureLoop, prelude::*, stream::Fuse, sync::mpsc};
+use futures::{prelude::*, stream::Fuse, sync::mpsc};
 use hbbft_primitives::HbbftApi;
 use inherents::InherentDataProviders;
 use log::{debug, error, info};
