@@ -2383,14 +2383,14 @@ dependencies = [
 [[package]]
 name = "multi-party-ecdsa"
 version = "0.1.0"
-source = "git+https://github.com/kigawas/multi-party-ecdsa?branch=fix-paillier#a15e119c3a65fc0e635094572c2c4be31f4355ff"
+source = "git+https://github.com/kigawas/multi-party-ecdsa?branch=keygen-clippy#8a7d1a5d501b6cc66170b17c88fd26506dcb5e56"
 dependencies = [
  "centipede 0.2.0 (git+https://github.com/KZen-networks/centipede)",
  "curv 0.1.0 (git+https://github.com/KZen-networks/curv)",
- "paillier 0.2.1-alpha.1 (git+https://github.com/ecies/rust-paillier?branch=remove-ring-fix-clippy)",
+ "paillier 0.2.1-alpha.1 (git+https://github.com/KZen-networks/rust-paillier)",
  "serde 1.0.99 (registry+https://github.com/rust-lang/crates.io-index)",
  "subtle 2.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "zk-paillier 0.1.0 (git+https://github.com/kigawas/zk-paillier?branch=fix-paillier)",
+ "zk-paillier 0.1.1 (git+https://github.com/KZen-networks/zk-paillier)",
 ]
 
 [[package]]
@@ -2858,7 +2858,7 @@ dependencies = [
 [[package]]
 name = "paillier"
 version = "0.2.1-alpha.1"
-source = "git+https://github.com/ecies/rust-paillier?branch=remove-ring-fix-clippy#4092de81603d8c3d5c2990e49320e7a6eb252f05"
+source = "git+https://github.com/KZen-networks/rust-paillier#03627f66a15cef35ee40ed2b3a2e5f679c18461a"
 dependencies = [
  "curv 0.1.0 (git+https://github.com/KZen-networks/curv)",
  "rayon 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -5096,7 +5096,7 @@ dependencies = [
  "futures-preview 0.3.0-alpha.17 (registry+https://github.com/rust-lang/crates.io-index)",
  "hbbft 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
- "multi-party-ecdsa 0.1.0 (git+https://github.com/kigawas/multi-party-ecdsa?branch=fix-paillier)",
+ "multi-party-ecdsa 0.1.0 (git+https://github.com/kigawas/multi-party-ecdsa?branch=keygen-clippy)",
  "parity-multihash 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "parity-scale-codec 1.0.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "parking_lot 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -6646,13 +6646,13 @@ dependencies = [
 
 [[package]]
 name = "zk-paillier"
-version = "0.1.0"
-source = "git+https://github.com/kigawas/zk-paillier?branch=fix-paillier#92f01d903228608dfbc763fb79fcd52e6b864dc5"
+version = "0.1.1"
+source = "git+https://github.com/KZen-networks/zk-paillier#24c522a239de04366c0ebf08d703e16b67edc8ef"
 dependencies = [
  "bit-vec 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "curv 0.1.0 (git+https://github.com/KZen-networks/curv)",
  "hex 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "paillier 0.2.1-alpha.1 (git+https://github.com/ecies/rust-paillier?branch=remove-ring-fix-clippy)",
+ "paillier 0.2.1-alpha.1 (git+https://github.com/KZen-networks/rust-paillier)",
  "rand 0.6.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "rayon 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rust-crypto 0.2.36 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -6904,7 +6904,7 @@ dependencies = [
 "checksum mio-extras 2.0.5 (registry+https://github.com/rust-lang/crates.io-index)" = "46e73a04c2fa6250b8d802134d56d554a9ec2922bf977777c805ea5def61ce40"
 "checksum mio-uds 0.6.7 (registry+https://github.com/rust-lang/crates.io-index)" = "966257a94e196b11bb43aca423754d87429960a768de9414f3691d6957abf125"
 "checksum miow 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "8c1f2f3b1cf331de6896aabf6e9d55dca90356cc9960cca7eaaf408a355ae919"
-"checksum multi-party-ecdsa 0.1.0 (git+https://github.com/kigawas/multi-party-ecdsa?branch=fix-paillier)" = "<none>"
+"checksum multi-party-ecdsa 0.1.0 (git+https://github.com/kigawas/multi-party-ecdsa?branch=keygen-clippy)" = "<none>"
 "checksum multistream-select 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)" = "e8f3cb4c93f2d79811fc11fa01faab99d8b7b8cbe024b602c27434ff2b08a59d"
 "checksum names 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)" = "ef320dab323286b50fb5cdda23f61c796a72a89998ab565ca32525c5c556f2da"
 "checksum native-tls 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)" = "4b2df1a4c22fd44a62147fd8f13dd0f95c9d8ca7b2610299b2a2f9cf8964274e"
@@ -6927,7 +6927,7 @@ dependencies = [
 "checksum output_vt100 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "53cdc5b785b7a58c5aad8216b3dfa114df64b0b06ae6e1501cef91df2fbdf8f9"
 "checksum owning_ref 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)" = "cdf84f41639e037b484f93433aa3897863b561ed65c6e59c7073d7c561710f37"
 "checksum owning_ref 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)" = "49a4b8ea2179e6a2e27411d3bca09ca6dd630821cf6894c6c7c8467a8ee7ef13"
-"checksum paillier 0.2.1-alpha.1 (git+https://github.com/ecies/rust-paillier?branch=remove-ring-fix-clippy)" = "<none>"
+"checksum paillier 0.2.1-alpha.1 (git+https://github.com/KZen-networks/rust-paillier)" = "<none>"
 "checksum pairing 0.14.2 (registry+https://github.com/rust-lang/crates.io-index)" = "ceda21136251c6d5a422d3d798d8ac22515a6e8d3521bb60c59a8349d36d0d57"
 "checksum parity-bytes 0.1.0 (git+https://github.com/paritytech/parity-common?rev=b0317f649ab2c665b7987b8475878fc4d2e1f81d)" = "<none>"
 "checksum parity-multiaddr 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)" = "045b3c7af871285146300da35b1932bb6e4639b66c7c98e85d06a32cbc4e8fa7"
@@ -7166,4 +7166,4 @@ dependencies = [
 "checksum zeroize 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)" = "6c37858ebbf3c38907c01c2d93e53f6fed489f44b16999be3b6f86bf0610ca10"
 "checksum zeroize 0.9.3 (registry+https://github.com/rust-lang/crates.io-index)" = "45af6a010d13e4cf5b54c94ba5a2b2eba5596b9e46bf5875612d332a1f2b3f86"
 "checksum zeroize_derive 0.9.3 (registry+https://github.com/rust-lang/crates.io-index)" = "080616bd0e31f36095288bb0acdf1f78ef02c2fa15527d7e993f2a6c7591643e"
-"checksum zk-paillier 0.1.0 (git+https://github.com/kigawas/zk-paillier?branch=fix-paillier)" = "<none>"
+"checksum zk-paillier 0.1.1 (git+https://github.com/KZen-networks/zk-paillier)" = "<none>"
