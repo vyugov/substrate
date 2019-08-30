@@ -1,29 +1,25 @@
 use bincode;
 use codec::{Decode, Encode, Error as CodecError, Input};
+
 use rand::rngs::{OsRng, StdRng};
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+pub use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{
+	KeyGenBroadcastMessage1 as KeyGenCommit, KeyGenDecommitMessage1 as KeyGenDecommit,
+};
 
 use network::PeerId;
 
 type PeerIndex = u16;
 
 pub type MessageWithSender = (Message, Option<PeerId>);
+pub type MessageWithReceiver = (Message, Option<PeerId>);
 
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct BroadCastMessage {
-	msg: u32,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct DecommitMessage {
-	msg: u32,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum KeyGenMessage {
-	BroadCast(BroadCastMessage),
-	Decommit(DecommitMessage),
+	Commit(KeyGenCommit),
+	Decommit(KeyGenDecommit),
 	VSS,
 	SecretShares,
 	Proof,
@@ -45,7 +41,7 @@ impl Decode for KeyGenMessage {
 	}
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum SignMessage {
 	BroadCast,
 	Decommit,
@@ -68,13 +64,13 @@ impl Decode for SignMessage {
 	}
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Encode, Decode)]
+#[derive(Clone, Debug, Serialize, Deserialize, Encode, Decode)]
 pub enum ConfirmPeersMessage {
 	Confirming(u16, u64), // from_index, hash
 	Confirmed(String),
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Encode, Decode)]
+#[derive(Clone, Debug, Serialize, Deserialize, Encode, Decode)]
 pub enum Message {
 	ConfirmPeers(ConfirmPeersMessage),
 	KeyGen(KeyGenMessage),
@@ -88,10 +84,7 @@ mod tests {
 	use std::collections::BTreeMap;
 	#[test]
 	fn test_message_encode_decode() {
-		let kgm = KeyGenMessage::BroadCast {
-			index: 0u32,
-			msg: 1u32,
-		};
+		let kgm = KeyGenMessage::VSS;
 		let encoded: Vec<u8> = kgm.encode();
 		let decoded = KeyGenMessage::decode(&mut encoded.as_slice()).unwrap();
 		assert_eq!(kgm, decoded);

@@ -1,29 +1,24 @@
-use std::{
-	collections::VecDeque,
-	fmt::Debug,
-	marker::PhantomData,
-	sync::Arc,
-	time::{Duration, Instant},
-};
+use std::{collections::VecDeque, fmt::Debug, marker::PhantomData, sync::Arc};
 
-use client::blockchain::HeaderBackend;
+use codec::{Decode, Encode};
+use futures::prelude::*;
+use log::{debug, error, info, warn};
+use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{Keys, Parameters};
+use tokio_executor::DefaultExecutor;
+use tokio_timer::Interval;
+
 use client::{
 	backend::Backend, error::Error as ClientError, error::Result as ClientResult, BlockchainEvents,
 	CallExecutor, Client,
 };
-use codec::{Decode, Encode};
 use consensus_common::SelectChain;
-use futures::{future::Loop as FutureLoop, prelude::*, stream::Fuse, sync::mpsc};
 use hbbft_primitives::HbbftApi;
 use inherents::InherentDataProviders;
-use log::{debug, error, info, warn};
 use network::PeerId;
 use primitives::{Blake2Hasher, H256};
 use sr_primitives::generic::BlockId;
 use sr_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
 use substrate_telemetry::{telemetry, CONSENSUS_DEBUG, CONSENSUS_INFO, CONSENSUS_WARN};
-use tokio_executor::DefaultExecutor;
-use tokio_timer::Interval;
 
 use super::{
 	ConfirmPeersMessage, Environment, GossipMessage, KeyGenMessage, Message, MessageWithSender,
@@ -122,21 +117,31 @@ where
 					sender.clone(),
 				));
 			}
-			Message::ConfirmPeers(ConfirmPeersMessage::Confirmed(_)) => {
+			Message::ConfirmPeers(ConfirmPeersMessage::Confirmed(sender_string_id)) => {
 				println!("Received confirmed hash");
 				let sender = sender.clone().unwrap();
+
+				assert_eq!(sender.clone().to_base58(), *sender_string_id);
 
 				let mut state = self.env.state.write();
 				state.confirmations += 1;
 
-				{
-					let mut inner = self.env.bridge.validator.inner.write();
-					inner.set_peer_generating(&sender);
-				}
+				let mut inner = self.env.bridge.validator.inner.write();
+				inner.set_peer_generating(&sender);
 
 				if state.confirmations == self.env.config.players - 1 {
-					let mut inner = self.env.bridge.validator.inner.write();
 					inner.set_local_generating();
+					let current_index = inner.get_local_index();
+					let key = Keys::create(current_index);
+					let (commit, decommit) = key.phase1_broadcast_phase3_proof_of_correct_key();
+					state.local_key = Some(key);
+
+					let (commit_msg, decommit_msg) = (
+						KeyGenMessage::Commit(commit),
+						KeyGenMessage::Decommit(decommit),
+					);
+					self.global_out.push((Message::KeyGen(commit_msg), None));
+					self.global_out.push((Message::KeyGen(decommit_msg), None));
 				}
 			}
 			Message::KeyGen(_) => {}
@@ -168,8 +173,9 @@ where
 		// send messages
 		self.global_out.poll()?;
 		println!(
-			"signer polling {:?}",
-			self.env.bridge.validator.inner.read()
+			"signer polling gossip inner: {:?}, env state: {:?}",
+			self.env.bridge.validator.inner.read(),
+			self.env.state.read()
 		);
 		Ok(Async::NotReady)
 	}

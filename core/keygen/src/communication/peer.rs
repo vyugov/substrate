@@ -73,6 +73,10 @@ impl Peers {
 		self.map.iter()
 	}
 
+	pub fn keys(&self) -> impl Iterator<Item = &PeerId> {
+		self.map.keys()
+	}
+
 	fn set_state(&mut self, who: &PeerId, state: PeerState) {
 		let peer = self.map.get_mut(who).expect("Peer not found!");
 		peer.state = state;

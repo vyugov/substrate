@@ -19,7 +19,10 @@ pub mod gossip;
 pub mod message;
 mod peer;
 
-use message::{ConfirmPeersMessage, KeyGenMessage, Message, MessageWithSender, SignMessage};
+use message::{
+	ConfirmPeersMessage, KeyGenMessage, Message, MessageWithReceiver, MessageWithSender,
+	SignMessage,
+};
 
 pub struct NetworkStream {
 	inner: Option<mpsc::UnboundedReceiver<network_gossip::TopicNotification>>,
@@ -162,21 +165,46 @@ struct MessageSender<Block: BlockT, N: Network<Block>> {
 	validator: Arc<GossipValidator<Block>>,
 }
 
-impl<Block: BlockT, N: Network<Block>> Sink for MessageSender<Block, N> {
-	type SinkItem = MessageWithSender;
+impl<Block, N> MessageSender<Block, N>
+where
+	Block: BlockT,
+	N: Network<Block>,
+{
+	fn broadcast(&self, msg: Message) {
+		let raw_msg = GossipMessage::Message(msg).encode();
+		let inner = self.validator.inner.read();
+		let peers = inner.get_peers();
+		self.network.send_message(peers, raw_msg.clone());
+	}
+
+	fn send_message(&self, target: PeerId, msg: Message) {
+		let raw_msg = GossipMessage::Message(msg).encode();
+		self.network.send_message(vec![target], raw_msg);
+	}
+}
+
+impl<Block, N> Sink for MessageSender<Block, N>
+where
+	Block: BlockT,
+	N: Network<Block>,
+{
+	type SinkItem = MessageWithReceiver;
 	type SinkError = Error;
 
-	fn start_send(
-		&mut self,
-		msg_with_sender: Self::SinkItem,
-	) -> StartSend<Self::SinkItem, Self::SinkError> {
-		let (msg, sender) = msg_with_sender;
+	fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
+		let (msg, receiver_opt) = item;
+		let original_msg = msg.clone();
 		match msg {
 			Message::ConfirmPeers(cpm) => {
-				info!("MessageSender::start_send send to {:?}", sender);
-				let receiver = vec![sender.unwrap()];
-				let gossip_msg = GossipMessage::Message(Message::ConfirmPeers(cpm));
-				self.network.send_message(receiver, gossip_msg.encode());
+				self.send_message(receiver_opt.unwrap(), Message::ConfirmPeers(cpm));
+			}
+			Message::KeyGen(KeyGenMessage::Commit(commit)) => {
+				println!("commit {:?}", commit);
+				self.broadcast(original_msg);
+			}
+			Message::KeyGen(KeyGenMessage::Decommit(decommit)) => {
+				println!("decommit {:?}", decommit);
+				self.broadcast(original_msg);
 			}
 			_ => {}
 		}
@@ -210,7 +238,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 		&self,
 	) -> (
 		impl Stream<Item = MessageWithSender, Error = Error>,
-		impl Sink<SinkItem = MessageWithSender, SinkError = Error>,
+		impl Sink<SinkItem = MessageWithReceiver, SinkError = Error>,
 	) {
 		let topic = string_topic::<B>("hash");
 

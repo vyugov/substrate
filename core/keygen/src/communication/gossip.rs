@@ -15,7 +15,9 @@ use std::{
 use substrate_telemetry::{telemetry, CONSENSUS_DEBUG};
 
 use super::{
-	message::{ConfirmPeersMessage, KeyGenMessage, Message, SignMessage},
+	message::{
+		ConfirmPeersMessage, KeyGenCommit, KeyGenDecommit, KeyGenMessage, Message, SignMessage,
+	},
 	peer::{PeerInfo, PeerState, Peers},
 	string_topic,
 };
@@ -52,6 +54,15 @@ impl Inner {
 
 	fn del_peer(&mut self, who: &PeerId) {
 		self.peers.del(who);
+	}
+
+	pub fn get_peers(&self) -> Vec<PeerId> {
+		let local_id = &self.local_peer_id;
+		self.peers
+			.keys()
+			.filter(|&pid| pid != local_id)
+			.map(|x| x.clone())
+			.collect()
 	}
 
 	pub fn get_local_index(&self) -> usize {
@@ -123,10 +134,13 @@ impl<Block: BlockT> GossipValidator<Block> {
 		peers_hash: u64,
 	) {
 		info!("Start peer confirmation");
-		let confirm_peers_msg = ConfirmPeersMessage::Confirming(sender_index, peers_hash);
-		let msg = Message::ConfirmPeers(confirm_peers_msg);
+		let msg = Message::ConfirmPeers(ConfirmPeersMessage::Confirming(sender_index, peers_hash));
 		self.broadcast(context, GossipMessage::Message(msg).encode());
 	}
+
+	pub fn start_key_generation(&self) {}
+
+	pub fn start_signature_generation(&self) {}
 }
 
 impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> {

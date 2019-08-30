@@ -6,28 +6,27 @@ use std::{
 	time::{Duration, Instant},
 };
 
+use codec::{Decode, Encode};
+use futures::{prelude::*, stream::Fuse, sync::mpsc};
+use log::{debug, error, info};
+use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{Keys, Parameters};
+use parking_lot::RwLock;
+use tokio_executor::DefaultExecutor;
+use tokio_timer::Interval;
+
 use client::blockchain::HeaderBackend;
 use client::{
 	backend::Backend, error::Error as ClientError, error::Result as ClientResult, BlockchainEvents,
 	CallExecutor, Client,
 };
-use codec::{Decode, Encode};
 use consensus_common::SelectChain;
-use futures::{prelude::*, stream::Fuse, sync::mpsc};
 use hbbft_primitives::HbbftApi;
 use inherents::InherentDataProviders;
-use log::{debug, error, info};
 use network::{self, PeerId};
-use parking_lot::RwLock;
 use primitives::{Blake2Hasher, H256};
 use sr_primitives::generic::BlockId;
 use sr_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
 use substrate_telemetry::{telemetry, CONSENSUS_DEBUG, CONSENSUS_INFO, CONSENSUS_WARN};
-use tokio_executor::DefaultExecutor;
-use tokio_timer::Interval;
-
-#[cfg(test)]
-mod tests;
 
 mod communication;
 mod periodic_stream;
@@ -61,9 +60,10 @@ impl NodeConfig {
 	}
 }
 
+#[derive(Debug)]
 pub struct KeyGenState {
 	pub confirmations: Count,
-	pub local_key: Option<u64>,
+	pub local_key: Option<Keys>,
 }
 
 impl Default for KeyGenState {
