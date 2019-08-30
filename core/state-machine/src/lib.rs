@@ -21,6 +21,7 @@
 use std::{fmt, panic::UnwindSafe, result, marker::PhantomData};
 use std::borrow::Cow;
 use log::warn;
+use log::info;
 use hash_db::Hasher;
 use codec::{Decode, Encode};
 use primitives::{
@@ -423,6 +424,15 @@ impl<'a, F> From<&'a ExecutionManager<F>> for ExecutionStrategy {
 impl ExecutionStrategy {
 	/// Gets the corresponding manager for the execution strategy.
 	pub fn get_manager<E: std::fmt::Debug, R: Decode + Encode>(self) -> ExecutionManager<DefaultHandler<R, E>> {
+		//info!("EXES   {:?}",&self); 
+	/*	return     ExecutionManager::Both(|wasm_result, native_result| {
+				warn!(
+					"Consensus error between wasm {:?} and native {:?}. Using wasm.",
+					wasm_result,
+					native_result
+				);
+				native_result
+			});*/
 		match self {
 			ExecutionStrategy::AlwaysWasm => ExecutionManager::AlwaysWasm,
 			ExecutionStrategy::NativeWhenPossible => ExecutionManager::NativeWhenPossible,

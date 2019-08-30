@@ -64,7 +64,7 @@ use runtime_primitives::{generic::{self, BlockId}, Justification,ApplyError};
 use consensus_common::{evaluation};
 //mod aux_schema;
 use inherents::{ InherentIdentifier,  };
-mod communication;
+pub mod communication;
 use communication::NetworkBridge;
 use communication::QHB;
 use communication::TransactionSet;
@@ -311,6 +311,7 @@ pub struct Config {
 	pub public_key_set: Arc<PublicKeySetWrap>,
 	pub batch_size:u32,
     pub initial_validators: BTreeMap<PeerIdW, PublicKey>,
+    pub node_indices: BTreeMap<PeerIdW, usize>,
 }
 fn secret_share_from_string(st:&str) ->Result<SecretKeyShareWrap,Error>
 {
@@ -459,7 +460,41 @@ impl Config {
 							Ok(val) => val,
 							Err(_)  => return Err("public key binary invalid".to_string())
 							};
+							info!("JSON! {:?} {:?}",&peer,&pubkey.0);
+					//		let cpeer=peer.clone();
                       ret.insert(PeerIdW{0:peer},pubkey.0);
+
+					}
+
+				ret
+			},
+			_ =>return Err(  "Invalid initial_validators, should be object".to_string())
+
+		   },
+		 node_indices : match &spec["node_indices"]
+		   {
+            Object(dict) => {
+				let mut ret=BTreeMap::<PeerIdW, usize>::new();
+						for (k,v) in dict.iter()
+					{
+						let peer=match PeerId::from_str(k)
+						   {
+							   Ok(val) => val,
+							   Err(_) => return Err(  "Invalid PeerId".to_string()) 
+						   };
+						 let numb=  match &v
+		   {
+			   Number(x) => match x.as_u64() {Some(y)=> y as usize, None => return Err("Invalid num_validators 1".to_string())},
+               Value::String(st) => match st.parse::<usize>()
+			     {
+					 Ok(v) =>v,
+					 Err(_) => return Err("Invalid num_validators 2".to_string())
+				 },
+			   _ => return Err("Invalid num_validators 3".to_string())
+		   };
+						
+                      ret.insert(PeerIdW{0:peer},numb);
+
 					}
 
 				ret
@@ -761,7 +796,7 @@ RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
         cx: &mut futures03::task::Context
     ) -> Poll<Option<Self::Item>>
 	{
-		info!("BADgER! Polled stream!");
+		trace!("BADgER! Polled stream!");
      let pending_iterator = self.transaction_pool.ready();
 	  let batch:Vec<_>=pending_iterator.map(|a| a.data.encode()).collect();
 	  let pending_iterator = self.transaction_pool.ready();
@@ -955,12 +990,14 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
  		        // We don't check the API versions any further here since the dispatch compatibility
 		        // check should be enough. 
 		        // do this only once? 
-				for extrinsic in cclient.runtime_api()
+				let inh=cclient.runtime_api()
 					.inherent_extrinsics_with_context(
 						&parent_id,
 						ExecutionContext::BlockConstruction,
-						inherent_data
-					).unwrap()
+						inherent_data) ;
+				if let Ok(res) = inh
+					{
+				for extrinsic in res 
 				   {
 					match block_builder.push(extrinsic)
 					{
@@ -972,11 +1009,15 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 						}
 					}
 				   }
-
+				}
+				else
+				{
+             info!("Inherent panic {:?}",inh);
+				}
 		        // proceed with transactions
 				let mut is_first = true;
 				let mut skipped = 0;
-		        debug!("Attempting to push transactions from the batch.");
+		        info!("Attempting to push transactions from the batch. {}",batch.len());
 		     for  pending in batch.iter() {
 					let data: Result<<Block as BlockT>::Extrinsic,_> =Decode::decode(&mut pending.as_slice());
 					//   <Transaction<ExHash<A>,<Block as BlockT>::Extrinsic> as Decode>::decode(&mut pending.as_slice());
@@ -984,12 +1025,12 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 					{
 						Ok(val) => val,
 						Err(_) => {
-							debug!("Data decoding error");
+							info!("Data decoding error");
 							continue
 						}
 					};
 					//a.data.encode()
-					trace!("[{:?}] Pushing to the block.", pending);
+					info!("[{:?}] Pushing to the block.", pending);
 					match client::block_builder::BlockBuilder::push(&mut block_builder, data.clone()) {
 						Ok(()) => {
 							debug!("[{:?}] bytes Pushed to the block.", pending.len());
@@ -1004,8 +1045,8 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 								let block = match block_builder.bake()
 								{
 									Ok(val) => val,
-									Err(_) => {
-										warn!("Block baking error");
+									Err(e) => {
+										warn!("Block baking error {:?}",e);
 										return future::ready(());
 									}
 								};
@@ -1088,7 +1129,88 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 		        }
 
 			   
+           if !is_first
+		   {
 
+			   info!("BADger: importing block");
+			  	{
+					  
+					  debug!("Block is done, proceed with proposing.");
+								let block = match block_builder.bake()
+								{
+									Ok(val) => val,
+									Err(e ) => {
+										warn!("Block baking error {:?}",e);
+										return future::ready(());
+									}
+								};
+								info!("Prepared block for proposing at {} [hash: {:?}; parent_hash: {}; extrinsics: [{}]]",
+									block.header().number(),
+									<Block as BlockT>::Hash::from(block.header().hash()),
+									block.header().parent_hash(),
+									block.extrinsics()
+										.iter()
+										.map(|xt| format!("{}", BlakeTwo256::hash_of(xt)))
+										.collect::<Vec<_>>()
+										.join(", ")
+								);
+								telemetry!(CONSENSUS_INFO; "prepared_block_for_proposing";
+									"number" => ?block.header().number(),
+									"hash" => ?<Block as BlockT>::Hash::from(block.header().hash()),
+									);
+								if Decode::decode(&mut block.encode().as_slice()).as_ref() != Ok(&block) 
+								{
+									error!("Failed to verify block encoding/decoding");
+								}
+
+								if let Err(err) = evaluation::evaluate_initial(&block, &parent_hash, pnumber) {
+									error!("Failed to evaluate authored block: {:?}", err);
+								}
+								let (header, body) = block.deconstruct();
+
+								let header_num = header.number().clone();
+								let mut parent_hash = header.parent_hash().clone();
+
+								// sign the pre-sealed hash of the block and then
+								// add it to a digest item.
+								let header_hash = header.hash();
+
+								let import_block: BlockImportParams<Block> = BlockImportParams {
+									origin: BlockOrigin::Own,
+									header,
+									justification: None,
+									post_digests: vec![],
+									body: Some(body),
+									finalized: true,
+									auxiliary: Vec::new(),
+									fork_choice: ForkChoiceStrategy::LongestChain,
+								};
+
+								info!("Pre-sealed block for proposal at {}. Hash now {:?}, previously {:?}.",
+										header_num,
+										import_block.post_header().hash(),
+										header_hash
+								);
+								telemetry!(CONSENSUS_INFO; "badger.pre_sealed_block";
+									"header_num" => ?header_num,
+									"hash_now" => ?import_block.post_header().hash(),
+									"hash_previously" => ?header_hash
+								);
+									parent_hash = import_block.post_header().hash();
+									pnumber = *import_block.post_header().number();
+									parent_id = BlockId::hash(parent_hash);
+									// go on to next block
+									{
+									let eh=import_block.header.parent_hash().clone();
+									if let Err(e) = cblock_import.lock().import_block(import_block, Default::default()) {
+						warn!(target: "badger", "Error with block built on {:?}: {:?}",eh, e);
+						telemetry!(CONSENSUS_WARN; "mushroom.err_with_block_built_on";
+							"hash" => ?eh, "err" => ?e);
+									}
+									}
+				  }
+
+		   }
 			
 		 future::ready(())
 		  }) ;

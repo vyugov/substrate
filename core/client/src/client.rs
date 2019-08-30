@@ -108,6 +108,7 @@ impl Default for ExecutionStrategies {
 			syncing: ExecutionStrategy::NativeElseWasm,
 			importing: ExecutionStrategy::NativeElseWasm,
 			block_construction: ExecutionStrategy::AlwaysWasm,
+		//	block_construction: ExecutionStrategy::NativeWhenPossible,
 			offchain_worker: ExecutionStrategy::NativeWhenPossible,
 			other: ExecutionStrategy::NativeElseWasm,
 		}
@@ -1030,9 +1031,11 @@ impl<B, E, Block, RA> Client<B, E, Block, RA> where
 			Some(transaction_state) => {
 				let mut overlay = Default::default();
 				let get_execution_manager = |execution_strategy: ExecutionStrategy| {
+					info!("EXECUTION: {:?}",execution_strategy);
 					match execution_strategy {
 						ExecutionStrategy::NativeElseWasm => ExecutionManager::NativeElseWasm,
 						ExecutionStrategy::AlwaysWasm => ExecutionManager::AlwaysWasm,
+					//	ExecutionStrategy::AlwaysWasm => ExecutionManager::NativeWhenPossible,
 						ExecutionStrategy::NativeWhenPossible => ExecutionManager::NativeWhenPossible,
 						ExecutionStrategy::Both => ExecutionManager::Both(|wasm_result, native_result| {
 							let header = import_headers.post();
@@ -1472,7 +1475,7 @@ impl<B, E, Block, RA> CallRuntimeAt<Block> for Client<B, E, Block, RA> where
 		recorder: &Option<Rc<RefCell<ProofRecorder<Block>>>>,
 	) -> error::Result<NativeOrEncoded<R>> {
 		let enable_keystore = context.enable_keystore();
-
+        // info!("CONSTRUCT {:?}",context);
 		let manager = match context {
 			ExecutionContext::BlockConstruction =>
 				self.execution_strategies.block_construction.get_manager(),

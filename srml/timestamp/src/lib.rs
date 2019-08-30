@@ -241,11 +241,11 @@ decl_module! {
 		#[weight = SimpleDispatchInfo::FixedOperational(10_000)]
 		fn set(origin, #[compact] now: T::Moment) {
 			ensure_none(origin)?;
-			assert!(!<Self as Store>::DidUpdate::exists(), "Timestamp must be updated only once in the block");
-			assert!(
-				Self::now().is_zero() || now >= Self::now() + T::MinimumPeriod::get(),
-				"Timestamp must increment by at least <MinimumPeriod> between sequential blocks"
-			);
+			//assert!(!<Self as Store>::DidUpdate::exists(), "Timestamp must be updated only once in the block");
+			//assert!(
+		//		Self::now().is_zero() || now >= Self::now() + T::MinimumPeriod::get(),
+		//		"Timestamp must increment by at least <MinimumPeriod> between sequential blocks"
+		//	);
 			<Self as Store>::Now::put(now);
 			<Self as Store>::DidUpdate::put(true);
 
@@ -253,7 +253,7 @@ decl_module! {
 		}
 
 		fn on_finalize() {
-			assert!(<Self as Store>::DidUpdate::take(), "Timestamp must be updated once in the block");
+			//assert!(<Self as Store>::DidUpdate::take(), "Timestamp must be updated once in the block");
 		}
 	}
 }
@@ -285,9 +285,18 @@ impl<T: Trait> Module<T> {
 }
 
 fn extract_inherent_data(data: &InherentData) -> Result<InherentType, RuntimeString> {
-	data.get_data::<InherentType>(&INHERENT_IDENTIFIER)
+	// lock out for now?
+	/*data.get_data::<InherentType>(&INHERENT_IDENTIFIER)
 		.map_err(|_| RuntimeString::from("Invalid timestamp inherent data encoding."))?
-		.ok_or_else(|| "Timestamp inherent data is not provided.".into())
+		.ok_or_else(|| "Timestamp inherent data is not provided.".into()) */
+		match data.get_data::<InherentType>(&INHERENT_IDENTIFIER)
+		{
+			Ok(Some(val) )=> Ok(val),
+			Ok(None) => Ok(0),
+			Err(_) => Ok(0)
+		}
+		//.map_err(|_| RuntimeString::from("Invalid timestamp inherent data encoding."))?
+		//.ok_or_else(|| "Timestamp inherent data is not provided.".into()) 
 }
 
 impl<T: Trait> ProvideInherent for Module<T> {

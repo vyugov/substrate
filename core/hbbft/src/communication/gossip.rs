@@ -111,6 +111,7 @@ const KEEP_RECENT_ROUNDS: usize = 3;
 
 const BADGER_TOPIC: &str = "itsasnake";
 
+use crate::communication::PeerIdW;
 /// HB gossip message type.
 /// This is the root type that gets encoded and sent on the network.
 #[derive(Debug, Encode, Decode)]
@@ -118,16 +119,24 @@ pub enum GossipMessage {
 	/// Grandpa message with round and set info.
 	Greeting(GreetingMessage),
 	/// Raw Badger data
-	BadgerData(Vec<u8>),
+	BadgerData(BadgeredMessage),
 
 	RequestGreeting,
 
 }
 
 
+
+#[derive(Debug, Encode, Decode)]
+pub struct BadgeredMessage {
+	pub uid:u64,
+	pub data:Vec<u8>,
+	pub originator: PeerIdW,
+}
+
 #[derive(Debug, Encode, Decode)]
 pub struct GreetingMessage {
-
+    pub my_pubshare: Option<AuthorityId>,
 	/// the badger ID of the peer
 	pub myId: AuthorityId,
 	/// Signature to verify id
@@ -177,7 +186,11 @@ impl Peers {
 		Peers { inner: HashMap::new() }
 	}
 	pub fn new_peer(&mut self, who: PeerId) {
-		self.inner.insert(who, PeerInfo::new());
+		match self.inner.get(&who)
+		{
+			Some(_) => {},
+			None => { self.inner.insert(who, PeerInfo::new());}
+		}	
 	}
     pub fn peer_list(&self) ->Vec<PeerId>
 	{

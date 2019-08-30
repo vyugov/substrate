@@ -239,6 +239,7 @@ where
 	{
 		let mut new_set = None;
 
+		return Ok(new_set);
 		for change in self.pending_forced_changes.iter()
 			.take_while(|c| c.effective_number() <= best_number) // to prevent iterating too far
 			.filter(|c| c.effective_number() == best_number)

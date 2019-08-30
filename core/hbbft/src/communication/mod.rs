@@ -26,6 +26,7 @@
 //! For instance, it is _impolite_ to send the same message more than once.
 //! In the future, there will be a fallback for allowing sending the same message
 //! under certain conditions that are used to un-stick the protocol.
+use hex_fmt::HexFmt;
 use network::consensus_gossip::ValidatorContext;
 use std::sync::Arc;
 use std::collections::{VecDeque};
@@ -72,6 +73,7 @@ use crate::Error;
 
 const REBROADCAST_AFTER: Duration = Duration::from_secs(60 * 5);
 
+use crate::communication::gossip::BadgeredMessage;
 
 #[cfg(test)]
 mod tests;
@@ -231,13 +233,18 @@ impl parity_codec::Decode for PeerIdW {
 		  Err(_) => return Err( "Error decoding field PeerIdW".into())
 		};
 	  let len:u64=Decode::decode(&mut blen.to_vec().as_slice()).unwrap();
+	 // info!(target:"DECODE","Length: {}",len);
 	  let mut mt:Vec<u8>= Vec::with_capacity(len as usize);
-
-	  match value.read(&mut mt)
-	  {
-		  Ok(_) => {},
-		  Err(_) => return Err( "Error decoding field PeerIdW".into())
-		}
+	  let mut mlen=len;
+     while mlen >0
+	 {
+		 match value.read_byte()
+		 {
+			 Ok(b) => mt.push(b),
+			 Err(e) => return Err(e)
+		 }
+		 mlen-=1;
+	 }
      let pw= match PeerId::from_bytes(mt)
 	 {
 		 Ok(res) => res,
@@ -450,6 +457,7 @@ fn register_peer_public_key(&mut self,who :&PeerId, auth:AuthorityId)
 
  fn is_authority(&self, who :&PeerId) -> bool
   {
+	  	info!("BaDGER!! IsAuth {:?}",who);
 	  let auth=self.peers.peer(who);
 	  match auth
 	  {
@@ -457,15 +465,18 @@ fn register_peer_public_key(&mut self,who :&PeerId, auth:AuthorityId)
 		  {
 			  if let Some(iid) =&info.id
 			  {
+				  info!("BaDGER!! SomeInfo {:?} {}",&iid,self.authorities.len());
+
 			   self.authorities.contains(&iid)
 			  }
 			  else
 			  {
+				  info!("BaDGER!! ZeroInfo {:?}",&info.id);
                 false
 			  }
 
 		  },
-           None => false
+           None => {	info!("BaDGER!! NoInfo {:?}",who); false }
 	  }  
   }
 }
@@ -485,7 +496,13 @@ where D::Message: serde::Serialize + DeserializeOwned
 		Some(wrap) => Some(wrap.0.clone()),
 		None => None
 	};
-	let ni=NetworkInfo::<D::NodeId>::new(PeerIdW{ 0: self_id.clone() },secr,config.public_key_set.0.clone(),config.node_id.1.clone(),config.initial_validators.clone());
+	let ni=NetworkInfo::<D::NodeId>::new_indices(PeerIdW{ 0: self_id.clone() },secr,config.public_key_set.0.clone(),config.node_id.1.clone(),config.initial_validators.clone(),config.node_indices.clone());
+	//let ni=NetworkInfo::<D::NodeId>::new(PeerIdW{ 0: self_id.clone() },secr,config.public_key_set.0.clone(),config.node_id.1.clone(),config.initial_validators.clone());
+	for (k,v) in ni.public_key_share_map().clone().into_iter()
+	{
+	info!("JSON+ {:?} {:?} ",&k,&v);
+	}
+
 	let peer_ids: Vec<_> = ni
             .all_ids()
             .filter(|&them| *them != PeerIdW{ 0: self_id.clone()} )
@@ -529,6 +546,7 @@ where D::Message: serde::Serialize + DeserializeOwned
 	 };
 	 	for (k,v) in config.initial_validators.clone()
 		 {
+			 info!("BaDGER!! Registering {:?} {:?}",&k.0,&v);
 			 node.register_peer_public_key(&k.0,PublicKeyWrap{0:v})
 		 }
 		 node 
@@ -536,7 +554,7 @@ where D::Message: serde::Serialize + DeserializeOwned
 
 	pub fn  handle_message(&mut self, who: &PeerIdW, msg:  D::Message) -> Result<(),&'static str>
 	{
-		debug!("BaDGER!! Handling message from {}",who.0);
+		info!("BaDGER!! Handling message from {} {:?}",who.0,&msg);
 		match   self.algo.handle_message(who, msg, &mut self.main_rng) 
 		{
 			Ok(step) => 
@@ -545,10 +563,12 @@ where D::Message: serde::Serialize + DeserializeOwned
             .messages
             .into_iter()
             .map(|mmsg| {
+				info!("BaDGER!! Hundling  {:?} ",&mmsg.message);
                 let ser_msg = bincode::serialize(&mmsg.message).expect("serialize");
                 (mmsg.target, ser_msg)
                 }).collect();
-		    self.outputs.extend(step.output.into_iter());	
+		    self.outputs.extend(step.output.into_iter());
+			 	info!("BaDGER!! OK message from {}, {} ",who.0,self.outputs.len() );
 			    for (target, message) in out_msgs 
 				{
                  self.out_queue.push_back(SourcedMessage {
@@ -573,8 +593,10 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
 	   fn flush_messages(&self,context: &mut dyn ValidatorContext<Block>)
    {
     let mut drain :Vec<_>;
+	let mut sid:PeerId;
 	{
 	let mut locked= self.inner.write();
+	sid=locked.id.clone();
 	info!("BaDGER!! Flushing {} messages",&locked.out_queue.len());
 	drain=locked.out_queue.drain(..).collect();
 	}
@@ -582,13 +604,26 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
 		
 		 for msg in drain
 		 {
-			 let vdata=GossipMessage::BadgerData(msg.message).encode();
+			 info!("Originator {:?} sid: {:?}",&sid,&msg.sender_id);	
+			 let uuid=OsRng::new().unwrap().gen::<u64>();
+				
+                info!("Sending with uid: {} {}",&uuid,HexFmt(&msg.message)); 
+			 let vdata=GossipMessage::BadgerData( BadgeredMessage{uid:uuid, originator: PeerIdW{0: sid.clone()} ,data:msg.message} ).encode();
+			 
 			 match &msg.target
 			 {
 				 LocalTarget::All  => 
 				 {
 					 info!("BaDGER!! All");
-					 context.broadcast_message(topic,vdata,true) 
+					 //context.broadcast_message(topic,vdata,true) 
+					  let mut inner = self.inner.write();
+					  for pid in inner.peers.peer_list().iter() {
+						let tmp=PeerIdW {0:pid.clone() } ;
+                        if tmp != msg.sender_id {
+							 info!("BaDGER!! Sending to {:?}",&pid);
+                            context.send_message(pid, vdata.clone());
+                        }
+                    }
 				 },
 				LocalTarget::Node(to_id) => 
 				  {
@@ -597,6 +632,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
 
 				  },
               LocalTarget::AllExcept(exclude) => {
+				  info!("BaDGER!! AllExcept  {}",exclude.len());
 				    let mut inner = self.inner.write();
                     for pid in inner.peers.peer_list().iter().filter(|n| !exclude.contains(&PeerIdW{0:(*n).clone()})) {
 						let tmp=PeerIdW {0:pid.clone() } ;
@@ -615,21 +651,34 @@ fn flush_message_net<N:Network<Block>>(&self,context: &N)
    {
   
 	let topic = badger_topic::<Block>(); 
+	let mut sid:PeerId;
 	   let mut drain :Vec<_>;
 		{
 	let mut locked= self.inner.write();
-	info!("BaDGER!! Flushing {} messages",&locked.out_queue.len());
+	sid=locked.id.clone();
+	info!("BaDGER!! Flushing {} messages_net",&locked.out_queue.len());
 	drain=locked.out_queue.drain(..).collect();
 	}   
 		 for msg in drain
 		 {
-			 let vdata=GossipMessage::BadgerData(msg.message).encode();
+			 let uuid=OsRng::new().unwrap().gen::<u64>();
+			 info!("Sending_ with uid: {} {}",&uuid,HexFmt(&msg.message)); 
+			 let vdata=GossipMessage::BadgerData( BadgeredMessage{ uid:uuid,originator: PeerIdW{0: sid.clone()} ,data:msg.message}).encode();
+			 
 			 match &msg.target
 			 {
 				 LocalTarget::All  => 
 				 {
 					  info!("BaDGER!! All_net");
-					 context.gossip_message(topic,vdata,true)
+					    let mut inner = self.inner.write();
+					  for pid in inner.peers.peer_list().iter() {
+						let tmp=PeerIdW {0:pid.clone() } ;
+                        if tmp != msg.sender_id {
+							 info!("BaDGER!! Sending to {:?}",&pid);
+                            context.send_message(vec![pid.clone()], vdata.clone());
+                        }
+					  }
+					 //context.gossip_message(topic,vdata,true)
 					 }
 					 , 
 				LocalTarget::Node(to_id) => 
@@ -690,6 +739,7 @@ fn flush_message_net<N:Network<Block>>(&self,context: &N)
              .messages
              .into_iter()
              .map(|mmsg| {
+				 info!("BaDGER!! Flushing {:?} ",&mmsg.message);
                 let ser_msg = bincode::serialize(&mmsg.message).expect("serialize");
                 (mmsg.target, ser_msg)
                 }).collect();
@@ -704,7 +754,7 @@ fn flush_message_net<N:Network<Block>>(&self,context: &N)
                    message,});
 				};
 
-				locked.outputs.len()>0
+				locked.out_queue.len()>0
 		   },
 		   Err(e) => return Err(Error::Badger(e.to_string()))
 	   }
@@ -731,9 +781,14 @@ fn flush_message_net<N:Network<Block>>(&self,context: &N)
 					Ok(GossipMessage::Greeting(msg))  =>
 					{
 						
+						
 						if  msg.myId.0.verify(&msg.mySig.0,msg.myId.0.to_bytes().to_vec())
 						 {
-							self.inner.write().register_peer_public_key(who,msg.myId);
+							 info!("BadGER: got Greeting {:?} {:?} {:?}",&who,&msg.myId,msg.my_pubshare);
+							 if let Some(share)=msg.my_pubshare
+							 {
+							//self.inner.write().register_peer_public_key(who,share);
+							 }
 							Action::Keep()
 						 } 
 						 else
@@ -743,25 +798,35 @@ fn flush_message_net<N:Network<Block>>(&self,context: &N)
 					},
 					Ok(GossipMessage::RequestGreeting) =>
 					{
+							info!("BadGER: got RequestGreeting");
 						let rd=self.inner.read();
-
-						let msrep=GreetingMessage { myId: PublicKeyWrap{0:rd.config.node_id.0.clone()},mySig: SignatureWrap { 0: rd.config.node_id.1.sign(rd.config.node_id.0.clone().to_bytes().to_vec())} } ;
+						let msrep=GreetingMessage { 
+							my_pubshare:  match rd.config.initial_validators.get(&PeerIdW{0: rd.id.clone()})
+							 {
+								 Some(val)=> Some( PublicKeyWrap{0: val.clone()} ),
+								 None =>None
+							 }, 
+							myId: PublicKeyWrap{0:rd.config.node_id.0.clone()},
+							mySig: SignatureWrap { 0: rd.config.node_id.1.sign(rd.config.node_id.0.clone().to_bytes().to_vec())} } ;
                     peer_reply = Some(GossipMessage::Greeting(msrep));
 					Action::ProcessAndDiscard()
 					},
 					Ok(GossipMessage::BadgerData(badger_msg)) => 
 					{
-						
+
+						info!("BadGER: got gossip message uid: {} {}",&badger_msg.uid,HexFmt(&badger_msg.data));
 					let mut locked=self.inner.write();
-					if locked.is_authority(who) 
+					if locked.is_authority(&badger_msg.originator.0) 
 					 {
-						if let Ok(msg) = bincode::deserialize::<<QHB as ConsensusProtocol>::Message>(&badger_msg)
+						 info!("BadGER: am authority");
+						if let Ok(msg) = bincode::deserialize::<<QHB as ConsensusProtocol>::Message>(&badger_msg.data)
 						{
-						match locked.handle_message(&PeerIdW{0:who.clone()} ,msg)
+						match locked.handle_message(&badger_msg.originator ,msg)
 						{
 							Ok(_) => 
 							{
                             //send is handled separately. trigger propose? or leave it for stream
+							info!("BadGER: decoded gossip message");
                             Action::ProcessAndDiscard() 
 							}
 							Err(e) =>
@@ -782,8 +847,8 @@ fn flush_message_net<N:Network<Block>>(&self,context: &N)
 					 }
 					},
 
-				Err(_) => {
-					debug!(target: "afg", "Error decoding message");
+				Err(e) => {
+					info!(target: "afg", "Error decoding message {:?}",e);
 					telemetry!(CONSENSUS_DEBUG; "afg.err_decoding_msg"; "" => "");
 
 					let len = std::cmp::min(i32::max_value() as usize, data.len()) as i32;
@@ -810,6 +875,11 @@ impl<Block: BlockT > network_gossip::Validator<Block> for BadgerGossipValidator<
 			inner.peers.new_peer(who.clone());
             GreetingMessage
 			{
+				my_pubshare:  match inner.config.initial_validators.get(&PeerIdW{0: inner.id.clone()})
+							 {
+								 Some(val)=> Some( PublicKeyWrap{0: val.clone()} ),
+								 None =>None
+							 },
 				myId: PublicKeyWrap{ 0 : inner.config.node_id.0},
 				mySig: SignatureWrap {0: inner.config.node_id.1.sign(inner.config.node_id.0.clone().to_bytes().to_vec())}
 			}
