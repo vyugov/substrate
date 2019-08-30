@@ -351,6 +351,14 @@ impl_runtime_apis! {
 			Vec::new()
 		}
 	}
+
+	impl hb_node_primitives::AccountNonceApi<Block> for Runtime {
+		fn account_nonce(account: AccountId) -> Index {
+			System::account_nonce(account)
+		}
+	}
+
+
     impl substrate_badger_rapi::HbbftApi<Block> for Runtime 
 	{
  fn do_nothing()

@@ -1,41 +1,28 @@
-// Copyright 2018-2019 Parity Technologies (UK) Ltd.
-// This file is part of Substrate.
-
-// Substrate is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-
-// Substrate is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-
-// You should have received a copy of the GNU General Public License
-// along with Substrate.  If not, see <http://www.gnu.org/licenses/>.
-
-//! Substrate CLI library.
 
 #![warn(missing_docs)]
 #![warn(unused_extern_crates)]
 
 pub use cli::error;
 pub mod chain_spec;
+#[macro_use]
 mod service;
 mod factory_impl;
+
+use inherents::InherentDataProviders;
 
 use tokio::prelude::Future;
 use tokio::runtime::{Builder as RuntimeBuilder, Runtime};
 pub use cli::{VersionInfo, IntoExit, NoCustom, SharedParams, ExecutionStrategyParam};
-use substrate_service::{ServiceFactory, Roles as ServiceRoles};
-use std::ops::Deref;
+use substrate_service::{AbstractService, Roles as ServiceRoles};
 use log::info;
 use structopt::{StructOpt, clap::App};
 use cli::{AugmentClap, GetLogFilter, parse_and_prepare, ParseAndPrepare};
 use crate::factory_impl::FactoryState;
 use transaction_factory::RuntimeAdapter;
 use client::ExecutionStrategies;
-
+use badger::badger_import_queue;
+ use badger_primitives::SignatureWrap;
+use badger_primitives::PublicKeyWrap;
 /// The chain specification option.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ChainSpec {
@@ -45,7 +32,7 @@ pub enum ChainSpec {
 	LocalTestnet,
 
 }
-
+use network::{config::DummyFinalityProofRequestBuilder};
 /// Custom subcommands.
 #[derive(Clone, Debug, StructOpt)]
 pub enum CustomSubcommands {
@@ -152,7 +139,8 @@ pub fn run<I, T, E>(args: I, exit: E, version: cli::VersionInfo) -> error::Resul
 	E: IntoExit,
 {
 	match parse_and_prepare::<CustomSubcommands, NoCustom, _>(&version, "substrate-node", args) {
-		ParseAndPrepare::Run(cmd) => cmd.run(load_spec, exit, |exit, _cli_args, _custom_args, config| {
+		ParseAndPrepare::Run(cmd) => cmd.run::<(), _, _, _, _>(load_spec, exit,
+		|exit, _cli_args, _custom_args, config| {
 			info!("{}", version.name);
 			info!("  version {}", config.full_version());
 			info!("  by Parity Technologies, 2017-2019");
@@ -164,23 +152,26 @@ pub fn run<I, T, E>(args: I, exit: E, version: cli::VersionInfo) -> error::Resul
 			match config.roles {
 				ServiceRoles::LIGHT => run_until_exit(
 					runtime,
-					service::Factory::new_light(config).map_err(|e| format!("{:?}", e))?,
+					service::new_light(config).map_err(|e| format!("{:?}", e))?,
 					exit
 				),
 				_ => run_until_exit(
 					runtime,
-					service::Factory::new_full(config).map_err(|e| format!("{:?}", e))?,
+					service::new_full(config).map_err(|e| format!("{:?}", e))?,
 					exit
 				),
 			}.map_err(|e| format!("{:?}", e))
 		}),
 		ParseAndPrepare::BuildSpec(cmd) => cmd.run(load_spec),
-		ParseAndPrepare::ExportBlocks(cmd) => cmd.run::<service::Factory, _, _>(load_spec, exit),
-		ParseAndPrepare::ImportBlocks(cmd) => cmd.run::<service::Factory, _, _>(load_spec, exit),
+		ParseAndPrepare::ExportBlocks(cmd) => cmd.run_with_builder::<(), _, _, _, _, _>(|config|
+			Ok(new_full_start!(config).0), load_spec, exit),
+		ParseAndPrepare::ImportBlocks(cmd) => cmd.run_with_builder::<(), _, _, _, _, _>(|config|
+			Ok(new_full_start!(config).0), load_spec, exit),
 		ParseAndPrepare::PurgeChain(cmd) => cmd.run(load_spec),
-		ParseAndPrepare::RevertChain(cmd) => cmd.run::<service::Factory, _>(load_spec),
+		ParseAndPrepare::RevertChain(cmd) => cmd.run_with_builder::<(), _, _, _, _>(|config|
+			Ok(new_full_start!(config).0), load_spec),
 		ParseAndPrepare::CustomCommand(CustomSubcommands::Factory(cli_args)) => {
-			let mut config = cli::create_config_with_db_path(
+			let mut config = cli::create_config_with_db_path::<(), _, _>(
 				load_spec,
 				&cli_args.shared_params,
 				&version,
@@ -202,9 +193,13 @@ pub fn run<I, T, E>(args: I, exit: E, version: cli::VersionInfo) -> error::Resul
 				cli_args.num,
 				cli_args.rounds,
 			);
-			transaction_factory::factory::<service::Factory, FactoryState<_>>(
+
+			let service_builder = new_full_start!(config).0;
+			transaction_factory::factory::<FactoryState<_>, _, _, _, _, _>(
 				factory_state,
-				config,
+				service_builder.client(),
+				service_builder.select_chain()
+					.expect("The select_chain is always initialized by new_full_start!; QED")
 			).map_err(|e| format!("Error in transaction factory: {}", e))?;
 
 			Ok(())
@@ -212,14 +207,13 @@ pub fn run<I, T, E>(args: I, exit: E, version: cli::VersionInfo) -> error::Resul
 	}
 }
 
-fn run_until_exit<T, C, E>(
+fn run_until_exit<T, E>(
 	mut runtime: Runtime,
 	service: T,
 	e: E,
-) -> error::Result<()> where
-	T: Deref<Target=substrate_service::Service<C>>,
-	T: Future<Item = (), Error = substrate_service::error::Error> + Send + 'static,
-	C: substrate_service::Components,
+) -> error::Result<()>
+where
+	T: AbstractService,
 	E: IntoExit,
 {
 	let (exit_send, exit) = exit_future::signal();

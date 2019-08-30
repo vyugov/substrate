@@ -18,6 +18,11 @@
 
 //! Service and ServiceFactory implementation. Specialized wrapper over substrate service.
 
+use substrate_service::{
+	AbstractService, ServiceBuilder, config::Configuration, error::{Error as ServiceError},
+};
+
+
 use std::sync::Arc;
 use std::time::Duration;
 use std::path::PathBuf;
@@ -35,19 +40,14 @@ use primitives::Pair;
 use futures::prelude::*;
 use hb_node_primitives::{Block};
 use hb_node_runtime::{GenesisConfig, RuntimeApi};
-use substrate_service::{
-	FactoryFullConfiguration, LightComponents, FullComponents, FullBackend,
-	FullClient, LightClient, LightBackend, FullExecutor, LightExecutor,
-	error::{Error as ServiceError},
-};
+
 use transaction_pool::{self, txpool::{Pool as TransactionPool}};
 use inherents::InherentDataProviders;
 use network::construct_simple_protocol;
 use network::{config::DummyFinalityProofRequestBuilder};
 
-use substrate_service::construct_service_factory;
+//use substrate_service::construct_service_factory;
 use log::info;
-use substrate_service::TelemetryOnConnect;
 use parking_lot::Mutex;
 
 construct_simple_protocol! {
@@ -76,85 +76,35 @@ impl Default for NodeConfig {
 		}
 	}
 }
-/*
 
-pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
-	client : Arc<Client<B, E, Block, RA>>,
-	t_pool: Arc<TransactionPool<A>>,
-	config: Config,
-    network:N,
-    on_exit: X,
-	block_import: Arc<Mutex<I>>,
-	inherent_data_providers: InherentDataProviders,
-	selch:SC,
-) -> ::client::error::Result<impl Future<Output=()> + Send+Unpin> where
-	Block::Hash: Ord,
-	B: Backend<Block, Blake2Hasher> + 'static,
-	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static+Clone,
-	N: Network<Block> + Send + Sync + Unpin +PollParameters,
-	N::In: Send,
-	SC: SelectChain<Block> + 'static,
-	NumberFor<Block>: BlockNumberOps,
-	DigestFor<Block>: Encode,
-	RA: Send + Sync + 'static,
-	X: Future<Output=()> + Clone + Send+Unpin,
-	A: txpool::ChainApi+'static,
-	I:BlockImport<Block>+Send+Sync+'static,
-	RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
-	<Client<B, E, Block, RA> as ProvideRuntimeApi>::Api: BlockBuilderApi<Block>
-*/ 
-construct_service_factory! {
-	struct Factory {
-		Block = Block,
-		RuntimeApi = RuntimeApi,
-		NetworkProtocol = NodeProtocol { |config| Ok(NodeProtocol::new()) },
-		RuntimeDispatch = hb_node_executor::Executor,
-		FullTransactionPoolApi = transaction_pool::ChainApi<client::Client<FullBackend<Self>, FullExecutor<Self>, Block, RuntimeApi>, Block>
-			{ |config, client| Ok(TransactionPool::new(config, transaction_pool::ChainApi::new(client))) },
 
-		LightTransactionPoolApi = transaction_pool::ChainApi<client::Client<LightBackend<Self>, LightExecutor<Self>, Block, RuntimeApi>, Block>
-			{ |config, client| Ok(TransactionPool::new(config, transaction_pool::ChainApi::new(client))) },
-		Genesis = GenesisConfig,
-		Configuration = NodeConfig,
-		FullService = FullComponents<Self>
-			{ |config: FactoryFullConfiguration<Self>|
-				FullComponents::<Factory>::new(config) },
-		AuthoritySetup = {
-			|mut service: Self::FullService| {
+/// Starts a `ServiceBuilder` for a full service.
+///
+/// Use this macro if you don't actually need the full service, but just the builder in order to
+/// be able to perform chain operations.
+/// 
+	
+macro_rules! new_full_start {
+	($config:expr) => {{
+	
+		let inherent_data_providers = inherents::InherentDataProviders::new();
 
-				    let client = service.client().clone();
-                    let t_pool = service.transaction_pool();
-					let select_chain = service.select_chain()
-						.ok_or(ServiceError::SelectChainRequired)?;
-					let nconf= match &service.config().n_conf_file	
-					{
-						Some(name) => PathBuf::from(name),
-						None => PathBuf::from("./nodes.json")
-					};
-					let badger = run_honey_badger(
-						client,
-						t_pool,
-						BadgerConfig::from_json_file_with_name(nconf,&service.config().name).unwrap(),
-						service.network(),
-						service.on_exit().clone().compat().map(|_| ()),
-						Arc::new(Mutex::new(service.client().clone())), //block_import?
-						service.config().custom.inherent_data_providers.clone(),
-						select_chain,
-					)?;
-                    service.spawn_task(badger.unit_error()
-    .boxed()
-    .compat());
 
-				Ok(service)
-			}
-		},
-		
-		LightService = LightComponents<Self>
-			{ |config| <LightComponents<Factory>>::new(config) },
-		FullImportQueue = BadgerImportQueue<Self::Block>
-			{ |config: &mut FactoryFullConfiguration<Self> , client: Arc<FullClient<Self>>, select_chain: Self::SelectChain,_| {
-			   
-			  #[allow(deprecated)]
+		let builder = substrate_service::ServiceBuilder::new_full::<
+			hb_node_primitives::Block, hb_node_runtime::RuntimeApi, hb_node_executor::Executor
+		>($config)?
+			.with_select_chain(|_config, client| {
+				#[allow(deprecated)]
+				Ok(client::LongestChain::new(client.backend().clone()))
+			})?
+			.with_transaction_pool(|config, client|
+				Ok(transaction_pool::txpool::Pool::new(config, transaction_pool::ChainApi::new(client)))
+			)?
+			.with_import_queue(|config, client, mut select_chain, transaction_pool| {
+				let select_chain = select_chain.take()
+					.ok_or_else(|| substrate_service::Error::SelectChainRequired)?;
+
+				 #[allow(deprecated)]
 				let fprb = Box::new(DummyFinalityProofRequestBuilder::default()) as Box<_>;
    			    let block_import=client.clone();
 				/*let (block_import, link_half) =
@@ -167,36 +117,85 @@ construct_service_factory! {
 					None,
 					None,
 					client,
-					config.custom.inherent_data_providers.clone(),
+					InherentDataProviders::new(),
 				).map_err(Into::into)
-			}},
-		LightImportQueue = BadgerImportQueue<Self::Block>
-			{ |config: &FactoryFullConfiguration<Self>, client: Arc<LightClient<Self>>| {
-				#[allow(deprecated)]
-				let fprb = Box::new(DummyFinalityProofRequestBuilder::default()) as Box<_>;
-   			    let block_import=client.clone();
-				/*let (block_import, link_half) =
-					grandpa::block_import::<_, _, _, RuntimeApi, FullClient<Self>, _>(
-						client.clone(), client.clone(), select_chain
-					)?;*/
-				//let justification_import = block_import.clone();
-				badger_import_queue::<_, _, PublicKeyWrap,SignatureWrap>(
-					Box::new(block_import),
-					None,
-					None,
-					client,
-					config.custom.inherent_data_providers.clone(),
-				).map(|q| (q, fprb)).map_err(Into::into)
-			}},
-		SelectChain = LongestChain<FullBackend<Self>, Self::Block>
-			{ |config: &FactoryFullConfiguration<Self>, client: Arc<FullClient<Self>>| {
-				#[allow(deprecated)]
-				Ok(LongestChain::new(client.backend().clone()))
-			}
-		},
-		FinalityProofProvider = { |_client: Arc<FullClient<Self>>| {
-			Ok(None)
-		}},
-		RpcExtensions = (),
-	}
+							
+			})?
+			.with_rpc_extensions(|client, pool| {
+				use hb_node_rpc::accounts::{Accounts, AccountsApi};
+
+				let mut io = jsonrpc_core::IoHandler::<substrate_service::RpcMetadata>::default();
+				io.extend_with(
+					AccountsApi::to_delegate(Accounts::new(client, pool))
+				);
+				io
+			})?;
+
+		(builder,  inherent_data_providers, )
+	}}
+}
+
+/// Creates a full service from the configuration.
+///
+/// We need to use a macro because the test suit doesn't work with an opaque service. It expects
+/// concrete types instead.
+macro_rules! new_full {
+	($config:expr) => {{
+		use futures::Future;
+
+		let (builder,  inherent_data_providers,) = new_full_start!($config);
+
+		let service = builder.with_network_protocol(|_| Ok(crate::service::NodeProtocol::new()))?
+			.with_opt_finality_proof_provider(|_client|
+				Ok(None)
+			)?
+			.build()?;
+
+	
+		// spawn any futures that were created in the previous setup steps
+	/*	for task in tasks_to_spawn.drain(..) {
+			service.spawn_task(
+				task.select(service.on_exit())
+					.map(|_| ())
+					.map_err(|_| ())
+			);
+		}*/
+
+		let client = service.client().clone();
+		let t_pool = service.transaction_pool();
+		let select_chain = service.select_chain().ok_or(ServiceError::SelectChainRequired)?;
+		let nconf= match &service.config().n_conf_file	
+			{
+			Some(name) => PathBuf::from(name),
+			None => PathBuf::from("./nodes.json")
+			};
+		let badger = run_honey_badger(
+								client,
+								t_pool,
+								BadgerConfig::from_json_file_with_name(nconf,&service.config().name).unwrap(),
+								service.network(),
+								service.on_exit().clone().compat().map(|_| ()),
+								Arc::new(Mutex::new(service.client().clone())), //block_import?
+								//service.config().custom.inherent_data_providers.clone(),
+								InherentDataProviders::new(),
+								select_chain,
+							)?;
+		service.spawn_task(badger.unit_error()
+			.boxed()
+			.compat());
+
+		Ok((service, inherent_data_providers))
+	}}
+}
+
+/// Builds a new service for a full client.
+pub fn new_full<C: Send + Default + 'static>(config: Configuration<C, GenesisConfig>)
+-> Result<impl AbstractService, ServiceError> {
+	new_full!(config).map(|(service, _)| service)
+}
+
+/// Builds a new service for a light client.
+pub fn new_light<C: Send + Default + 'static>(config: Configuration<C, GenesisConfig>)
+-> Result<impl AbstractService, ServiceError> {
+ new_full!(config).map(|(service, _)| service)
 }

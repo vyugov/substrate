@@ -31,6 +31,6 @@ native_executor_instance!(
 	pub Executor,
 	hb_node_runtime::api::dispatch,
 	hb_node_runtime::native_version,
-	hb_node_runtime::WASM_BINARY
+	//hb_node_runtime::WASM_BINARY
 );
 

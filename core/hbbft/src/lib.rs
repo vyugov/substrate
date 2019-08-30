@@ -83,7 +83,7 @@ use runtime_primitives::traits::DigestFor;
 use client::runtime_api::ConstructRuntimeApi;
 
 
-use service::TelemetryOnConnect;
+//use service::TelemetryOnConnect;
 use client::blockchain::HeaderBackend;
 use badger::crypto::{ PublicKey,   SecretKey, };//PublicKeySet,PublicKeyShare,SecretKeyShare,Signature,
 use client::Client;
@@ -768,7 +768,7 @@ pub struct BadgerStartParams< Block: BlockT<Hash=H256>, N :Network<Block>,  X>
 	/// Handle to a future that will resolve on exit.
 	pub on_exit: X,
 	/// If supplied, can be used to hook on telemetry connection established events.
-	pub telemetry_on_connect: Option<TelemetryOnConnect>,
+//	pub telemetry_on_connect: Option<TelemetryOnConnect>,
 	ph: PhantomData<Block>
 }
 
@@ -1222,7 +1222,8 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 //		}) ;
 
 	let with_start = network_startup.then(move |()| futures03::future::join(sender,receiver));
-     let ping=Interval::new(Duration::from_secs(1));
+     let ping=Interval::new(Duration::from_millis(300));
+	 //let jn = ping.merge(t_pool.clone().import_notification_stream());
 	 let pinged=futures03::future::select(with_start,ping.for_each(|_|{future::ready(())}));
 	// Make sure that `telemetry_task` doesn't accidentally finish and kill grandpa.
 
