@@ -259,12 +259,10 @@ pub mod inflation;
 #[cfg(all(feature = "bench", test))]
 mod benches;
 
-#[cfg(feature = "std")]
-use runtime_io::with_storage;
 use rstd::{prelude::*, result};
 use codec::{HasCompact, Encode, Decode};
 use srml_support::{
-	StorageValue, StorageMap, EnumerableStorageMap, decl_module, decl_event,
+	StorageValue, StorageMap, StorageLinkedMap, decl_module, decl_event,
 	decl_storage, ensure, traits::{
 		Currency, OnFreeBalanceZero, OnDilution, LockIdentifier, LockableCurrency,
 		WithdrawReasons, WithdrawReason, OnUnbalanced, Imbalance, Get, Time
@@ -619,37 +617,33 @@ decl_storage! {
 	add_extra_genesis {
 		config(stakers):
 			Vec<(T::AccountId, T::AccountId, BalanceOf<T>, StakerStatus<T::AccountId>)>;
-		build(|
-			storage: &mut (sr_primitives::StorageOverlay, sr_primitives::ChildrenStorageOverlay),
-			config: &GenesisConfig<T>
-		| {
-			with_storage(storage, || {
-				for &(ref stash, ref controller, balance, ref status) in &config.stakers {
-					assert!(
-						T::Currency::free_balance(&stash) >= balance,
-						"Stash does not have enough balance to bond."
-					);
-					let _ = <Module<T>>::bond(
-						T::Origin::from(Some(stash.clone()).into()),
-						T::Lookup::unlookup(controller.clone()),
-						balance,
-						RewardDestination::Staked
-					);
-					let _ = match status {
-						StakerStatus::Validator => {
-							<Module<T>>::validate(
-								T::Origin::from(Some(controller.clone()).into()),
-								Default::default()
-							)
-						}, StakerStatus::Nominator(votes) => {
-							<Module<T>>::nominate(
-								T::Origin::from(Some(controller.clone()).into()),
-								votes.iter().map(|l| {T::Lookup::unlookup(l.clone())}).collect()
-							)
-						}, _ => Ok(())
-					};
-				}
-			});
+		build(|config: &GenesisConfig<T>| {
+			for &(ref stash, ref controller, balance, ref status) in &config.stakers {
+				assert!(
+					T::Currency::free_balance(&stash) >= balance,
+					"Stash does not have enough balance to bond."
+				);
+				let _ = <Module<T>>::bond(
+					T::Origin::from(Some(stash.clone()).into()),
+					T::Lookup::unlookup(controller.clone()),
+					balance,
+					RewardDestination::Staked,
+				);
+				let _ = match status {
+					StakerStatus::Validator => {
+						<Module<T>>::validate(
+							T::Origin::from(Some(controller.clone()).into()),
+							Default::default(),
+						)
+					},
+					StakerStatus::Nominator(votes) => {
+						<Module<T>>::nominate(
+							T::Origin::from(Some(controller.clone()).into()),
+							votes.iter().map(|l| T::Lookup::unlookup(l.clone())).collect(),
+						)
+					}, _ => Ok(())
+				};
+			}
 		});
 	}
 }
@@ -674,7 +668,7 @@ decl_module! {
 		/// Number of eras that staked funds must remain bonded for.
 		const BondingDuration: EraIndex = T::BondingDuration::get();
 
-		fn deposit_event<T>() = default;
+		fn deposit_event() = default;
 
 		fn on_finalize() {
 			// Set the start of the first era.
@@ -1595,7 +1589,7 @@ impl<T, Reporter, Offender, R, O> ReportOffence<Reporter, Offender, O>
 			R::report_offence(reporters, offence)
 		} else {
 			<Module<T>>::deposit_event(
-				RawEvent::OldSlashingReportDiscarded(offence_session).into()
+				RawEvent::OldSlashingReportDiscarded(offence_session)
 			)
 		}
 	}
