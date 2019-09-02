@@ -202,10 +202,11 @@ macro_rules! new_impl {
 		};
 
 		let has_bootnodes = !network_params.network_config.boot_nodes.is_empty();
+		let propagat= network_params.network_config.propagate_extr;
 		let network_mut = network::NetworkWorker::new(network_params)?;
 		let network = network_mut.service().clone();
 		let network_status_sinks = Arc::new(Mutex::new(Vec::new()));
-
+       
 		#[allow(deprecated)]
 		let offchain_storage = client.backend().offchain_storage();
 		let offchain_workers = match ($config.offchain_worker, offchain_storage) {
@@ -269,7 +270,11 @@ macro_rules! new_impl {
 				.map(|v| Ok::<_, ()>(v)).compat()
 				.for_each(move |_| {
 					if let Some(network) = network.upgrade() {
+			          if propagat
+					  {
 						network.trigger_repropagate();
+					  }
+						
 					}
 					let status = transaction_pool_.status();
 					telemetry!(SUBSTRATE_INFO; "txpool.import";

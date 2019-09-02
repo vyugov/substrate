@@ -545,6 +545,7 @@ fn fill_network_configuration(
 	is_dev: bool,
 ) -> error::Result<()> {
 	config.boot_nodes.extend(cli.bootnodes.into_iter());
+	config.propagate_extr=!cli.dont_propagate_extr;
 	config.config_path = Some(
 		network_path(&base_path, chain_spec_id).to_string_lossy().into()
 	);

@@ -90,7 +90,7 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use rstd::{result, cmp};
+use rstd::{result, cmp,vec::Vec};
 use codec::Encode;
 #[cfg(feature = "std")]
 use codec::Decode;
@@ -246,13 +246,31 @@ decl_module! {
 		//		Self::now().is_zero() || now >= Self::now() + T::MinimumPeriod::get(),
 		//		"Timestamp must increment by at least <MinimumPeriod> between sequential blocks"
 		//	);
-			<Self as Store>::Now::put(now);
-			<Self as Store>::DidUpdate::put(true);
+		    let mut cvar=<Self as Store>::Variants::get();
+             cvar.push(now);
+			<Self as Store>::Variants::put(cvar);
+		//	<Self as Store>::DidUpdate::put(true);
 
 			<T::OnTimestampSet as OnTimestampSet<_>>::on_timestamp_set(now);
 		}
 
 		fn on_finalize() {
+			let mut cvar=<Self as Store>::Variants::take();
+			if cvar.len()==0
+			{
+				return;
+			}
+
+			cvar.sort();
+		
+			let mid = cvar.len() / 2;
+			let newnow=cvar[mid];
+			let nowpt=<Self as Store>::Now::get();
+			if newnow>nowpt
+			{
+			<Self as Store>::Now::put(newnow);
+			}
+
 			//assert!(<Self as Store>::DidUpdate::take(), "Timestamp must be updated once in the block");
 		}
 	}
@@ -262,7 +280,7 @@ decl_storage! {
 	trait Store for Module<T: Trait> as Timestamp {
 		/// Current time for the current block.
 		pub Now get(now) build(|_| 0.into()): T::Moment;
-
+        pub Variants get(variants)  build(|_| Vec::new()): Vec<T::Moment>;
 		/// Did the timestamp get updated in this block?
 		DidUpdate: bool;
 	}

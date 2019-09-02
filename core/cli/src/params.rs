@@ -112,6 +112,11 @@ pub struct NetworkConfigurationParams {
 	/// disables it. Automatically implied when using --dev.
 	#[structopt(long = "no-mdns")]
 	pub no_mdns: bool,
+	
+	#[structopt(long = "no-propagate")]
+	pub dont_propagate_extr: bool,
+
+
 
 	#[allow(missing_docs)]
 	#[structopt(flatten)]

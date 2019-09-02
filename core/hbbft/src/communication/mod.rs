@@ -47,7 +47,7 @@ use fg_primitives::{SignatureWrap,PublicKeyWrap};
 //use grandpa::Message::{Prevote, Precommit, PrimaryPropose};
 use futures03::prelude::*;
 use futures03::channel::{oneshot, mpsc};
-use log::{debug,info};// trace};
+use log::{debug,info,trace};// trace};
 use parity_codec::{Encode, Decode};
 use substrate_telemetry::{telemetry, CONSENSUS_DEBUG,};
 use runtime_primitives::traits::{Block as BlockT, Hash as HashT, Header as HeaderT};
@@ -457,7 +457,7 @@ fn register_peer_public_key(&mut self,who :&PeerId, auth:AuthorityId)
 
  fn is_authority(&self, who :&PeerId) -> bool
   {
-	  	info!("BaDGER!! IsAuth {:?}",who);
+	  	trace!("BaDGER!! IsAuth {:?}",who);
 	  let auth=self.peers.peer(who);
 	  match auth
 	  {
@@ -465,13 +465,13 @@ fn register_peer_public_key(&mut self,who :&PeerId, auth:AuthorityId)
 		  {
 			  if let Some(iid) =&info.id
 			  {
-				  info!("BaDGER!! SomeInfo {:?} {}",&iid,self.authorities.len());
+				  trace!("BaDGER!! SomeInfo {:?} {}",&iid,self.authorities.len());
 
 			   self.authorities.contains(&iid)
 			  }
 			  else
 			  {
-				  info!("BaDGER!! ZeroInfo {:?}",&info.id);
+				  trace!("BaDGER!! ZeroInfo {:?}",&info.id);
                 false
 			  }
 
@@ -920,7 +920,7 @@ impl<Block: BlockT > network_gossip::Validator<Block> for BadgerGossipValidator<
 				
 				network_gossip::ValidationResult::ProcessAndDiscard(topic)
 			}
-			Action::Discard(cb) => {
+			Action::Discard(_cb) => {
 				//self.report(who.clone(), cb);
 				network_gossip::ValidationResult::Discard
 			}
@@ -978,7 +978,7 @@ impl<Block: BlockT > network_gossip::Validator<Block> for BadgerGossipValidator<
 	}
 
 	fn message_expired<'b>(&'b self) -> Box<dyn FnMut(Block::Hash, &[u8]) -> bool + 'b> {
-		let inner = self.inner.read();
+		//let inner = self.inner.read();
 		Box::new(move |topic, mut data| {
 			// if the topic is not one of the ones that we are keeping at the moment,
 			// it is expired.
@@ -1076,7 +1076,7 @@ use std::{pin::Pin, task::Context, task::Poll};
 impl Stream for NetworkStream {
 	type Item = network_gossip::TopicNotification;
 
-	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> 
+	fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Option<Self::Item>> 
 	{
 		if let Some(ref mut inner) = self.inner {
 			match  inner.try_next()

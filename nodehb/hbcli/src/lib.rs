@@ -1,6 +1,8 @@
-
 #![warn(missing_docs)]
 #![warn(unused_extern_crates)]
+
+//! HBBFT cli
+
 
 pub use cli::error;
 pub mod chain_spec;
