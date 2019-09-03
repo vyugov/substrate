@@ -93,9 +93,9 @@ macro_rules! new_full_start {
 		let builder = substrate_service::ServiceBuilder::new_full::<
 			hb_node_primitives::Block, hb_node_runtime::RuntimeApi, hb_node_executor::Executor
 		>($config)?
-			.with_select_chain(|_config, client| {
+			.with_select_chain(|_config, backend| {
 				#[allow(deprecated)]
-				Ok(client::LongestChain::new(client.backend().clone()))
+				Ok(client::LongestChain::new(backend.clone()))
 			})?
 			.with_transaction_pool(|config, client|
 				Ok(transaction_pool::txpool::Pool::new(config, transaction_pool::ChainApi::new(client)))
@@ -142,11 +142,13 @@ macro_rules! new_full_start {
 macro_rules! new_full {
 	($config:expr) => {{
 		use futures::Future;
-
+        let nconf_name=$config.n_conf_file.clone();
+		let node_name=$config.name.clone();
+		
 		let (builder,  inherent_data_providers,) = new_full_start!($config);
 
 		let service = builder.with_network_protocol(|_| Ok(crate::service::NodeProtocol::new()))?
-			.with_opt_finality_proof_provider(|_client|
+			.with_opt_finality_proof_provider(|_client,_|
 				Ok(None)
 			)?
 			.build()?;
@@ -164,7 +166,7 @@ macro_rules! new_full {
 		let client = service.client().clone();
 		let t_pool = service.transaction_pool();
 		let select_chain = service.select_chain().ok_or(ServiceError::SelectChainRequired)?;
-		let nconf= match &service.config().n_conf_file	
+		let nconf= match &nconf_name	
 			{
 			Some(name) => PathBuf::from(name),
 			None => PathBuf::from("./nodes.json")
@@ -172,7 +174,7 @@ macro_rules! new_full {
 		let badger = run_honey_badger(
 								client,
 								t_pool,
-								BadgerConfig::from_json_file_with_name(nconf,&service.config().name).unwrap(),
+								BadgerConfig::from_json_file_with_name(nconf,&node_name).unwrap(),
 								service.network(),
 								service.on_exit().clone().compat().map(|_| ()),
 								Arc::new(Mutex::new(service.client().clone())), //block_import?

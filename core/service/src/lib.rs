@@ -66,7 +66,7 @@ pub use futures::future::Executor;
 const DEFAULT_PROTOCOL_ID: &str = "sup";
 
 /// Substrate service.
-pub struct NewService<TCfg, TBl, TCl, TSc, TNetStatus, TNet, TTxPool, TOc> {
+pub struct NewService<TBl, TCl, TSc, TNetStatus, TNet, TTxPool, TOc> {
 	client: Arc<TCl>,
 	select_chain: Option<TSc>,
 	network: Arc<TNet>,
@@ -92,7 +92,7 @@ pub struct NewService<TCfg, TBl, TCl, TSc, TNetStatus, TNet, TTxPool, TOc> {
 	/// The elements must then be polled manually.
 	to_poll: Vec<Box<dyn Future<Item = (), Error = ()> + Send>>,
 	/// Configuration of this Service
-	config: TCfg,
+	//config: TCfg,
 	rpc_handlers: rpc_servers::RpcHandler<rpc::Metadata>,
 	_rpc: Box<dyn std::any::Any + Send + Sync>,
 	_telemetry: Option<tel::Telemetry>,
@@ -128,6 +128,7 @@ impl Executor<Box<dyn Future<Item = (), Error = ()> + Send>> for SpawnTaskHandle
 		}
 	}
 }
+	
 
 macro_rules! new_impl {
 	(
@@ -148,6 +149,7 @@ macro_rules! new_impl {
 		let (
 			client,
 			on_demand,
+			backend,
 			keystore,
 			select_chain,
 			import_queue,
@@ -156,7 +158,7 @@ macro_rules! new_impl {
 			network_protocol,
 			transaction_pool,
 			rpc_extensions
-		) = $build_components(&mut $config)?;
+		) = $build_components(&$config)?;
 		let import_queue = Box::new(import_queue);
 		let chain_info = client.info().chain;
 
@@ -202,13 +204,12 @@ macro_rules! new_impl {
 		};
 
 		let has_bootnodes = !network_params.network_config.boot_nodes.is_empty();
-		let propagat= network_params.network_config.propagate_extr;
+			let propagat= network_params.network_config.propagate_extr;
 		let network_mut = network::NetworkWorker::new(network_params)?;
 		let network = network_mut.service().clone();
 		let network_status_sinks = Arc::new(Mutex::new(Vec::new()));
-       
-		#[allow(deprecated)]
-		let offchain_storage = client.backend().offchain_storage();
+
+		let offchain_storage = backend.offchain_storage();
 		let offchain_workers = match ($config.offchain_worker, offchain_storage) {
 			(true, Some(db)) => {
 				Some(Arc::new(offchain::OffchainWorkers::new(client.clone(), db)))
@@ -270,11 +271,10 @@ macro_rules! new_impl {
 				.map(|v| Ok::<_, ()>(v)).compat()
 				.for_each(move |_| {
 					if let Some(network) = network.upgrade() {
-			          if propagat
-					  {
+						if(propagat)
+						{
 						network.trigger_repropagate();
-					  }
-						
+						}
 					}
 					let status = transaction_pool_.status();
 					telemetry!(SUBSTRATE_INFO; "txpool.import";
@@ -306,9 +306,7 @@ macro_rules! new_impl {
 			let bandwidth_download = net_status.average_download_per_sec;
 			let bandwidth_upload = net_status.average_upload_per_sec;
 
-			#[allow(deprecated)]
-			let backend = (*client_).backend();
-			let used_state_cache_size = match backend.used_state_cache_size(){
+			let used_state_cache_size = match info.used_state_cache_size {
 				Some(size) => size,
 				None => 0,
 			};
@@ -354,6 +352,7 @@ macro_rules! new_impl {
 			};
 			$start_rpc(
 				client.clone(),
+				//light_components.clone(),
 				system_rpc_tx.clone(),
 				system_info.clone(),
 				Arc::new(SpawnTaskHandle { sender: to_spawn_tx.clone() }),
@@ -431,7 +430,6 @@ macro_rules! new_impl {
 			to_spawn_tx,
 			to_spawn_rx,
 			to_poll: Vec::new(),
-			$config,
 			rpc_handlers,
 			_rpc: rpc,
 			_telemetry: telemetry,
@@ -443,9 +441,8 @@ macro_rules! new_impl {
 	}}
 }
 
-mod builder;
 
-/// Abstraction over a Substrate service.
+mod builder;
 pub trait AbstractService: 'static + Future<Item = (), Error = Error> +
 	Executor<Box<dyn Future<Item = (), Error = ()> + Send>> + Send {
 	/// Type of block of this chain.
@@ -456,8 +453,6 @@ pub trait AbstractService: 'static + Future<Item = (), Error = Error> +
 	type CallExecutor: 'static + client::CallExecutor<Self::Block, Blake2Hasher> + Send + Sync + Clone;
 	/// API that the runtime provides.
 	type RuntimeApi: Send + Sync;
-	/// Configuration struct of the service.
-	type Config;
 	/// Chain selection algorithm.
 	type SelectChain: consensus_common::SelectChain<Self::Block>;
 	/// API of the transaction pool.
@@ -467,12 +462,6 @@ pub trait AbstractService: 'static + Future<Item = (), Error = Error> +
 
 	/// Get event stream for telemetry connection established events.
 	fn telemetry_on_connect_stream(&self) -> mpsc::UnboundedReceiver<()>;
-
-	/// Returns the configuration passed on construction.
-	fn config(&self) -> &Self::Config;
-
-	/// Returns the configuration passed on construction.
-	fn config_mut(&mut self) -> &mut Self::Config;
 
 	/// return a shared instance of Telemetry (if enabled)
 	fn telemetry(&self) -> Option<tel::Telemetry>;
@@ -521,10 +510,11 @@ pub trait AbstractService: 'static + Future<Item = (), Error = Error> +
 	fn on_exit(&self) -> ::exit_future::Exit;
 }
 
-impl<TCfg, TBl, TBackend, TExec, TRtApi, TSc, TNetSpec, TExPoolApi, TOc> AbstractService for
-	NewService<TCfg, TBl, Client<TBackend, TExec, TBl, TRtApi>, TSc, NetworkStatus<TBl>,
+
+impl<TBl, TBackend, TExec, TRtApi, TSc, TNetSpec, TExPoolApi, TOc> AbstractService for
+	NewService<TBl, Client<TBackend, TExec, TBl, TRtApi>, TSc, NetworkStatus<TBl>,
 		NetworkService<TBl, TNetSpec, H256>, TransactionPool<TExPoolApi>, TOc>
-where TCfg: 'static + Send,
+where
 	TBl: BlockT<Hash = H256>,
 	TBackend: 'static + client::backend::Backend<TBl, Blake2Hasher>,
 	TExec: 'static + client::CallExecutor<TBl, Blake2Hasher> + Send + Sync + Clone,
@@ -538,18 +528,9 @@ where TCfg: 'static + Send,
 	type Backend = TBackend;
 	type CallExecutor = TExec;
 	type RuntimeApi = TRtApi;
-	type Config = TCfg;
 	type SelectChain = TSc;
 	type TransactionPoolApi = TExPoolApi;
 	type NetworkSpecialization = TNetSpec;
-
-	fn config(&self) -> &Self::Config {
-		&self.config
-	}
-
-	fn config_mut(&mut self) -> &mut Self::Config {
-		&mut self.config
-	}
 
 	fn telemetry_on_connect_stream(&self) -> mpsc::UnboundedReceiver<()> {
 		let (sink, stream) = mpsc::unbounded();
@@ -616,8 +597,9 @@ where TCfg: 'static + Send,
 	}
 }
 
-impl<TCfg, TBl, TCl, TSc, TNetStatus, TNet, TTxPool, TOc> Future for
-NewService<TCfg, TBl, TCl, TSc, TNetStatus, TNet, TTxPool, TOc> {
+impl<TBl, TCl, TSc, TNetStatus, TNet, TTxPool, TOc> Future for
+	NewService<TBl, TCl, TSc, TNetStatus, TNet, TTxPool, TOc>
+{
 	type Item = ();
 	type Error = Error;
 
@@ -648,8 +630,9 @@ NewService<TCfg, TBl, TCl, TSc, TNetStatus, TNet, TTxPool, TOc> {
 	}
 }
 
-impl<TCfg, TBl, TCl, TSc, TNetStatus, TNet, TTxPool, TOc> Executor<Box<dyn Future<Item = (), Error = ()> + Send>> for
-NewService<TCfg, TBl, TCl, TSc, TNetStatus, TNet, TTxPool, TOc> {
+impl<TBl, TCl, TSc, TNetStatus, TNet, TTxPool, TOc> Executor<Box<dyn Future<Item = (), Error = ()> + Send>> for
+	NewService<TBl, TCl, TSc, TNetStatus, TNet, TTxPool, TOc>
+{
 	fn execute(
 		&self,
 		future: Box<dyn Future<Item = (), Error = ()> + Send>
@@ -792,8 +775,9 @@ pub struct NetworkStatus<B: BlockT> {
 	pub average_upload_per_sec: u64,
 }
 
-impl<TCfg, TBl, TCl, TSc, TNetStatus, TNet, TTxPool, TOc> Drop for
-NewService<TCfg, TBl, TCl, TSc, TNetStatus, TNet, TTxPool, TOc> {
+impl<TBl, TCl, TSc, TNetStatus, TNet, TTxPool, TOc> Drop for
+	NewService<TBl, TCl, TSc, TNetStatus, TNet, TTxPool, TOc>
+{
 	fn drop(&mut self) {
 		debug!(target: "service", "Substrate service shutdown");
 		if let Some(signal) = self.signal.take() {
