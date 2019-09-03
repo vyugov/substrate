@@ -7,9 +7,15 @@ use std::{
 };
 
 use codec::{Decode, Encode};
+use curv::cryptographic_primitives::proofs::sigma_dlog::DLogProof;
+use curv::cryptographic_primitives::secret_sharing::feldman_vss::VerifiableSS;
+use curv::FE;
 use futures::{prelude::*, stream::Fuse, sync::mpsc};
 use log::{debug, error, info};
-use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{Keys, Parameters};
+use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{
+	KeyGenBroadcastMessage1 as KeyGenCommit, KeyGenDecommitMessage1 as KeyGenDecommit, Keys,
+	Parameters,
+};
 use parking_lot::RwLock;
 use tokio_executor::DefaultExecutor;
 use tokio_timer::Interval;
@@ -35,7 +41,9 @@ mod signer;
 
 use communication::{
 	gossip::GossipMessage,
-	message::{ConfirmPeersMessage, KeyGenMessage, Message, MessageWithSender, SignMessage},
+	message::{
+		ConfirmPeersMessage, KeyGenMessage, Message, MessageWithSender, PeerIndex, SignMessage,
+	},
 	Network, NetworkBridge,
 };
 use periodic_stream::PeriodicStream;
@@ -60,17 +68,38 @@ impl NodeConfig {
 	}
 }
 
+#[derive(Debug, Default)]
+pub struct Confirmations {
+	pub peer: Count,
+	pub com_decom: Count,
+	pub secret_share: Count,
+	pub vss: Count,
+	pub proof: Count,
+}
+
 #[derive(Debug)]
 pub struct KeyGenState {
-	pub confirmations: Count,
+	pub complete: bool,
+	pub confirmations: Confirmations,
 	pub local_key: Option<Keys>,
+	pub commits: Vec<Option<KeyGenCommit>>,
+	pub decommits: Vec<Option<KeyGenDecommit>>,
+	pub vsss: Vec<Option<VerifiableSS>>,
+	pub secret_shares: Vec<Option<FE>>,
+	pub proofs: Vec<Option<DLogProof>>,
 }
 
 impl Default for KeyGenState {
 	fn default() -> Self {
 		Self {
-			confirmations: 0,
+			complete: false,
+			confirmations: Confirmations::default(),
 			local_key: None,
+			commits: Vec::new(),
+			decommits: Vec::new(),
+			vsss: Vec::new(),
+			secret_shares: Vec::new(),
+			proofs: Vec::new(),
 		}
 	}
 }
@@ -101,7 +130,6 @@ pub(crate) struct Environment<B, E, Block: BlockT, N: Network<Block>, RA> {
 	pub state: Arc<RwLock<KeyGenState>>,
 }
 
-#[must_use]
 struct KeyGenWork<B, E, Block: BlockT, N: Network<Block>, RA> {
 	key_gen: Box<dyn Future<Item = (), Error = ClientError> + Send + 'static>,
 	env: Arc<Environment<B, E, Block, N, RA>>,
@@ -122,11 +150,20 @@ where
 		config: NodeConfig,
 		bridge: NetworkBridge<Block, N>,
 	) -> Self {
+		let players = config.players;
+
+		let mut state = KeyGenState::default();
+		state.commits.resize(players as usize, None);
+		state.decommits.resize(players as usize, None);
+		state.vsss.resize(players as usize, None);
+		state.secret_shares.resize(players as usize, None);
+		state.proofs.resize(players as usize, None);
+
 		let env = Arc::new(Environment {
 			client,
 			config,
 			bridge,
-			state: Arc::new(RwLock::new(KeyGenState::default())),
+			state: Arc::new(RwLock::new(state)),
 		});
 		let mut work = Self {
 			// `voter` is set to a temporary value and replaced below when

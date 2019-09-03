@@ -1,27 +1,21 @@
 use codec::{Decode, Encode};
-use futures::prelude::*;
-use futures::sync::mpsc;
-use hbbft_primitives::AuthorityId;
-use log::{debug, error, info, trace, warn};
-use network::consensus_gossip::{self as network_gossip, MessageIntent, ValidatorContext};
-use network::{config::Roles, PeerId};
+use log::{error, info, trace, warn};
 use serde::{Deserialize, Serialize};
-use sr_primitives::traits::{Block as BlockT, NumberFor, Zero};
 use std::{
-	collections::{HashMap, VecDeque},
+	collections::VecDeque,
 	marker::PhantomData,
 	time::{Duration, Instant},
 };
-use substrate_telemetry::{telemetry, CONSENSUS_DEBUG};
+
+use network::consensus_gossip::{self as network_gossip, MessageIntent, ValidatorContext};
+use network::{config::Roles, PeerId};
+use sr_primitives::traits::{Block as BlockT, Zero};
 
 use super::{
-	message::{
-		ConfirmPeersMessage, KeyGenCommit, KeyGenDecommit, KeyGenMessage, Message, SignMessage,
-	},
+	message::{ConfirmPeersMessage, KeyGenMessage, Message, SignMessage},
 	peer::{PeerInfo, PeerState, Peers},
 	string_topic,
 };
-use hbbft_primitives::PublicKey;
 
 #[derive(Debug, Encode, Decode)]
 pub enum GossipMessage {
@@ -71,6 +65,10 @@ impl Inner {
 
 	pub fn get_peer_index(&self, who: &PeerId) -> usize {
 		self.peers.get_position(who).unwrap()
+	}
+
+	pub fn get_peer_id_by_index(&self, index: usize) -> Option<PeerId> {
+		self.peers.get_peer_id_by_index(index)
 	}
 
 	pub fn local_id(&self) -> PeerId {
@@ -126,37 +124,26 @@ impl<Block: BlockT> GossipValidator<Block> {
 			}
 		}
 	}
-
-	pub fn start_peer_confirmation(
-		&self,
-		context: &mut dyn ValidatorContext<Block>,
-		sender_index: u16,
-		peers_hash: u64,
-	) {
-		info!("Start peer confirmation");
-		let msg = Message::ConfirmPeers(ConfirmPeersMessage::Confirming(sender_index, peers_hash));
-		self.broadcast(context, GossipMessage::Message(msg).encode());
-	}
-
-	pub fn start_key_generation(&self) {}
-
-	pub fn start_signature_generation(&self) {}
 }
 
 impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> {
 	fn new_peer(&self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, _roles: Roles) {
-		{
+		let (players, all_peers) = {
 			let mut inner = self.inner.write();
 			inner.add_peer(who.clone());
-		}
+			(inner.config.players as usize, inner.peers.len())
+		};
 
-		let inner = self.inner.read();
-		if inner.config.players as usize == inner.peers.len() {
+		if players == all_peers {
 			// broadcast message to check all peers are the same
 			// may need to handle ">" case
+			let inner = self.inner.read();
+
 			let peers_hash = inner.peers.get_hash();
 			let from_index = inner.peers.get_position(&inner.local_peer_id).unwrap() as u16;
-			self.start_peer_confirmation(context, from_index, peers_hash);
+			let msg =
+				Message::ConfirmPeers(ConfirmPeersMessage::Confirming(from_index, peers_hash));
+			self.broadcast(context, GossipMessage::Message(msg).encode());
 		}
 	}
 
@@ -191,12 +178,10 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 		Box::new(move |who, intent, topic, mut data| {
 			let gossip_msg = GossipMessage::decode(&mut data);
 			if let Ok(gossip_msg) = gossip_msg {
-				println!(
-					"In `message_allowed` inner: {:?}, msg: {:?}",
-					inner, gossip_msg
-				);
+				println!("In `message_allowed` inner: {:?}", inner);
 				match gossip_msg {
 					GossipMessage::Message(Message::ConfirmPeers(_)) => return true,
+					GossipMessage::Message(Message::KeyGen(_)) => return true,
 					_ => return false,
 				}
 			}
@@ -210,19 +195,18 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 		Box::new(move |topic, mut data| {
 			let gossip_msg = GossipMessage::decode(&mut data);
 			if let Ok(gossip_msg) = gossip_msg {
-				println!("In `message_expired` msg: {:?}", gossip_msg);
-
+				println!("In `message_expired`");
+				// println!("msg: {:?}", gossip_msg);
 				match gossip_msg {
-					GossipMessage::Message(Message::ConfirmPeers(_)) => {
-						if inner.config.players as usize == inner.peers.len()
-							&& inner.local_peer_info.state != PeerState::AwaitingPeers
-						{
-							return true;
-						} else {
-							return false;
+					GossipMessage::Message(msg) => match msg {
+						Message::ConfirmPeers(_) => {
+							return inner.local_peer_info.state != PeerState::AwaitingPeers
 						}
-					}
-					_ => return false,
+						Message::KeyGen(_) => {
+							return inner.local_peer_info.state == PeerState::Complete
+						}
+						_ => return false,
+					},
 				}
 			}
 			true

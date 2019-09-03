@@ -193,20 +193,11 @@ where
 
 	fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
 		let (msg, receiver_opt) = item;
-		let original_msg = msg.clone();
-		match msg {
-			Message::ConfirmPeers(cpm) => {
-				self.send_message(receiver_opt.unwrap(), Message::ConfirmPeers(cpm));
-			}
-			Message::KeyGen(KeyGenMessage::Commit(commit)) => {
-				println!("commit {:?}", commit);
-				self.broadcast(original_msg);
-			}
-			Message::KeyGen(KeyGenMessage::Decommit(decommit)) => {
-				println!("decommit {:?}", decommit);
-				self.broadcast(original_msg);
-			}
-			_ => {}
+
+		if let Some(receiver) = receiver_opt {
+			self.send_message(receiver, msg);
+		} else {
+			self.broadcast(msg);
 		}
 
 		Ok(AsyncSink::Ready)

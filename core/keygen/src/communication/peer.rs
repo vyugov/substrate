@@ -1,14 +1,15 @@
-use codec::{Decode, Encode, Error as CodecError, Input};
-use log::{debug, error, trace, warn};
-use multihash::Multihash as PkHash;
-use serde::ser::SerializeStruct;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
 use std::cmp::{min, Ordering};
 use std::collections::{hash_map::DefaultHasher, BTreeSet, HashMap, VecDeque};
 use std::convert::From;
 use std::hash::{Hash, Hasher};
 use std::iter::Iterator;
+use std::str::FromStr;
+
+use codec::{Decode, Encode, Error as CodecError, Input};
+use log::{debug, error, trace, warn};
+use multihash::Multihash as PkHash;
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use network::{config::Roles, PeerId};
 
@@ -99,5 +100,15 @@ impl Peers {
 
 	pub fn get_position(&self, who: &PeerId) -> Option<usize> {
 		self.set.iter().position(|x| *x == who.to_base58())
+	}
+
+	pub fn get_peer_id_by_index(&self, index: usize) -> Option<PeerId> {
+		let s = self.set.iter().nth(index);
+		if let Some(s) = s {
+			if let Ok(who) = PeerId::from_str(s) {
+				return Some(who);
+			}
+		}
+		None
 	}
 }
