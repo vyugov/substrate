@@ -440,7 +440,7 @@ impl <B:BlockT>BadgerNode<B,QHB>
 {	 
 fn push_transaction(&mut self,tx: Vec<u8>) -> Result<CpStep<QHB>, badger::sender_queue::Error<badger::queueing_honey_badger::Error>>
 {
-	info!("BaDGER pushing transaction");
+	//info!("BaDGER pushing transaction");
 let ret=self.algo.push_transaction(tx,&mut self.main_rng);
 info!("BaDGER pushed: complete");
 ret
@@ -583,82 +583,63 @@ where D::Message: serde::Serialize + DeserializeOwned
 		}
 	}
 }
-
+ use parity_codec::alloc::collections::BTreeMap;
 pub struct BadgerGossipValidator<Block: BlockT>
  {
 	inner: parking_lot::RwLock<BadgerNode<Block,QHB>>,
+	pending_messages: parking_lot::RwLock<BTreeMap<PeerIdW,Vec<Vec<u8>>>>,
 }
 impl<Block: BlockT> BadgerGossipValidator<Block> 
 {
-	   fn flush_messages(&self,context: &mut dyn ValidatorContext<Block>)
-   {
-    let mut drain :Vec<_>;
-	let mut sid:PeerId;
-	{
-	let mut locked= self.inner.write();
-	sid=locked.id.clone();
-	info!("BaDGER!! Flushing {} messages",&locked.out_queue.len());
-	drain=locked.out_queue.drain(..).collect();
-	}
-	let topic = badger_topic::<Block>();    
-		
-		 for msg in drain
-		 {
-			 info!("Originator {:?} sid: {:?}",&sid,&msg.sender_id);	
-			 let uuid=OsRng::new().unwrap().gen::<u64>();
-				
-                info!("Sending with uid: {} {}",&uuid,HexFmt(&msg.message)); 
-			 let vdata=GossipMessage::BadgerData( BadgeredMessage{uid:uuid, originator: PeerIdW{0: sid.clone()} ,data:msg.message} ).encode();
-			 
-			 match &msg.target
-			 {
-				 LocalTarget::All  => 
-				 {
-					 info!("BaDGER!! All");
-					 //context.broadcast_message(topic,vdata,true) 
-					  let mut inner = self.inner.write();
-					  for pid in inner.peers.peer_list().iter() {
-						let tmp=PeerIdW {0:pid.clone() } ;
-                        if tmp != msg.sender_id {
-							 info!("BaDGER!! Sending to {:?}",&pid);
-                            context.send_message(pid, vdata.clone());
-                        }
-                    }
-				 },
-				LocalTarget::Node(to_id) => 
-				  {
-					   info!("BaDGER!! Id {}",&to_id.0);
-				  context.send_message(&to_id.0, vdata);
 
-				  },
-              LocalTarget::AllExcept(exclude) => {
-				  info!("BaDGER!! AllExcept  {}",exclude.len());
-				    let mut inner = self.inner.write();
-                    for pid in inner.peers.peer_list().iter().filter(|n| !exclude.contains(&PeerIdW{0:(*n).clone()})) {
-						let tmp=PeerIdW {0:pid.clone() } ;
-                        if tmp != msg.sender_id {
-                            context.send_message(pid, vdata.clone());
-                        }
-                    }
-                   }
+fn send_message_either<N:Network<Block>>(&self,who:PeerId,vdata:Vec<u8>,context_net:Option<&N>,context_val:&mut Option<&mut dyn ValidatorContext<Block>>)
+{
+ if let Some(context) =context_net
+ {
+	 context.send_message(vec![who.clone()], vdata);
+	 return;
+ }
+ if let Some(context) =context_val
+ {
+ context.send_message(&who, vdata);
+ }
+}
 
-			 }
-			
-		 }
-		 info!("BaDGER!! Flushing done");
-   }
-fn flush_message_net<N:Network<Block>>(&self,context: &N)
+fn flush_message_either<N:Network<Block>>(&self,context_net:Option<&N>,context_val:&mut Option<&mut dyn ValidatorContext<Block>>)
    {
   
 	let topic = badger_topic::<Block>(); 
 	let mut sid:PeerId;
-	   let mut drain :Vec<_>;
+	let mut drain :Vec<_>;
 		{
 	let mut locked= self.inner.write();
 	sid=locked.id.clone();
 	info!("BaDGER!! Flushing {} messages_net",&locked.out_queue.len());
 	drain=locked.out_queue.drain(..).collect();
 	}   
+
+{
+	 let mut  ldict=self.pending_messages.write();
+	 let  inner = self.inner.read();
+	 let plist=inner.peers.connected_peer_list();
+   for (k, v) in ldict.iter_mut()
+   {
+	   if v.len()==0
+	   {
+		   continue;
+	   }
+	   if plist.contains(&k.0)
+	   {
+		   for msg in v.drain(..)
+		   {
+			   	 info!("BaDGER!! RESending to {:?}",&k);
+self.send_message_either(k.0.clone(), msg,context_net,context_val);
+		   }
+         
+	   }
+    
+   }
+}
 		 for msg in drain
 		 {
 			 let uuid=OsRng::new().unwrap().gen::<u64>();
@@ -671,31 +652,73 @@ fn flush_message_net<N:Network<Block>>(&self,context: &N)
 				 {
 					  info!("BaDGER!! All_net");
 					    let mut inner = self.inner.write();
-					  for pid in inner.peers.peer_list().iter() {
+						let mut vallist:Vec<_>= inner.config.initial_validators.keys().collect();
+					  for pid in inner.peers.connected_peer_list().iter() {
+					
 						let tmp=PeerIdW {0:pid.clone() } ;
                         if tmp != msg.sender_id {
 							 info!("BaDGER!! Sending to {:?}",&pid);
-                            context.send_message(vec![pid.clone()], vdata.clone());
+                            self.send_message_either(pid.clone(), vdata.clone(),context_net,context_val);
+								
                         }
+						vallist.retain(|&x| *x!=tmp);
 					  }
-					 //context.gossip_message(topic,vdata,true)
+					 	 if vallist.len()>0
+					 {
+						 let mut  ldict=self.pending_messages.write();
+						 for val in vallist.into_iter()
+						 {
+                          let  stat = ldict.entry(val.clone()).or_insert(Vec::new());
+						  stat.push(vdata.clone());
+						 }
+						
+						// context.register_gossip_message(topic,vdata.clone());
+					 }
 					 }
 					 , 
 				LocalTarget::Node(to_id) => 
 				  {
 					   info!("BaDGER!! Id_net {}",&to_id.0);
-				  context.send_message(vec![to_id.0.clone()], vdata);
+					    let mut inner = self.inner.write();
+					   if (inner.peers.connected_peer_list().contains(&to_id.0))
+					   {
+					   self.send_message_either(to_id.0.clone(), vdata.clone(),context_net,context_val);
+					   }
+					   else
+						{
+							let mut  ldict=self.pending_messages.write();
+						let  stat = ldict.entry(to_id.clone()).or_insert(Vec::new());
+						  stat.push(vdata.clone());	
+						}
+
+
 
 				  },
               LocalTarget::AllExcept(exclude) => {
 				  		   info!("BaDGER!! AllExcept  {}",exclude.len());
 				      let mut locked= self.inner.write();
-                    for pid in locked.peers.peer_list().iter().filter(|n| !exclude.contains(&PeerIdW{0:(*n).clone() })) {
+					  let mut vallist:Vec<_>= locked.config.initial_validators.keys().
+					        filter(|n| !exclude.contains(&n)).collect();
+                    for pid in locked.peers.connected_peer_list().iter().filter(|n| !exclude.contains(&PeerIdW{0:(*n).clone() })) {
 						let tmp=PeerIdW {0:pid.clone() } ;
                         if tmp != msg.sender_id {
-                            context.send_message(vec![pid.clone()], vdata.clone());
+                            self.send_message_either(pid.clone(), vdata.clone(),context_net,context_val);
                         }
+						vallist.retain(|&x| *x!=tmp);
                     }
+
+					if vallist.len()>0
+					 {
+						 let mut  ldict=self.pending_messages.write();
+						 for val in vallist.into_iter()
+						 {
+                          let  stat = ldict.entry(val.clone()).or_insert(Vec::new());
+						  stat.push(vdata.clone());
+						 }
+						
+						// context.register_gossip_message(topic,vdata.clone());
+					 }
+
                    }
 
 			 }
@@ -709,6 +732,7 @@ fn flush_message_net<N:Network<Block>>(&self,context: &N)
 	{
 		let val = BadgerGossipValidator {
 			inner: parking_lot::RwLock::new(BadgerNode::<Block,QHB>::new(config,self_id)),
+			pending_messages: parking_lot::RwLock::new(BTreeMap::new()),
 		};
 
 		val
@@ -763,7 +787,7 @@ fn flush_message_net<N:Network<Block>>(&self,context: &N)
 				//send messages out
 				if do_flush 
 				{
-				self.flush_message_net(net);
+				self.flush_message_either(Some(net),&mut None);
 				}
 
          Ok(())
@@ -789,6 +813,8 @@ fn flush_message_net<N:Network<Block>>(&self,context: &N)
 							 {
 							//self.inner.write().register_peer_public_key(who,share);
 							 }
+							 let mut  inner=self.inner.write();
+							 inner.peers.update_peer_state(who,PeerConsensusState::GreetingReceived);
 							Action::Keep()
 						 } 
 						 else
@@ -860,19 +886,20 @@ fn flush_message_net<N:Network<Block>>(&self,context: &N)
 		(action,  peer_reply)
 	}
 }
-
+use gossip::PeerConsensusState;
 
 impl<Block: BlockT > network_gossip::Validator<Block> for BadgerGossipValidator<Block> 
 {
 	fn new_peer(&self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, _roles: Roles) 
 	{
+		info!("New Peer called {:?}",who);
 		{
 			let mut inner = self.inner.write();
-			inner.peers.new_peer(who.clone());
+			inner.peers.update_peer_state(who,PeerConsensusState::Connected);
 		};
 		let packet = {
 			let mut inner = self.inner.write();
-			inner.peers.new_peer(who.clone());
+			//inner.peers.new_peer(who.clone());
             GreetingMessage
 			{
 				my_pubshare:  match inner.config.initial_validators.get(&PeerIdW{0: inner.id.clone()})
@@ -908,7 +935,7 @@ impl<Block: BlockT > network_gossip::Validator<Block> for BadgerGossipValidator<
 		context.send_topic(who, topic, false);
 
 		{
-        self.flush_messages(context);
+        self.flush_message_either::<ShutUp>(None,&mut Some(context));
 		}
 		
 		match action {
@@ -998,7 +1025,42 @@ impl<Block: BlockT > network_gossip::Validator<Block> for BadgerGossipValidator<
 }
 
 
+#[derive(Clone, Debug, PartialEq, Eq,Encode,Decode)]
+struct ShutUp;
 
+impl<B>  Network<B> for ShutUp where
+B: BlockT,
+{
+type In = NetworkStream;
+	fn local_id(&self) ->PeerId
+	{
+    PeerId::random()
+	}
+
+	fn messages_for(&self, topic: B::Hash) -> Self::In {
+		let (tx, rx) = futures03::channel::oneshot::channel::<futures03::channel::mpsc::UnboundedReceiver<_>>();
+		NetworkStream { outer: rx, inner: None }
+	}
+
+	fn register_validator(&self, validator: Arc<dyn network_gossip::Validator<B>>) {
+
+	}
+
+	fn gossip_message(&self, topic: B::Hash, data: Vec<u8>, force: bool) {
+	}
+
+	fn register_gossip_message(&self, topic: B::Hash, data: Vec<u8>) {
+	}
+
+	fn send_message(&self, who: Vec<network::PeerId>, data: Vec<u8>) {
+	}
+
+	fn report(&self, who: network::PeerId, cost_benefit: i32) {
+	}
+
+	fn announce(&self, block: B::Hash) {
+	}
+}
 
 impl<B, S, H> Network<B> for Arc<NetworkService<B, S, H>> where
 	B: BlockT,

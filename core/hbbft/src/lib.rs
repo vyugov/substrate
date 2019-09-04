@@ -876,7 +876,7 @@ S: Unpin
 	}
 }*/
 use futures_timer::Interval;
-
+use futures_timer::Delay;
 /// Run a HBBFT churn as a task. Provide configuration and a link to a
 /// block import worker that has already been instantiated with `block_import`.
 pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
@@ -894,7 +894,7 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static+Clone,
 	N: Network<Block> + Send + Sync + Unpin,
 	N::In: Send,
-	SC: SelectChain<Block> + 'static,
+	SC: SelectChain<Block> + 'static+Unpin,
 	NumberFor<Block>: BlockNumberOps,
 	DigestFor<Block>: Encode,
 	RA: Send + Sync + 'static,
@@ -919,8 +919,8 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 					&client,
 					network_bridge,
 				);
-
-
+  let txcopy=Arc::new(parking_lot::RwLock::new( tx_in));
+let tx_in_arc=txcopy.clone();
   /*  let bworker= BadgerProposerWorker
                 {
                  block_out: blk_out,
@@ -940,8 +940,9 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
   //let sender=tx_in.send_all(&mut tx_out);
  let sender=tx_out.for_each( move |data: std::vec::Vec<std::vec::Vec<u8>>| 
    {
-	 
-	   match tx_in.send_out(data)
+	 {
+		 let mut lock=tx_in_arc.write();
+	   match lock.send_out(data)
 	   {
 		   Ok(_) =>{},
 		   Err(_) =>
@@ -949,32 +950,28 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 			   debug!("Well, this is weird");
 		   }
 	   }
+	 }
 	  future::ready(()) 
    }
  ); 
   let cclient=client.clone();
   let cblock_import=block_import.clone();
+  let ping_sel=selch.clone();
   let receiver= blk_out.for_each(move |mut batch|
 		  {
-			let inherent_data = match inherent_data_providers.create_inherent_data() 
-			{
-				Ok(id) => id,
-				Err(err) => return future::ready(()),//future::err(err),
-			};
-			//empty for now?
-			let inherent_digests= generic::Digest {
+			
+                  	let inherent_digests= generic::Digest {
 							logs: vec![],
 						};
-                  
 				info!("Processing batch with epoch {:?} of {:?} transactions into blocks",batch.epoch(),batch.len());
    		        let mut chain_head = match selch.best_chain() {
 				    Ok(x) => x,
 				    Err(e) => {
-					 warn!(target: "slots", "Unable to author block, no best block header: {:?}", e);
+					 warn!(target: "formation", "Unable to author block, no best block header: {:?}", e);
 					 return future::ready(());
 				     }
 			    };
-                let mut parent_hash = chain_head.hash();
+                let  parent_hash = chain_head.hash();
 		        let mut pnumber= *chain_head.number();
 		        let mut parent_id=BlockId::hash(parent_hash);
 		        let mut block_builder = match  cclient.new_block_at(&parent_id, inherent_digests.clone())
@@ -987,33 +984,7 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 				    }
 				  };
 
- 		        // We don't check the API versions any further here since the dispatch compatibility
-		        // check should be enough. 
-		        // do this only once? 
-				let inh=cclient.runtime_api()
-					.inherent_extrinsics_with_context(
-						&parent_id,
-						ExecutionContext::BlockConstruction,
-						inherent_data) ;
-				if let Ok(res) = inh
-					{
-				for extrinsic in res 
-				   {
-					match block_builder.push(extrinsic)
-					{
-						Ok(_) =>{},
-						Err(_) =>
-						{
-							warn!("Error in block_builder.push");
-					        return future::ready(());
-						}
-					}
-				   }
-				}
-				else
-				{
-             info!("Inherent panic {:?}",inh);
-				}
+ 		        
 		        // proceed with transactions
 				let mut is_first = true;
 				let mut skipped = 0;
@@ -1222,9 +1193,68 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash=H256>, N, RA, SC, X, I,  A>(
 //		}) ;
 
 	let with_start = network_startup.then(move |()| futures03::future::join(sender,receiver));
-     let ping=Interval::new(Duration::from_millis(300));
+		 let ping_client=client.clone();
+
+     let ping=Delay::new(Duration::from_secs(1)).then(|_| Interval::new(Duration::from_millis(500)).for_each(move |_|{
+		 //put inherents here for now
+		   let mut chain_head = match ping_sel.best_chain() {
+				    Ok(x) => x,
+				    Err(e) => {
+					 warn!(target: "formation", "Unable to author block, no best block header: {:?}", e);
+					 return future::ready(());
+				     }
+			    };
+                let mut parent_hash = chain_head.hash();
+		        let mut pnumber= *chain_head.number();
+		        let mut parent_id=BlockId::hash(parent_hash);
+
+		 let inherent_data = match inherent_data_providers.create_inherent_data() 
+			{
+				Ok(id) => id,
+				Err(err) => return future::ready(()),//future::err(err),
+			};
+			//empty for now?
+		
+						// We don't check the API versions any further here since the dispatch compatibility
+		        // check should be enough. 
+		        // do this only once? 
+			let inh=ping_client.runtime_api()
+					.inherent_extrinsics_with_context(
+						&parent_id,
+						ExecutionContext::BlockConstruction,
+						inherent_data) ;
+				if let Ok(res) = inh
+					{
+						{
+							let mut lock=txcopy.write();
+							info!("This many INHERS {:?}",res.len());
+				for extrinsic in res 
+				   {
+					match lock.send_out(vec![extrinsic.encode().into_iter().collect()])
+					{
+						Ok(_) =>{},
+						Err(_) =>
+						{
+							warn!("Error in ping sendout");
+					        return future::ready(());
+						}
+						
+					}
+				   }
+						}
+				}
+				else
+				{
+             info!("Inherent panic {:?}",inh);
+				}
+		 future::ready(())
+		 
+		 })
+	 
+	 );
+
 	 //let jn = ping.merge(t_pool.clone().import_notification_stream());
-	 let pinged=futures03::future::select(with_start,ping.for_each(|_|{future::ready(())}));
+	 let pinged=futures03::future::select(with_start,ping);
 	// Make sure that `telemetry_task` doesn't accidentally finish and kill grandpa.
 
 	Ok(futures03::future::select(on_exit.then(|_| {info!("READY");  future::ready(())}),pinged   ).then(|_| 

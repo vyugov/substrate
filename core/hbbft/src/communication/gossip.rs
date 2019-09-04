@@ -93,7 +93,7 @@ use fg_primitives::{AuthorityId,AuthoritySignature};
 use futures03::prelude::*;
 //use futures03::channel::mpsc;
 
-
+use log::info;
 use std::collections::{HashMap, };
 use std::time::{Duration, Instant};
 
@@ -150,26 +150,36 @@ impl From<GreetingMessage> for GossipMessage {
 	}
 }
 
-
+#[derive(Debug, Encode, Decode,PartialEq,Eq)]
+pub enum PeerConsensusState
+{
+ Unknown,
+ Connected,
+ GreetingReceived,
+ Disconnected
+}
 pub struct PeerInfo {
 	//view: View<N>,
-	pub id: Option<AuthorityId> //public key
+	pub id: Option<AuthorityId>, //public key
+	pub state: PeerConsensusState
 }
 
 impl PeerInfo {
 	fn new() -> Self {
 		PeerInfo {
 			id: None,
+			state:PeerConsensusState::Unknown
 		}
 	}
     fn new_id(id: AuthorityId) -> Self {
 		PeerInfo {
 			id: Some(id),
+			state:PeerConsensusState::Unknown
 		}
 	}
 }
 
-/// The peers we're connected do in gossip.
+/// The peers we're connected to in gossip.
 pub struct Peers {
 	inner: HashMap<PeerId, PeerInfo>,
 }
@@ -189,19 +199,51 @@ impl Peers {
 		match self.inner.get(&who)
 		{
 			Some(_) => {},
-			None => { self.inner.insert(who, PeerInfo::new());}
+			None => { 
+				let ti=PeerInfo::new();
+				self.inner.insert(who, ti);
+	   
+				}
 		}	
+	}
+	pub fn update_peer_state(&mut self,who:&PeerId, state:PeerConsensusState)
+	{
+	match self.inner.get_mut(&who)
+		{
+			Some(dat) =>
+			{
+				dat.state=state;
+			}
+			None => {
+				let mut ti=PeerInfo::new();
+				ti.state=state;
+				self.inner.insert(who.clone(), ti);
+			}
+		};
 	}
     pub fn peer_list(&self) ->Vec<PeerId>
 	{
      self.inner.iter().map(|(k,_) | k.clone()).collect()
 	}
-	pub fn peer_disconnected(&mut self, who: &PeerId) {
-		self.inner.remove(who);
+pub fn connected_peer_list(&self) ->Vec<PeerId>
+	{
+     self.inner.iter().filter( |v| {v.1.state==PeerConsensusState::Connected||v.1.state==PeerConsensusState::GreetingReceived} ).map(|(k,_) | k.clone()).collect()
 	}
 
-	// returns a reference to the new view, if the peer is known.
 
+	pub fn peer_disconnected(&mut self, who: &PeerId) 
+	{
+		match self.inner.get_mut(&who)
+		{
+			Some(dat) =>
+			{
+				dat.state=PeerConsensusState::Disconnected;
+			}
+			None => {}
+		};
+	//	self.inner.remove(who);
+	    info!("Peer disconnected! now {:?} peers known about",self.inner.len());
+	}
 
 	pub fn update_id(&mut self, who: &PeerId, authId: AuthorityId)  {
 		let peer = match self.inner.get_mut(who) {
