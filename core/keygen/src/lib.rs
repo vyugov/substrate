@@ -1,5 +1,5 @@
 use std::{
-	collections::VecDeque,
+	collections::{BTreeMap, VecDeque},
 	fmt::Debug,
 	marker::PhantomData,
 	sync::Arc,
@@ -50,7 +50,7 @@ use periodic_stream::PeriodicStream;
 use shared_state::{load_persistent, set_signers, SharedState};
 use signer::Signer;
 
-pub type Count = u16;
+type Count = u16;
 
 #[derive(Clone, Debug)]
 pub struct NodeConfig {
@@ -82,11 +82,11 @@ pub struct KeyGenState {
 	pub complete: bool,
 	pub confirmations: Confirmations,
 	pub local_key: Option<Keys>,
-	pub commits: Vec<Option<KeyGenCommit>>,
-	pub decommits: Vec<Option<KeyGenDecommit>>,
-	pub vsss: Vec<Option<VerifiableSS>>,
-	pub secret_shares: Vec<Option<FE>>,
-	pub proofs: Vec<Option<DLogProof>>,
+	pub commits: BTreeMap<PeerIndex, KeyGenCommit>,
+	pub decommits: BTreeMap<PeerIndex, KeyGenDecommit>,
+	pub vsss: BTreeMap<PeerIndex, VerifiableSS>,
+	pub secret_shares: BTreeMap<PeerIndex, FE>,
+	pub proofs: BTreeMap<PeerIndex, DLogProof>,
 }
 
 impl Default for KeyGenState {
@@ -95,11 +95,11 @@ impl Default for KeyGenState {
 			complete: false,
 			confirmations: Confirmations::default(),
 			local_key: None,
-			commits: Vec::new(),
-			decommits: Vec::new(),
-			vsss: Vec::new(),
-			secret_shares: Vec::new(),
-			proofs: Vec::new(),
+			commits: BTreeMap::new(),
+			decommits: BTreeMap::new(),
+			vsss: BTreeMap::new(),
+			secret_shares: BTreeMap::new(),
+			proofs: BTreeMap::new(),
 		}
 	}
 }
@@ -150,14 +150,7 @@ where
 		config: NodeConfig,
 		bridge: NetworkBridge<Block, N>,
 	) -> Self {
-		let players = config.players;
-
-		let mut state = KeyGenState::default();
-		state.commits.resize(players as usize, None);
-		state.decommits.resize(players as usize, None);
-		state.vsss.resize(players as usize, None);
-		state.secret_shares.resize(players as usize, None);
-		state.proofs.resize(players as usize, None);
+		let state = KeyGenState::default();
 
 		let env = Arc::new(Environment {
 			client,
@@ -174,11 +167,6 @@ where
 		work.rebuild();
 		work
 	}
-
-	// fn handle_message(&self, msg: GossipMessage) -> Result<(), &'static str> {
-	// 	println!("handle message {:?}", msg);
-	// 	Ok(())
-	// }
 
 	fn rebuild(&mut self) {
 		let should_rebuild = true;

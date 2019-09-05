@@ -123,24 +123,11 @@ where
 
 		let key: Keys = state.local_key.clone().unwrap();
 
-		let vsss = state
-			.vsss
-			.iter()
-			.flat_map(|x| x.clone())
-			.collect::<Vec<_>>();
+		let vsss = state.vsss.values().cloned().collect::<Vec<_>>();
 
-		let secret_shares = state
-			.secret_shares
-			.iter()
-			.flat_map(|x| x.clone())
-			.collect::<Vec<_>>();
+		let secret_shares = state.secret_shares.values().cloned().collect::<Vec<_>>();
 
-		let points = state
-			.decommits
-			.iter()
-			.flat_map(|x| x.clone())
-			.map(|x| x.y_i)
-			.collect::<Vec<_>>();
+		let points = state.decommits.values().map(|x| x.y_i).collect::<Vec<_>>();
 
 		let (shared_keys, proof) = key
 			.phase2_verify_vss_construct_keypair_phase3_pok_dlog(
@@ -152,13 +139,14 @@ where
 			)
 			.unwrap();
 
-		state.proofs[key.party_index] = Some(proof.clone());
+		let i = key.party_index as PeerIndex;
+		state.proofs.insert(i, proof.clone());
 		state.complete = true;
 
 		drop(state);
 
 		println!("shared keys: {:?} proof: {:?}", shared_keys, proof);
-		let p_msg = KeyGenMessage::Proof(key.party_index as PeerIndex, proof);
+		let p_msg = KeyGenMessage::Proof(i, proof);
 		self.global_out.push((Message::KeyGen(p_msg), None));
 	}
 
@@ -189,33 +177,30 @@ where
 
 				if state.confirmations.peer == players - 1 {
 					validator.set_local_generating();
-					let current_index = validator.get_local_index();
+					let local_index = validator.get_local_index();
 					drop(validator);
 
-					let key = Keys::create(current_index);
+					let key = Keys::create(local_index);
 					let (commit, decommit) = key.phase1_broadcast_phase3_proof_of_correct_key();
 
-					state.commits[current_index] = Some(commit.clone());
-					state.decommits[current_index] = Some(decommit.clone());
+					let index = local_index as PeerIndex;
+					state.commits.insert(index, commit.clone());
+					state.decommits.insert(index, decommit.clone());
 
 					state.local_key = Some(key);
 					drop(state);
 
-					let cad_msg = KeyGenMessage::CommitAndDecommit(
-						current_index as PeerIndex,
-						commit,
-						decommit,
-					);
+					let cad_msg = KeyGenMessage::CommitAndDecommit(index, commit, decommit);
 
 					self.global_out.push((Message::KeyGen(cad_msg), None));
 				}
 			}
-			Message::KeyGen(KeyGenMessage::CommitAndDecommit(from_index, commit, decommit)) => {
+			Message::KeyGen(KeyGenMessage::CommitAndDecommit(ref from_index, commit, decommit)) => {
 				let mut state = self.env.state.write();
 				state.confirmations.com_decom += 1;
 
-				state.commits[*from_index as usize] = Some(commit.clone());
-				state.decommits[*from_index as usize] = Some(decommit.clone());
+				state.commits.insert(*from_index, commit.clone());
+				state.decommits.insert(*from_index, decommit.clone());
 
 				if state.confirmations.com_decom == players - 1 {
 					let params = Parameters {
@@ -225,17 +210,8 @@ where
 
 					let key: Keys = state.local_key.clone().unwrap();
 
-					let commits = state
-						.commits
-						.iter()
-						.flat_map(|x| x.clone())
-						.collect::<Vec<_>>();
-
-					let decommits = state
-						.decommits
-						.iter()
-						.flat_map(|x| x.clone())
-						.collect::<Vec<_>>();
+					let commits = state.commits.values().cloned().collect::<Vec<_>>();
+					let decommits = state.decommits.values().cloned().collect::<Vec<_>>();
 
 					let (vss, secret_shares, index) = key
 						.phase1_verify_com_phase3_verify_correct_key_phase2_distribute(
@@ -245,8 +221,9 @@ where
 						)
 						.unwrap();
 
-					state.vsss[index] = Some(vss.clone());
-					state.secret_shares[index] = Some(secret_shares[index].clone());
+					let share = secret_shares[index].clone();
+					state.vsss.insert(index as PeerIndex, vss.clone());
+					state.secret_shares.insert(index as PeerIndex, share);
 
 					drop(state);
 
@@ -270,19 +247,19 @@ where
 				let mut state = self.env.state.write();
 				state.confirmations.vss += 1;
 
-				state.vsss[*from_index as usize] = Some(vss.clone());
+				state.vsss.insert(*from_index, vss.clone());
 			}
-			Message::KeyGen(KeyGenMessage::SecretShare(from_index, secret_share)) => {
+			Message::KeyGen(KeyGenMessage::SecretShare(from_index, ss)) => {
 				let mut state = self.env.state.write();
 				state.confirmations.secret_share += 1;
 
-				state.secret_shares[*from_index as usize] = Some(secret_share.clone());
+				state.secret_shares.insert(*from_index, ss.clone());
 			}
 			Message::KeyGen(KeyGenMessage::Proof(from_index, proof)) => {
 				let mut state = self.env.state.write();
 				state.confirmations.proof += 1;
 
-				state.proofs[*from_index as usize] = Some(proof.clone());
+				state.proofs.insert(*from_index, proof.clone());
 
 				let mut validator = self.env.bridge.validator.inner.write();
 				let sender = validator
@@ -296,23 +273,14 @@ where
 						share_count: self.env.config.players,
 					};
 
-					let proofs = state
-						.proofs
-						.iter()
-						.flat_map(|x| x.clone())
-						.collect::<Vec<_>>();
+					let proofs = state.proofs.values().cloned().collect::<Vec<_>>();
 
-					let points = state
-						.decommits
-						.iter()
-						.flat_map(|x| x.clone())
-						.map(|x| x.y_i)
-						.collect::<Vec<_>>();
+					let points = state.decommits.values().map(|x| x.y_i).collect::<Vec<_>>();
 
 					if let Ok(_) =
 						Keys::verify_dlog_proofs(&params, proofs.as_slice(), points.as_slice())
 					{
-						println!("Key generation complete");
+						info!("Key generation complete");
 						validator.set_local_complete();
 					}
 				}

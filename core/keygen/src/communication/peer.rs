@@ -84,7 +84,6 @@ impl Peers {
 	}
 
 	pub fn get_hash(&self) -> u64 {
-		// self.set
 		let mut hasher = DefaultHasher::new();
 		self.set.hash(&mut hasher);
 		hasher.finish()
