@@ -26,8 +26,8 @@ use client::{
 	CallExecutor, Client,
 };
 use consensus_common::SelectChain;
-use hbbft_primitives::HbbftApi;
 use inherents::InherentDataProviders;
+use mpe_primitives::HbbftApi;
 use network::{self, PeerId};
 use primitives::{Blake2Hasher, H256};
 use sr_primitives::generic::BlockId;

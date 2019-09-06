@@ -149,4 +149,87 @@ impl network_gossip::ValidatorContext<Block> for NoopContext {
 }
 
 #[test]
-fn test_message() {}
+fn test_message() {
+	let id = network::PeerId::random();
+	let global_topic = super::string_topic::<Block>("hash");
+
+	let test = make_test_network()
+		.0
+		.and_then(move |tester| {
+			// register a peer.
+			tester
+				.gossip_validator
+				.new_peer(&mut NoopContext, &id, network::config::Roles::FULL);
+			Ok((tester, id))
+		})
+		.and_then(move |(tester, id)| {
+			// start round, dispatch commit, and wait for broadcast.
+			let (commits_in, _) =
+				tester
+					.net_handle
+					.global_communication(SetId(1), voter_set, false);
+
+			{
+				let (action, ..) = tester
+					.gossip_validator
+					.do_validate(&id, &encoded_commit[..]);
+				match action {
+					gossip::Action::ProcessAndDiscard(t, _) => assert_eq!(t, global_topic),
+					_ => panic!("wrong expected outcome from initial commit validation"),
+				}
+			}
+
+			let commit_to_send = encoded_commit.clone();
+
+			// asking for global communication will cause the test network
+			// to send us an event asking us for a stream. use it to
+			// send a message.
+			let sender_id = id.clone();
+			let send_message = tester.filter_network_events(move |event| match event {
+				Event::MessagesFor(topic, sender) => {
+					if topic != global_topic {
+						return false;
+					}
+					let _ = sender.unbounded_send(network_gossip::TopicNotification {
+						message: commit_to_send.clone(),
+						sender: Some(sender_id.clone()),
+					});
+
+					true
+				}
+				_ => false,
+			});
+
+			// when the commit comes in, we'll tell the callback it was good.
+			let handle_commit = commits_in
+				.into_future()
+				.map(|(item, _)| match item.unwrap() {
+					grandpa::voter::CommunicationIn::Commit(_, _, mut callback) => {
+						callback.run(grandpa::voter::CommitProcessingOutcome::good());
+					}
+					_ => panic!("commit expected"),
+				})
+				.map_err(|_| panic!("could not process commit"));
+
+			// once the message is sent and commit is "handled" we should have
+			// a repropagation event coming from the network.
+			send_message
+				.join(handle_commit)
+				.and_then(move |(tester, ())| {
+					tester.filter_network_events(move |event| match event {
+						Event::GossipMessage(topic, data, false) => {
+							if topic == global_topic && data == encoded_commit {
+								true
+							} else {
+								panic!("Trying to gossip something strange")
+							}
+						}
+						_ => false,
+					})
+				})
+				.map_err(|_| panic!("could not watch for gossip message"))
+				.map(|_| ())
+		});
+
+	current_thread::block_on_all(test).unwrap();
+}

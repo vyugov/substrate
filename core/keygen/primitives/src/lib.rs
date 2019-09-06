@@ -53,19 +53,14 @@ pub struct Keypair {
 #[cfg(feature = "std")]
 pub type AuthorityPair = Keypair;
 
-/// Identity of a Grandpa authority.
 pub type AuthorityId = PublicKey;
 
-/// Signature for a Grandpa authority.
 pub type AuthoritySignature = Signature;
 
-/// The `ConsensusEngineId` of GRANDPA.
-pub const HBBFT_ENGINE_ID: ConsensusEngineId = *b"HNBG";
+pub const MP_ECDSA_ENGINE_ID: ConsensusEngineId = *b"MPEC";
 
-/// The weight of an authority.
 pub type AuthorityWeight = u64;
 
-/// The index of an authority.
 pub type AuthorityIndex = u64;
 
 /// A scheduled change of authority set.

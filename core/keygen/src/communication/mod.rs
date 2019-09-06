@@ -6,14 +6,14 @@ use futures::sync::{mpsc, oneshot};
 use log::{error, info};
 
 use gossip::{GossipMessage, GossipValidator};
-use hbbft_primitives::{AuthorityId, Keypair};
+use mpe_primitives::{AuthorityId, Keypair};
 use network::{consensus_gossip as network_gossip, NetworkService, PeerId};
 use network_gossip::ConsensusMessage;
 use sr_primitives::traits::{
 	Block as BlockT, DigestFor, Hash as HashT, Header as HeaderT, NumberFor, ProvideRuntimeApi,
 };
 
-pub use hbbft_primitives::HBBFT_ENGINE_ID;
+pub use mpe_primitives::MP_ECDSA_ENGINE_ID;
 
 pub mod gossip;
 pub mod message;
@@ -100,7 +100,7 @@ where
 	fn messages_for(&self, topic: B::Hash) -> Self::In {
 		let (tx, rx) = oneshot::channel();
 		self.with_gossip(move |gossip, _| {
-			let inner_rx = gossip.messages_for(HBBFT_ENGINE_ID, topic);
+			let inner_rx = gossip.messages_for(MP_ECDSA_ENGINE_ID, topic);
 			let _ = tx.send(inner_rx);
 		});
 		Self::In {
@@ -111,13 +111,13 @@ where
 
 	fn register_validator(&self, validator: Arc<dyn network_gossip::Validator<B>>) {
 		self.with_gossip(move |gossip, context| {
-			gossip.register_validator(context, HBBFT_ENGINE_ID, validator)
+			gossip.register_validator(context, MP_ECDSA_ENGINE_ID, validator)
 		})
 	}
 
 	fn gossip_message(&self, topic: B::Hash, data: Vec<u8>, force: bool) {
 		let msg = ConsensusMessage {
-			engine_id: HBBFT_ENGINE_ID,
+			engine_id: MP_ECDSA_ENGINE_ID,
 			data,
 		};
 
@@ -126,7 +126,7 @@ where
 
 	fn register_gossip_message(&self, topic: B::Hash, data: Vec<u8>) {
 		let msg = ConsensusMessage {
-			engine_id: HBBFT_ENGINE_ID,
+			engine_id: MP_ECDSA_ENGINE_ID,
 			data,
 		};
 
@@ -135,7 +135,7 @@ where
 
 	fn send_message(&self, who: Vec<network::PeerId>, data: Vec<u8>) {
 		let msg = ConsensusMessage {
-			engine_id: HBBFT_ENGINE_ID,
+			engine_id: MP_ECDSA_ENGINE_ID,
 			data,
 		};
 
@@ -237,6 +237,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 			.service
 			.messages_for(topic)
 			.filter_map(|notification| {
+				println!("GET TOPIC MESSAGE");
 				let decoded = GossipMessage::decode(&mut &notification.message[..]);
 				if let Err(e) = decoded {
 					error!("notification error {:?}", e);
@@ -247,14 +248,16 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 			.filter_map(move |(msg, sender)| match msg {
 				GossipMessage::Message(message) => Some((message, sender)),
 			})
-			.map_err(|()| Error::Network(format!("Failed to receive message on unbounded stream")));
+			.map_err(|()| {
+				Error::Network("Failed to receive message on unbounded stream".to_string())
+			});
 
-		let sender = MessageSender::<B, N> {
+		let outgoing = MessageSender::<B, N> {
 			network: self.service.clone(),
 			validator: self.validator.clone(),
 		};
 
-		(incoming, sender)
+		(incoming, outgoing)
 	}
 }
 

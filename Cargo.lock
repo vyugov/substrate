@@ -5067,19 +5067,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "substrate-hbbft-primitives"
-version = "2.0.0"
-dependencies = [
- "hbbft 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "parity-scale-codec 1.0.5 (registry+https://github.com/rust-lang/crates.io-index)",
- "serde 1.0.99 (registry+https://github.com/rust-lang/crates.io-index)",
- "sr-primitives 2.0.0",
- "sr-std 2.0.0",
- "substrate-client 2.0.0",
- "substrate-primitives 2.0.0",
-]
-
-[[package]]
 name = "substrate-inherents"
 version = "2.0.0"
 dependencies = [
@@ -5112,10 +5099,10 @@ dependencies = [
  "substrate-client 2.0.0",
  "substrate-consensus-babe-primitives 2.0.0",
  "substrate-consensus-common 2.0.0",
- "substrate-hbbft-primitives 2.0.0",
  "substrate-inherents 2.0.0",
  "substrate-keyring 2.0.0",
  "substrate-keystore 2.0.0",
+ "substrate-mpecdsa-primitives 2.0.0",
  "substrate-network 2.0.0",
  "substrate-primitives 2.0.0",
  "substrate-service 2.0.0",
@@ -5151,6 +5138,19 @@ dependencies = [
  "substrate-primitives 2.0.0",
  "subtle 2.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "tempdir 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "substrate-mpecdsa-primitives"
+version = "2.0.0"
+dependencies = [
+ "hbbft 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "parity-scale-codec 1.0.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde 1.0.99 (registry+https://github.com/rust-lang/crates.io-index)",
+ "sr-primitives 2.0.0",
+ "sr-std 2.0.0",
+ "substrate-client 2.0.0",
+ "substrate-primitives 2.0.0",
 ]
 
 [[package]]

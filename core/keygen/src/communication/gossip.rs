@@ -160,7 +160,6 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 		who: &PeerId,
 		mut data: &[u8],
 	) -> network_gossip::ValidationResult<Block::Hash> {
-		println!("in validate");
 		let gossip_msg = GossipMessage::decode(&mut data);
 		if let Ok(gossip_msg) = gossip_msg {
 			let topic = super::string_topic::<Block>("hash");
