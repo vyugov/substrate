@@ -7,8 +7,13 @@ use network::test::{Block, Hash};
 use network_gossip::Validator;
 use std::sync::Arc;
 use tokio::runtime::current_thread;
+use tokio_executor::Executor;
 
-use super::gossip::{self, GossipValidator};
+use super::{
+	gossip::{self, GossipValidator},
+	message::{ConfirmPeersMessage, KeyGenMessage, Message, SignMessage},
+};
+
 use crate::NodeConfig;
 
 enum Event {
@@ -105,7 +110,7 @@ impl Tester {
 	}
 }
 
-fn make_test_network() -> (impl Future<Item = Tester, Error = ()>, TestNetwork) {
+fn make_test_network() -> impl Future<Item = Tester, Error = ()> {
 	let (tx, rx) = mpsc::unbounded();
 	let net = TestNetwork { sender: tx };
 
@@ -128,16 +133,26 @@ fn make_test_network() -> (impl Future<Item = Tester, Error = ()>, TestNetwork) 
 	};
 
 	let id = network::PeerId::random();
-	let (bridge, startup_work) = super::NetworkBridge::new(net.clone(), config, id);
+	let bridge = super::NetworkBridge::new(net.clone(), config, id);
+	let on_exit = Exit;
 
-	(
-		startup_work.map(move |()| Tester {
-			gossip_validator: bridge.validator.clone(),
-			net_handle: bridge,
-			events: rx,
-		}),
-		net,
-	)
+	let startup_work = futures::future::lazy(move || {
+		let mut executor = tokio_executor::DefaultExecutor::current();
+		executor
+			.spawn(Box::new(on_exit.clone().then(|_| {
+				println!("FUCKING exit");
+				Ok(())
+			})))
+			.expect("failed to spawn");
+
+		Ok(())
+	});
+
+	startup_work.map(move |()| Tester {
+		gossip_validator: bridge.validator.clone(),
+		net_handle: bridge,
+		events: rx,
+	})
 }
 struct NoopContext;
 
@@ -149,12 +164,16 @@ impl network_gossip::ValidatorContext<Block> for NoopContext {
 }
 
 #[test]
-fn test_message() {
+fn test_confirm_peer_message() {
 	let id = network::PeerId::random();
 	let global_topic = super::string_topic::<Block>("hash");
 
+	let encoded_msg = gossip::GossipMessage::Message(Message::ConfirmPeers(
+		ConfirmPeersMessage::Confirming(0, 1),
+	))
+	.encode();
+
 	let test = make_test_network()
-		.0
 		.and_then(move |tester| {
 			// register a peer.
 			tester
@@ -163,35 +182,21 @@ fn test_message() {
 			Ok((tester, id))
 		})
 		.and_then(move |(tester, id)| {
-			// start round, dispatch commit, and wait for broadcast.
-			let (commits_in, _) =
-				tester
-					.net_handle
-					.global_communication(SetId(1), voter_set, false);
-
-			{
-				let (action, ..) = tester
-					.gossip_validator
-					.do_validate(&id, &encoded_commit[..]);
-				match action {
-					gossip::Action::ProcessAndDiscard(t, _) => assert_eq!(t, global_topic),
-					_ => panic!("wrong expected outcome from initial commit validation"),
-				}
-			}
-
-			let commit_to_send = encoded_commit.clone();
+			let (global_in, _) = tester.net_handle.global();
 
 			// asking for global communication will cause the test network
 			// to send us an event asking us for a stream. use it to
 			// send a message.
 			let sender_id = id.clone();
+			let msg_to_send = encoded_msg.clone();
+
 			let send_message = tester.filter_network_events(move |event| match event {
 				Event::MessagesFor(topic, sender) => {
 					if topic != global_topic {
 						return false;
 					}
 					let _ = sender.unbounded_send(network_gossip::TopicNotification {
-						message: commit_to_send.clone(),
+						message: msg_to_send.clone(),
 						sender: Some(sender_id.clone()),
 					});
 
@@ -201,24 +206,21 @@ fn test_message() {
 			});
 
 			// when the commit comes in, we'll tell the callback it was good.
-			let handle_commit = commits_in
+			let handle_in = global_in
 				.into_future()
-				.map(|(item, _)| match item.unwrap() {
-					grandpa::voter::CommunicationIn::Commit(_, _, mut callback) => {
-						callback.run(grandpa::voter::CommitProcessingOutcome::good());
-					}
-					_ => panic!("commit expected"),
+				.map(|(item, _)| {
+					println!("{:?}", item);
 				})
-				.map_err(|_| panic!("could not process commit"));
+				.map_err(|_| panic!("could not process  "));
 
 			// once the message is sent and commit is "handled" we should have
 			// a repropagation event coming from the network.
 			send_message
-				.join(handle_commit)
+				.join(handle_in)
 				.and_then(move |(tester, ())| {
 					tester.filter_network_events(move |event| match event {
 						Event::GossipMessage(topic, data, false) => {
-							if topic == global_topic && data == encoded_commit {
+							if topic == global_topic && data == encoded_msg {
 								true
 							} else {
 								panic!("Trying to gossip something strange")

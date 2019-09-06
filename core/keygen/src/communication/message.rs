@@ -106,15 +106,10 @@ mod tests {
 	fn test_message_encode_decode() {
 		let key = Keys::create(0);
 		let (commit, decommit) = key.phase1_broadcast_phase3_proof_of_correct_key();
-		let kgm_commit = KeyGenMessage::Commit(0, commit);
-		let kgm_decommit = KeyGenMessage::Decommit(0, decommit);
+		let kgm_commit = KeyGenMessage::CommitAndDecommit(0, commit, decommit);
 
 		let encoded: Vec<u8> = kgm_commit.encode();
 		let decoded = KeyGenMessage::decode(&mut encoded.as_slice()).unwrap();
 		assert_eq!(kgm_commit, decoded);
-
-		let encoded: Vec<u8> = kgm_decommit.encode();
-		let decoded = KeyGenMessage::decode(&mut encoded.as_slice()).unwrap();
-		assert_eq!(kgm_decommit, decoded);
 	}
 }

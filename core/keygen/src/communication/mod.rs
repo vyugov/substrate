@@ -231,13 +231,12 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 		impl Stream<Item = MessageWithSender, Error = Error>,
 		impl Sink<SinkItem = MessageWithReceiver, SinkError = Error>,
 	) {
-		let topic = string_topic::<B>("hash");
+		let topic = string_topic::<B>("hash"); // related with validate in gossip.rs
 
 		let incoming = self
 			.service
 			.messages_for(topic)
 			.filter_map(|notification| {
-				println!("GET TOPIC MESSAGE");
 				let decoded = GossipMessage::decode(&mut &notification.message[..]);
 				if let Err(e) = decoded {
 					error!("notification error {:?}", e);
