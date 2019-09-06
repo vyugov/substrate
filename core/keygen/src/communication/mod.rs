@@ -266,3 +266,6 @@ impl<B: BlockT, N: Network<B>> Clone for NetworkBridge<B, N> {
 		}
 	}
 }
+
+#[cfg(test)]
+mod tests;
