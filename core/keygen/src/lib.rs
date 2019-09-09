@@ -52,6 +52,12 @@ use signer::Signer;
 
 type Count = u16;
 
+#[derive(Debug)]
+pub enum Error {
+	Network(String),
+	Client(ClientError),
+}
+
 #[derive(Clone, Debug)]
 pub struct NodeConfig {
 	pub threshold: Count,
@@ -107,8 +113,8 @@ impl Default for KeyGenState {
 fn global_comm<Block, N>(
 	bridge: &NetworkBridge<Block, N>,
 ) -> (
-	impl Stream<Item = MessageWithSender, Error = ClientError>,
-	impl Sink<SinkItem = MessageWithSender, SinkError = ClientError>,
+	impl Stream<Item = MessageWithSender, Error = Error>,
+	impl Sink<SinkItem = MessageWithSender, SinkError = Error>,
 )
 where
 	Block: BlockT<Hash = H256>,
@@ -116,10 +122,6 @@ where
 {
 	let (global_in, global_out) = bridge.global();
 	let global_in = PeriodicStream::<Block, _, MessageWithSender>::new(global_in);
-
-	let global_in = global_in.map_err(|_| ClientError::Msg("error global in".to_string()));
-	let global_out = global_out.sink_map_err(|_| ClientError::Msg("error global out".to_string()));
-
 	(global_in, global_out)
 }
 
@@ -131,7 +133,7 @@ pub(crate) struct Environment<B, E, Block: BlockT, N: Network<Block>, RA> {
 }
 
 struct KeyGenWork<B, E, Block: BlockT, N: Network<Block>, RA> {
-	key_gen: Box<dyn Future<Item = (), Error = ClientError> + Send + 'static>,
+	key_gen: Box<dyn Future<Item = (), Error = Error> + Send + 'static>,
 	env: Arc<Environment<B, E, Block, N, RA>>,
 }
 
@@ -191,7 +193,7 @@ where
 	RA: Send + Sync + 'static,
 {
 	type Item = ();
-	type Error = ClientError;
+	type Error = Error;
 
 	fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
 		match self.key_gen.poll() {

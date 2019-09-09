@@ -20,8 +20,8 @@ use sr_primitives::generic::BlockId;
 use sr_primitives::traits::{Block as BlockT, NumberFor, ProvideRuntimeApi};
 
 use super::{
-	ConfirmPeersMessage, Environment, GossipMessage, KeyGenMessage, Message, MessageWithSender,
-	Network, PeerIndex, SignMessage,
+	ConfirmPeersMessage, Environment, Error, GossipMessage, KeyGenMessage, Message,
+	MessageWithSender, Network, PeerIndex, SignMessage,
 };
 
 struct Buffered<S: Sink> {
@@ -78,8 +78,8 @@ impl<S: Sink> Buffered<S> {
 
 pub(crate) struct Signer<B, E, Block: BlockT, N: Network<Block>, RA, In, Out>
 where
-	In: Stream<Item = MessageWithSender, Error = ClientError>,
-	Out: Sink<SinkItem = MessageWithSender, SinkError = ClientError>,
+	In: Stream<Item = MessageWithSender, Error = Error>,
+	Out: Sink<SinkItem = MessageWithSender, SinkError = Error>,
 {
 	env: Arc<Environment<B, E, Block, N, RA>>,
 	global_in: In,
@@ -95,8 +95,8 @@ where
 	N: Network<Block> + Sync,
 	N::In: Send + 'static,
 	RA: Send + Sync + 'static,
-	In: Stream<Item = MessageWithSender, Error = ClientError>,
-	Out: Sink<SinkItem = MessageWithSender, SinkError = ClientError>,
+	In: Stream<Item = MessageWithSender, Error = Error>,
+	Out: Sink<SinkItem = MessageWithSender, SinkError = Error>,
 {
 	pub fn new(env: Arc<Environment<B, E, Block, N, RA>>, global_in: In, global_out: Out) -> Self {
 		Signer {
@@ -300,11 +300,11 @@ where
 	N: Network<Block> + Sync,
 	N::In: Send + 'static,
 	RA: Send + Sync + 'static,
-	In: Stream<Item = MessageWithSender, Error = ClientError>,
-	Out: Sink<SinkItem = MessageWithSender, SinkError = ClientError>,
+	In: Stream<Item = MessageWithSender, Error = Error>,
+	Out: Sink<SinkItem = MessageWithSender, SinkError = Error>,
 {
 	type Item = ();
-	type Error = ClientError;
+	type Error = Error;
 	fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
 		while let Async::Ready(Some(item)) = self.global_in.poll()? {
 			let (msg, sender) = item;

@@ -123,15 +123,12 @@ fn make_test_network() -> impl Future<Item = Tester, Error = ()> {
 	let id = network::PeerId::random();
 	let bridge = super::NetworkBridge::new(net.clone(), config, id);
 
-	let startup_work = futures::future::lazy(move || {
-		println!("job");
-		Ok(())
-	});
-
-	startup_work.map(move |()| Tester {
-		gossip_validator: bridge.validator.clone(),
-		net_handle: bridge,
-		events: rx,
+	futures::future::lazy(move || {
+		Ok(Tester {
+			gossip_validator: bridge.validator.clone(),
+			net_handle: bridge,
+			events: rx,
+		})
 	})
 }
 struct NoopContext;
@@ -146,6 +143,7 @@ impl network_gossip::ValidatorContext<Block> for NoopContext {
 #[test]
 fn test_confirm_peer_message() {
 	let id = network::PeerId::random();
+
 	let global_topic = super::string_topic::<Block>("hash");
 
 	let encoded_msg = gossip::GossipMessage::Message(Message::ConfirmPeers(
@@ -155,7 +153,6 @@ fn test_confirm_peer_message() {
 
 	let test = make_test_network()
 		.and_then(move |tester| {
-			// register a peer.
 			tester
 				.gossip_validator
 				.new_peer(&mut NoopContext, &id, network::config::Roles::FULL);
@@ -164,9 +161,6 @@ fn test_confirm_peer_message() {
 		.and_then(move |(tester, id)| {
 			let (global_in, _) = tester.net_handle.global();
 
-			// asking for global communication will cause the test network
-			// to send us an event asking us for a stream. use it to
-			// send a message.
 			let sender_id = id.clone();
 			let msg_to_send = encoded_msg.clone();
 
@@ -185,30 +179,26 @@ fn test_confirm_peer_message() {
 				_ => false,
 			});
 
-			// when the commit comes in, we'll tell the callback it was good.
+			let sender_id = id.clone();
+
 			let handle_in = global_in
 				.into_future()
-				.map(|(item, _)| {
-					println!("{:?}", item);
-				})
-				.map_err(|_| panic!("could not process  "));
+				.map(move |(item, _)| {
+					let (msg, sender_opt) = item.unwrap();
+					match msg {
+						Message::ConfirmPeers(ConfirmPeersMessage::Confirming(from, hash)) => {
+							assert_eq!(from, 0);
+							assert_eq!(hash, 1);
+						}
+						_ => panic!("invalid msg"),
+					}
 
-			// once the message is sent and commit is "handled" we should have
-			// a repropagation event coming from the network.
+					assert_eq!(sender_opt.unwrap(), sender_id.clone());
+				})
+				.map_err(|_| panic!("could not process"));
+
 			send_message
 				.join(handle_in)
-				.and_then(move |(tester, ())| {
-					tester.filter_network_events(move |event| match event {
-						Event::GossipMessage(topic, data, false) => {
-							if topic == global_topic && data == encoded_msg {
-								true
-							} else {
-								panic!("Trying to gossip something strange")
-							}
-						}
-						_ => false,
-					})
-				})
 				.map_err(|_| panic!("could not watch for gossip message"))
 				.map(|_| ())
 		});

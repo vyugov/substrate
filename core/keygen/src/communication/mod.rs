@@ -3,7 +3,7 @@ use std::{marker::PhantomData, sync::Arc};
 use codec::{Decode, Encode};
 use futures::prelude::*;
 use futures::sync::{mpsc, oneshot};
-use log::{error, info};
+use log::{error, info, trace};
 
 use gossip::{GossipMessage, GossipValidator};
 use mpe_primitives::{AuthorityId, Keypair};
@@ -13,11 +13,13 @@ use sr_primitives::traits::{
 	Block as BlockT, DigestFor, Hash as HashT, Header as HeaderT, NumberFor, ProvideRuntimeApi,
 };
 
-pub use mpe_primitives::MP_ECDSA_ENGINE_ID;
+use mpe_primitives::MP_ECDSA_ENGINE_ID;
 
 pub mod gossip;
 pub mod message;
 mod peer;
+
+use crate::Error;
 
 use message::{
 	ConfirmPeersMessage, KeyGenMessage, Message, MessageWithReceiver, MessageWithSender,
@@ -34,6 +36,7 @@ impl Stream for NetworkStream {
 	type Error = ();
 
 	fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+		println!("POLL ");
 		if let Some(ref mut inner) = self.inner {
 			return inner.poll();
 		}
@@ -155,11 +158,6 @@ where
 	}
 }
 
-#[derive(Debug)]
-pub enum Error {
-	Network(String),
-}
-
 struct MessageSender<Block: BlockT, N: Network<Block>> {
 	network: N,
 	validator: Arc<GossipValidator<Block>>,
@@ -231,7 +229,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 		impl Stream<Item = MessageWithSender, Error = Error>,
 		impl Sink<SinkItem = MessageWithReceiver, SinkError = Error>,
 	) {
-		let topic = string_topic::<B>("hash"); // related with validate in gossip.rs
+		let topic = string_topic::<B>("hash"); // related with fn validate in gossip.rs
 
 		let incoming = self
 			.service
@@ -239,7 +237,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 			.filter_map(|notification| {
 				let decoded = GossipMessage::decode(&mut &notification.message[..]);
 				if let Err(e) = decoded {
-					error!("notification error {:?}", e);
+					trace!("notification error {:?}", e);
 					return None;
 				}
 				Some((decoded.unwrap(), notification.sender))

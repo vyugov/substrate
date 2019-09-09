@@ -23,7 +23,7 @@ use sr_primitives::generic::BlockId;
 use sr_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
 use tokio_timer::Interval;
 
-use crate::communication;
+use crate::Error;
 
 pub struct PeriodicStream<Block: BlockT, S, M> {
 	incoming: Fuse<S>,
@@ -35,7 +35,7 @@ pub struct PeriodicStream<Block: BlockT, S, M> {
 impl<Block, S, M> PeriodicStream<Block, S, M>
 where
 	Block: BlockT,
-	S: Stream<Item = M, Error = communication::Error>,
+	S: Stream<Item = M, Error = Error>,
 	M: Debug,
 {
 	pub fn new(stream: S) -> Self {
@@ -55,11 +55,11 @@ where
 impl<Block, S, M> Stream for PeriodicStream<Block, S, M>
 where
 	Block: BlockT,
-	S: Stream<Item = M, Error = communication::Error>,
+	S: Stream<Item = M, Error = Error>,
 	M: Debug,
 {
 	type Item = M;
-	type Error = communication::Error;
+	type Error = Error;
 
 	fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
 		loop {
@@ -76,7 +76,7 @@ where
 		while let Async::Ready(Some(p)) = self
 			.check_pending
 			.poll()
-			.map_err(|e| communication::Error::Network("pending err".to_string()))?
+			.map_err(|e| Error::Network("pending err".to_string()))?
 		{}
 
 		if let Some(ready) = self.ready.pop_front() {
