@@ -114,18 +114,6 @@ fn make_test_network() -> impl Future<Item = Tester, Error = ()> {
 	let (tx, rx) = mpsc::unbounded();
 	let net = TestNetwork { sender: tx };
 
-	#[derive(Clone)]
-	struct Exit;
-
-	impl Future for Exit {
-		type Item = ();
-		type Error = ();
-
-		fn poll(&mut self) -> Poll<(), ()> {
-			Ok(Async::NotReady)
-		}
-	}
-
 	let config = NodeConfig {
 		threshold: 1,
 		players: 3,
@@ -134,17 +122,9 @@ fn make_test_network() -> impl Future<Item = Tester, Error = ()> {
 
 	let id = network::PeerId::random();
 	let bridge = super::NetworkBridge::new(net.clone(), config, id);
-	let on_exit = Exit;
 
 	let startup_work = futures::future::lazy(move || {
-		let mut executor = tokio_executor::DefaultExecutor::current();
-		executor
-			.spawn(Box::new(on_exit.clone().then(|_| {
-				println!("FUCKING exit");
-				Ok(())
-			})))
-			.expect("failed to spawn");
-
+		println!("job");
 		Ok(())
 	});
 
