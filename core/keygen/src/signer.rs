@@ -139,13 +139,15 @@ where
 			)
 			.unwrap();
 
+		println!("shared keys: {:?} proof: {:?}", shared_keys, proof);
+
 		let i = key.party_index as PeerIndex;
 		state.proofs.insert(i, proof.clone());
 		state.complete = true;
+		state.shared_keys = Some(shared_keys);
 
 		drop(state);
 
-		println!("shared keys: {:?} proof: {:?}", shared_keys, proof);
 		let proof_msg = KeyGenMessage::Proof(i, proof);
 		self.global_out.push((Message::KeyGen(proof_msg), None));
 	}
@@ -154,17 +156,20 @@ where
 		let players = self.env.config.players;
 
 		match msg {
-			Message::ConfirmPeers(ConfirmPeersMessage::Confirming(index, hash)) => {
+			Message::ConfirmPeers(ConfirmPeersMessage::Confirming(from_index, hash)) => {
 				let sender = sender.clone().unwrap();
 
 				let validator = self.env.bridge.validator.inner.read();
-
+				let index = validator.get_peer_index(&sender) as PeerIndex;
+				let our_hash = validator.get_peers_hash();
+				// if *from_index == index && *hash == our_hash {
 				self.global_out.push((
 					Message::ConfirmPeers(ConfirmPeersMessage::Confirmed(
 						validator.local_string_id(),
 					)),
 					Some(sender),
 				));
+				// }
 			}
 			Message::ConfirmPeers(ConfirmPeersMessage::Confirmed(sender_string_id)) => {
 				let sender = sender.clone().unwrap();
@@ -274,14 +279,20 @@ where
 					};
 
 					let proofs = state.proofs.values().cloned().collect::<Vec<_>>();
-
 					let points = state.decommits.values().map(|x| x.y_i).collect::<Vec<_>>();
 
-					if let Ok(_) =
-						Keys::verify_dlog_proofs(&params, proofs.as_slice(), points.as_slice())
+					if proofs.len() != players as usize || points.len() != players as usize {
+						return;
+					}
+
+					if Keys::verify_dlog_proofs(&params, proofs.as_slice(), points.as_slice())
+						.is_ok()
 					{
 						info!("Key generation complete");
 						validator.set_local_complete();
+					} else {
+						// reset everything?
+						error!("Key generation failed");
 					}
 				}
 			}

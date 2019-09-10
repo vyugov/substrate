@@ -17,6 +17,8 @@ use super::{
 	string_topic,
 };
 
+const REBROADCAST_AFTER: Duration = Duration::from_secs(60 * 5);
+
 #[derive(Debug, Encode, Decode)]
 pub enum GossipMessage {
 	Message(Message),
@@ -28,6 +30,7 @@ pub struct Inner {
 	local_peer_info: PeerInfo,
 	peers: Peers,
 	config: crate::NodeConfig,
+	next_rebroadcast: Instant,
 }
 
 impl Inner {
@@ -40,6 +43,7 @@ impl Inner {
 			local_peer_id,
 			local_peer_info: PeerInfo::default(),
 			peers,
+			next_rebroadcast: Instant::now() + REBROADCAST_AFTER,
 		}
 	}
 	fn add_peer(&mut self, who: PeerId) {
@@ -57,6 +61,10 @@ impl Inner {
 			.filter(|&pid| pid != local_id)
 			.map(|x| x.clone())
 			.collect()
+	}
+
+	pub fn get_peers_hash(&self) -> u64 {
+		self.peers.get_hash()
 	}
 
 	pub fn get_local_index(&self) -> usize {
@@ -127,7 +135,11 @@ impl<Block: BlockT> GossipValidator<Block> {
 }
 
 impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> {
-	fn new_peer(&self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, _roles: Roles) {
+	fn new_peer(&self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, roles: Roles) {
+		if roles != Roles::AUTHORITY {
+			return;
+		}
+
 		let (players, all_peers) = {
 			let mut inner = self.inner.write();
 			inner.add_peer(who.clone());
@@ -139,10 +151,10 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 			// may need to handle ">" case
 			let inner = self.inner.read();
 
-			let peers_hash = inner.peers.get_hash();
+			let all_peers_hash = inner.peers.get_hash();
 			let from_index = inner.peers.get_position(&inner.local_peer_id).unwrap() as u16;
 			let msg =
-				Message::ConfirmPeers(ConfirmPeersMessage::Confirming(from_index, peers_hash));
+				Message::ConfirmPeers(ConfirmPeersMessage::Confirming(from_index, all_peers_hash));
 			self.broadcast(context, GossipMessage::Message(msg).encode());
 		}
 	}
@@ -172,9 +184,27 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 		&'a self,
 	) -> Box<dyn FnMut(&PeerId, MessageIntent, &Block::Hash, &[u8]) -> bool + 'a> {
 		// rebroadcasted message
-		let inner = self.inner.read();
+		let (inner, do_rebroadcast) = {
+			use parking_lot::RwLockWriteGuard;
+
+			let mut inner = self.inner.write();
+			let now = Instant::now();
+			let do_rebroadcast = if now >= inner.next_rebroadcast {
+				inner.next_rebroadcast = now + REBROADCAST_AFTER;
+				true
+			} else {
+				false
+			};
+
+			(RwLockWriteGuard::downgrade(inner), do_rebroadcast)
+		};
 
 		Box::new(move |who, intent, topic, mut data| {
+			if let MessageIntent::PeriodicRebroadcast = intent {
+				println!("INTENT PERIODIC");
+				return do_rebroadcast;
+			}
+
 			let gossip_msg = GossipMessage::decode(&mut data);
 			if let Ok(gossip_msg) = gossip_msg {
 				println!("In `message_allowed` inner: {:?}", inner);
@@ -198,8 +228,16 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 				// println!("msg: {:?}", gossip_msg);
 				match gossip_msg {
 					GossipMessage::Message(msg) => match msg {
-						Message::ConfirmPeers(_) => {
-							return inner.local_peer_info.state != PeerState::AwaitingPeers
+						Message::ConfirmPeers(cpm) => {
+							match cpm {
+								ConfirmPeersMessage::Confirming(from, hash) => {
+									let our_hash = inner.get_peers_hash();
+									println!("{:?} {:?}", hash, our_hash);
+									return our_hash != hash;
+								}
+								_ => {}
+							}
+							return inner.local_peer_info.state != PeerState::AwaitingPeers;
 						}
 						Message::KeyGen(_) => {
 							return inner.local_peer_info.state == PeerState::Complete

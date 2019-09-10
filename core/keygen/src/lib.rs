@@ -14,7 +14,7 @@ use futures::{prelude::*, stream::Fuse, sync::mpsc};
 use log::{debug, error, info};
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{
 	KeyGenBroadcastMessage1 as KeyGenCommit, KeyGenDecommitMessage1 as KeyGenDecommit, Keys,
-	Parameters,
+	Parameters, SharedKeys,
 };
 use parking_lot::RwLock;
 use tokio_executor::DefaultExecutor;
@@ -93,6 +93,7 @@ pub struct KeyGenState {
 	pub vsss: BTreeMap<PeerIndex, VerifiableSS>,
 	pub secret_shares: BTreeMap<PeerIndex, FE>,
 	pub proofs: BTreeMap<PeerIndex, DLogProof>,
+	pub shared_keys: Option<SharedKeys>,
 }
 
 impl Default for KeyGenState {
@@ -106,6 +107,7 @@ impl Default for KeyGenState {
 			vsss: BTreeMap::new(),
 			secret_shares: BTreeMap::new(),
 			proofs: BTreeMap::new(),
+			shared_keys: None,
 		}
 	}
 }
@@ -261,5 +263,5 @@ where
 	Ok(key_gen_work)
 }
 
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod tests;

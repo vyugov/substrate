@@ -153,9 +153,11 @@ fn test_confirm_peer_message() {
 
 	let test = make_test_network()
 		.and_then(move |tester| {
-			tester
-				.gossip_validator
-				.new_peer(&mut NoopContext, &id, network::config::Roles::FULL);
+			tester.gossip_validator.new_peer(
+				&mut NoopContext,
+				&id,
+				network::config::Roles::AUTHORITY,
+			);
 			Ok((tester, id))
 		})
 		.and_then(move |(tester, id)| {
