@@ -260,3 +260,6 @@ where
 	let key_gen_work = KeyGenWork::new(client, config, bridge).map_err(|e| error!("Error {:?}", e));
 	Ok(key_gen_work)
 }
+
+#[cfg(test)]
+mod tests;
