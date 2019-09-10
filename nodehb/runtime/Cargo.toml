@@ -25,6 +25,8 @@ balances = { package = "srml-balances", path = "../../srml/balances", default-fe
 elections = { package = "srml-elections", path = "../../srml/elections", default-features = false }
 executive = { package = "srml-executive", path = "../../srml/executive", default-features = false }
 finality-tracker = { package = "srml-finality-tracker", path = "../../srml/finality-tracker", default-features = false }
+srml-badger = { package = "srml-badger", path = "../../srml/hbbft", default-features = false }
+
 indices = { package = "srml-indices", path = "../../srml/indices", default-features = false }
 membership = { package = "srml-membership", path = "../../srml/membership", default-features = false }
 session = { package = "srml-session", path = "../../srml/session", default-features = false, features = ["historical"] }

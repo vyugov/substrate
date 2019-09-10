@@ -85,6 +85,7 @@ members = [
 	"srml/finality-tracker",
 	"srml/generic-asset",
 	"srml/grandpa",
+        "srml/hbbft",
 	"srml/im-online",
 	"srml/authority-discovery",
 	"srml/indices",

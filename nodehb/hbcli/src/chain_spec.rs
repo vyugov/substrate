@@ -31,7 +31,7 @@ use hb_node_runtime::{
 use hb_node_runtime::constants::currency::DOLLARS;
 //use hb_node_runtime::ContractsConfig;
 
-use hb_node_runtime::constants::time::SECS_PER_BLOCK;
+//use hb_node_runtime::constants::time::SECS_PER_BLOCK;
 use hb_node_runtime::constants::currency::MILLICENTS;
 
 const STAGING_TELEMETRY_URL: &str = "wss://telemetry.polkadot.io/submit/";

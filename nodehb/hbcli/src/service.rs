@@ -18,121 +18,108 @@
 
 //! Service and ServiceFactory implementation. Specialized wrapper over substrate service.
 
-use substrate_service::{
-	AbstractService, ServiceBuilder, config::Configuration, error::{Error as ServiceError},
+use badger::{self};
+use badger::{badger_import_queue, run_honey_badger, BadgerImportQueue, Config as BadgerConfig};
+use badger_primitives::SignatureWrap;
+use badger_primitives::{
+  PublicKeySetWrap, PublicKeyShareWrap, PublicKeyWrap, SecretKeyShareWrap, SecretKeyWrap,
 };
-
-
-use std::sync::Arc;
-use std::time::Duration;
-use std::path::PathBuf;
+use client::{self, LongestChain};
+use futures::prelude::*;
 use futures03::compat;
-use futures03::future::TryFutureExt;
 use futures03::compat::Future01CompatExt;
 use futures03::future::FutureExt;
-use badger::{badger_import_queue,  BadgerImportQueue,Config as BadgerConfig,run_honey_badger};
-use badger_primitives::{SignatureWrap};
-use client::{self, LongestChain};
-use badger::{self,};// FinalityProofProvider as BadgerFinalityProofProvider,};
-use badger_primitives::{PublicKeyShareWrap,SecretKeyShareWrap,SecretKeyWrap, PublicKeyWrap, PublicKeySetWrap};
+use futures03::future::TryFutureExt;
 use hb_node_executor;
-use primitives::Pair;
-use futures::prelude::*;
-use hb_node_primitives::{Block};
+use hb_node_primitives::Block;
 use hb_node_runtime::{GenesisConfig, RuntimeApi};
+use primitives::Pair;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+use substrate_service::{
+  config::Configuration, error::Error as ServiceError, AbstractService, ServiceBuilder,
+};
 
-use transaction_pool::{self, txpool::{Pool as TransactionPool}};
 use inherents::InherentDataProviders;
+use network::config::DummyFinalityProofRequestBuilder;
 use network::construct_simple_protocol;
-use network::{config::DummyFinalityProofRequestBuilder};
+use transaction_pool::{self, txpool::Pool as TransactionPool};
 
 //use substrate_service::construct_service_factory;
 use log::info;
 use parking_lot::Mutex;
 
 construct_simple_protocol! {
-	/// Demo protocol attachment for substrate.
-	pub struct NodeProtocol where Block = Block { }
+  /// Demo protocol attachment for substrate.
+  pub struct NodeProtocol where Block = Block { }
 }
 
 /// Node specific configuration
-pub struct NodeConfig {
-	/// grandpa connection to import block
-	// FIXME #1134 rather than putting this on the config, let's have an actual intermediate setup state
-	pub inherent_data_providers: InherentDataProviders,
-	num_validators: usize,
-	secret_key_share: Option<SecretKeyShareWrap>,
-	//node_key: SecretKeyWrap,
-//	public_key_set: PublicKeySetWrap,
-
+pub struct NodeConfig
+{
+  pub inherent_data_providers: InherentDataProviders,
 }
 
-impl Default for NodeConfig {
-	fn default() -> NodeConfig {
-		NodeConfig {
-			inherent_data_providers: InherentDataProviders::new(),
-			num_validators:4,
-			secret_key_share:None,
-		}
-	}
+impl Default for NodeConfig
+{
+  fn default() -> NodeConfig
+  {
+    NodeConfig {
+      inherent_data_providers: InherentDataProviders::new(),
+    }
+  }
 }
-
 
 /// Starts a `ServiceBuilder` for a full service.
 ///
 /// Use this macro if you don't actually need the full service, but just the builder in order to
 /// be able to perform chain operations.
-/// 
-	
+///
+
 macro_rules! new_full_start {
-	($config:expr) => {{
-	
-		let inherent_data_providers = inherents::InherentDataProviders::new();
+  ($config:expr) => {{
+    let inherent_data_providers = inherents::InherentDataProviders::new();
 
+    let builder = substrate_service::ServiceBuilder::new_full::<
+      hb_node_primitives::Block,
+      hb_node_runtime::RuntimeApi,
+      hb_node_executor::Executor,
+    >($config)?
+    .with_select_chain(|_config, backend| {
+      #[allow(deprecated)]
+      Ok(client::LongestChain::new(backend.clone()))
+    })?
+    .with_transaction_pool(|config, client| {
+      Ok(transaction_pool::txpool::Pool::new(
+        config,
+        transaction_pool::ChainApi::new(client),
+      ))
+    })?
+    .with_import_queue(|_config, client, mut select_chain, transaction_pool| {
+      #[allow(deprecated)]
+      let fprb = Box::new(DummyFinalityProofRequestBuilder::default()) as Box<_>;
+      let block_import = client.clone();
+      //let justification_import = block_import.clone();
+      badger_import_queue::<_, _, PublicKeyWrap, SignatureWrap>(
+        Box::new(block_import),
+        None,
+        None,
+        client,
+        InherentDataProviders::new(),
+      )
+      .map_err(Into::into)
+    })?
+    .with_rpc_extensions(|client, pool| {
+      use hb_node_rpc::accounts::{Accounts, AccountsApi};
 
-		let builder = substrate_service::ServiceBuilder::new_full::<
-			hb_node_primitives::Block, hb_node_runtime::RuntimeApi, hb_node_executor::Executor
-		>($config)?
-			.with_select_chain(|_config, backend| {
-				#[allow(deprecated)]
-				Ok(client::LongestChain::new(backend.clone()))
-			})?
-			.with_transaction_pool(|config, client|
-				Ok(transaction_pool::txpool::Pool::new(config, transaction_pool::ChainApi::new(client)))
-			)?
-			.with_import_queue(|config, client, mut select_chain, transaction_pool| {
-				let select_chain = select_chain.take()
-					.ok_or_else(|| substrate_service::Error::SelectChainRequired)?;
+      let mut io = jsonrpc_core::IoHandler::<substrate_service::RpcMetadata>::default();
+      io.extend_with(AccountsApi::to_delegate(Accounts::new(client, pool)));
+      io
+    })?;
 
-				 #[allow(deprecated)]
-				let fprb = Box::new(DummyFinalityProofRequestBuilder::default()) as Box<_>;
-   			    let block_import=client.clone();
-				/*let (block_import, link_half) =
-					grandpa::block_import::<_, _, _, RuntimeApi, FullClient<Self>, _>(
-						client.clone(), client.clone(), select_chain
-					)?;*/
-				//let justification_import = block_import.clone();
-				badger_import_queue::<_, _, PublicKeyWrap,SignatureWrap>(
-					Box::new(block_import),
-					None,
-					None,
-					client,
-					InherentDataProviders::new(),
-				).map_err(Into::into)
-							
-			})?
-			.with_rpc_extensions(|client, pool| {
-				use hb_node_rpc::accounts::{Accounts, AccountsApi};
-
-				let mut io = jsonrpc_core::IoHandler::<substrate_service::RpcMetadata>::default();
-				io.extend_with(
-					AccountsApi::to_delegate(Accounts::new(client, pool))
-				);
-				io
-			})?;
-
-		(builder,  inherent_data_providers, )
-	}}
+    (builder, inherent_data_providers)
+  }};
 }
 
 /// Creates a full service from the configuration.
@@ -140,64 +127,66 @@ macro_rules! new_full_start {
 /// We need to use a macro because the test suit doesn't work with an opaque service. It expects
 /// concrete types instead.
 macro_rules! new_full {
-	($config:expr) => {{
-		use futures::Future;
-        let nconf_name=$config.n_conf_file.clone();
-		let node_name=$config.name.clone();
-		
-		let (builder,  inherent_data_providers,) = new_full_start!($config);
+  ($config:expr) => {{
+    use futures::Future;
+    let nconf_name = $config.n_conf_file.clone();
+    let node_name = $config.name.clone();
 
-		let service = builder.with_network_protocol(|_| Ok(crate::service::NodeProtocol::new()))?
-			.with_opt_finality_proof_provider(|_client,_|
-				Ok(None)
-			)?
-			.build()?;
+    let (builder, inherent_data_providers) = new_full_start!($config);
 
-	
-		// spawn any futures that were created in the previous setup steps
-	/*	for task in tasks_to_spawn.drain(..) {
-			service.spawn_task(
-				task.select(service.on_exit())
-					.map(|_| ())
-					.map_err(|_| ())
-			);
-		}*/
+    let service = builder
+      .with_network_protocol(|_| Ok(crate::service::NodeProtocol::new()))?
+      .with_opt_finality_proof_provider(|_client, _| Ok(None))?
+      .build()?;
 
-		let client = service.client().clone();
-		let t_pool = service.transaction_pool();
-		let select_chain = service.select_chain().ok_or(ServiceError::SelectChainRequired)?;
-		let nconf= match &nconf_name	
-			{
-			Some(name) => PathBuf::from(name),
-			None => PathBuf::from("./nodes.json")
-			};
-		let badger = run_honey_badger(
-								client,
-								t_pool,
-								BadgerConfig::from_json_file_with_name(nconf,&node_name).unwrap(),
-								service.network(),
-								service.on_exit().clone().compat().map(|_| ()),
-								Arc::new(Mutex::new(service.client().clone())), //block_import?
-								//service.config().custom.inherent_data_providers.clone(),
-								InherentDataProviders::new(),
-								select_chain,
-							)?;
-		service.spawn_task(badger.unit_error()
-			.boxed()
-			.compat());
+    // spawn any futures that were created in the previous setup steps
+    /*	for task in tasks_to_spawn.drain(..) {
+      service.spawn_task(
+        task.select(service.on_exit())
+          .map(|_| ())
+          .map_err(|_| ())
+      );
+    }*/
 
-		Ok((service, inherent_data_providers))
-	}}
+    let client = service.client().clone();
+    let t_pool = service.transaction_pool();
+    let select_chain = service
+      .select_chain()
+      .ok_or(ServiceError::SelectChainRequired)?;
+    let nconf = match &nconf_name
+    {
+      Some(name) => PathBuf::from(name),
+      None => PathBuf::from("./nodes.json"),
+    };
+    let badger = run_honey_badger(
+      client,
+      t_pool,
+      BadgerConfig::from_json_file_with_name(nconf, &node_name).unwrap(),
+      service.network(),
+      service.on_exit().clone().compat().map(|_| ()),
+      Arc::new(Mutex::new(service.client().clone())), //block_import?
+      //service.config().custom.inherent_data_providers.clone(),
+      InherentDataProviders::new(),
+      select_chain,
+    )?;
+    service.spawn_task(badger.unit_error().boxed().compat());
+
+    Ok((service, inherent_data_providers))
+  }};
 }
 
 /// Builds a new service for a full client.
-pub fn new_full<C: Send + Default + 'static>(config: Configuration<C, GenesisConfig>)
--> Result<impl AbstractService, ServiceError> {
-	new_full!(config).map(|(service, _)| service)
+pub fn new_full<C: Send + Default + 'static>(
+  config: Configuration<C, GenesisConfig>,
+) -> Result<impl AbstractService, ServiceError>
+{
+  new_full!(config).map(|(service, _)| service)
 }
 
 /// Builds a new service for a light client.
-pub fn new_light<C: Send + Default + 'static>(config: Configuration<C, GenesisConfig>)
--> Result<impl AbstractService, ServiceError> {
- new_full!(config).map(|(service, _)| service)
+pub fn new_light<C: Send + Default + 'static>(
+  config: Configuration<C, GenesisConfig>,
+) -> Result<impl AbstractService, ServiceError>
+{
+  new_full!(config).map(|(service, _)| service)
 }

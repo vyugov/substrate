@@ -253,7 +253,5 @@ impl parity_codec::Decode for SignatureWrap {
 /// Signature for a HBBFT  proposer.
 pub type AuthoritySignature = SignatureWrap;
 
-/// The `ConsensusEngineId` of GRANDPA.
+/// The `ConsensusEngineId` of BADGER.
 pub const HBBFT_ENGINE_ID: ConsensusEngineId = *b"BDGR";
-
-

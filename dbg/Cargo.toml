@@ -21,8 +21,8 @@ log = "0.4.6"
 rand = "0.6.5"
 rand_derive = "0.5.0"
 reed-solomon-erasure = "3.1.1"
-serde = { version = "1.0.89", features = ["derive"] }
+serde = { version = "1.0.93", optional=true,  features = ["derive"] }
 pairing = { version = "0.14.2", features = ["u128-support"] }
-threshold_crypto = "0.3.1"
+threshold_crypto = {package = "threshold_crypto",path="../../threshold_crypto"}
 tiny-keccak = "1.4"
 hb = {package = "substrate-badger-mushroom",path="../core/hbbft"}

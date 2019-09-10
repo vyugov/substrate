@@ -132,7 +132,7 @@ impl RuntimeAdapter for FactoryState<Number> {
 		key: &Self::Secret,
 		destination: &Self::AccountId,
 		amount: &Self::Balance,
-		version: u32,
+		_version: u32,
 		genesis_hash: &<Self::Block as BlockT>::Hash,
 		prior_block_hash: &<Self::Block as BlockT>::Hash,
 	) -> <Self::Block as BlockT>::Extrinsic {

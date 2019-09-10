@@ -781,6 +781,11 @@ pub mod key_types {
 	pub const AURA: KeyTypeId = KeyTypeId(*b"aura");
 	/// Key type for ImOnline module, built-in.
 	pub const IM_ONLINE: KeyTypeId = KeyTypeId(*b"imon");
+	/// Key type for Honey Badger node id.
+	pub const HB_NODE: KeyTypeId = KeyTypeId(*b"hbnd");
+	/// Key type for Honey Badger partial key (validator), public key share from the set+private share. Have to save set+node index? 
+	pub const HB_SHARED: KeyTypeId = KeyTypeId(*b"hbvl");
+
 	/// A key type ID useful for tests.
 	#[cfg(feature = "std")]
 	pub const DUMMY: KeyTypeId = KeyTypeId(*b"dumy");

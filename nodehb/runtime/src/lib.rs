@@ -179,9 +179,14 @@ impl authorship::Trait for Runtime {
 	type EventHandler = ();
 }
 
-type SessionHandlers = ();
+type SessionHandlers = (Badger);
 
-
+impl_opaque_keys! {
+	pub struct SessionKeys {
+		#[id(key_types::HB_NODE)]
+		pub badger: hb_node_primitives::AuthorityId,
+	}
+}
 
 
 parameter_types! {
@@ -256,10 +261,13 @@ construct_runtime!(
 		System: system::{Module, Call, Storage, Config, Event},
 		Timestamp: timestamp::{Module, Call, Storage, Inherent},
 		Authorship: authorship::{Module, Call, Storage, Inherent},
+		Session: session::{Module, Call, Storage, Event, Config<T>},
+		Badger: srml_badger::{Module, Call, Storage, Event, Config<T>},
 		Indices: indices,
 		Balances: balances,
 		FinalityTracker: finality_tracker::{Module, Call, Inherent},
 		Sudo: sudo,
+		Badger: 
 	}
 );
 
