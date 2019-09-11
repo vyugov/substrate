@@ -27,7 +27,6 @@ use client::{
 };
 use consensus_common::SelectChain;
 use inherents::InherentDataProviders;
-use mpe_primitives::HbbftApi;
 use network::{self, PeerId};
 use primitives::{Blake2Hasher, H256};
 use sr_primitives::generic::BlockId;
@@ -163,8 +162,6 @@ where
 			state: Arc::new(RwLock::new(state)),
 		});
 		let mut work = Self {
-			// `voter` is set to a temporary value and replaced below when
-			// calling `rebuild_voter`.
 			key_gen: Box::new(futures::empty()) as Box<_>,
 			env,
 		};

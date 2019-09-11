@@ -18,7 +18,6 @@ use consensus_common::SelectChain;
 use futures::{future::Loop as FutureLoop, prelude::*, stream::Fuse, sync::mpsc};
 use inherents::InherentDataProviders;
 use log::{debug, error, info, warn};
-use mpe_primitives::HbbftApi;
 use network::{self, PeerId};
 use parking_lot::RwLock;
 use sr_primitives::generic::BlockId;

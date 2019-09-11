@@ -158,6 +158,7 @@ fn test_confirm_peer_message() {
 				&id,
 				network::config::Roles::AUTHORITY,
 			);
+
 			Ok((tester, id))
 		})
 		.and_then(move |(tester, id)| {

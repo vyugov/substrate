@@ -5,7 +5,6 @@ authors = ["Parity Technologies <admin@parity.io>"]
 edition = "2018"
 
 [dependencies]
-hbbft = "0.1"
 client = { package = "substrate-client", path = "../../client", default-features = false }
 substrate-primitives = { path = "../../primitives", default-features = false }
 codec = { package = "parity-scale-codec", version = "1.0.0", default-features = false, features = ["derive"] }
