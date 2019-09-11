@@ -768,7 +768,6 @@ where
 			Ok(Async::NotReady) => {}
 			Err(e) => {
 				// the `voter_commands_rx` stream should not fail.
-				println!("Grandpa voter cmd error {:?}", e);
 				return Ok(Async::Ready(()))
 			}
 			Ok(Async::Ready(None)) => {

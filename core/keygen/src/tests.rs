@@ -29,16 +29,14 @@ use super::*;
 type PeerData = Mutex<Option<(u8, u8)>>;
 type MecPeer = Peer<PeerData, DummySpecialization>;
 
-struct MecTestNet {
-	peers: Vec<MecPeer>,
-	test_config: TestApi,
+pub struct TestNet {
+	peers: Vec<Peer<(), DummySpecialization>>,
 }
 
-impl MecTestNet {
-	fn new(test_config: TestApi, n_peers: usize) -> Self {
+impl TestNet {
+	fn new(n_peers: usize) -> Self {
 		let mut net = Self {
 			peers: Vec::with_capacity(n_peers),
-			test_config,
 		};
 		let config = Self::default_config();
 		for _ in 0..n_peers {
@@ -48,136 +46,69 @@ impl MecTestNet {
 	}
 }
 
-impl TestNetFactory for MecTestNet {
+impl TestNetFactory for TestNet {
 	type Specialization = DummySpecialization;
 	type Verifier = PassThroughVerifier;
-	type PeerData = PeerData;
+	type PeerData = ();
 
 	/// Create new test network with peers and given config.
 	fn from_config(_config: &ProtocolConfig) -> Self {
-		GrandpaTestNet {
-			peers: Vec::new(),
-			test_config: Default::default(),
-		}
+		TestNet { peers: Vec::new() }
 	}
 
-	fn default_config() -> ProtocolConfig {
-		// the authority role ensures gossip hits all nodes here.
-		ProtocolConfig {
-			roles: Roles::AUTHORITY,
-		}
+	fn make_verifier(&self, _client: PeersClient, _config: &ProtocolConfig) -> Self::Verifier {
+		PassThroughVerifier(false)
 	}
 
-	fn make_verifier(&self, _client: PeersClient, _cfg: &ProtocolConfig) -> Self::Verifier {
-		PassThroughVerifier(false) // use non-instant finality.
-	}
-
-	fn peer(&mut self, i: usize) -> &mut MecPeer {
+	fn peer(&mut self, i: usize) -> &mut Peer<(), Self::Specialization> {
 		&mut self.peers[i]
 	}
 
-	fn peers(&self) -> &Vec<MecPeer> {
+	fn peers(&self) -> &Vec<Peer<(), Self::Specialization>> {
 		&self.peers
 	}
 
-	fn mut_peers<F: FnOnce(&mut Vec<MecPeer>)>(&mut self, closure: F) {
+	fn mut_peers<F: FnOnce(&mut Vec<Peer<(), Self::Specialization>>)>(&mut self, closure: F) {
 		closure(&mut self.peers);
 	}
 }
 
-#[derive(Clone)]
-struct Exit;
+fn create_keystore(authority: Ed25519Keyring) -> (KeyStorePtr, tempfile::TempDir) {
+	let keystore_path = tempfile::tempdir().expect("Creates keystore path");
+	let keystore = keystore::Store::open(keystore_path.path(), None).expect("Creates keystore");
+	(keystore, keystore_path)
+}
 
-impl Future for Exit {
-	type Item = ();
-	type Error = ();
+#[test]
+fn test_1_of_3_key_gen() {
+	use super::*;
+	let peers = &[
+		Ed25519Keyring::Alice,
+		Ed25519Keyring::Bob,
+		Ed25519Keyring::Charlie,
+	];
 
-	fn poll(&mut self) -> Poll<(), ()> {
+	let mut runtime = current_thread::Runtime::new().unwrap();
+	let mut net = TestNet::new(3);
+	let net = Arc::new(Mutex::new(net));
+
+	let all_peers = peers.iter().cloned();
+
+	for (peer_id, local_key) in all_peers.enumerate() {
+		let net = net.lock();
+		let client = net.peers[peer_id].client().clone().as_full().unwrap();
+		let network = net.peers[peer_id].network_service().clone();
+		let local_peer_id = network.local_peer_id();
+		let (keystore, keystore_path) = create_keystore(local_key);
+
+		let node = run_key_gen(local_peer_id, keystore, client, network).unwrap();
+		runtime.spawn(node);
+	}
+	let drive_to_completion = futures::future::poll_fn(|| {
+		net.lock().poll();
 		Ok(Async::NotReady)
-	}
-}
-
-#[derive(Default, Clone)]
-pub(crate) struct TestApi {
-	genesis_authorities: Vec<(AuthorityId, u64)>,
-	scheduled_changes: Arc<Mutex<HashMap<Hash, ScheduledChange<BlockNumber>>>>,
-	forced_changes: Arc<Mutex<HashMap<Hash, (BlockNumber, ScheduledChange<BlockNumber>)>>>,
-}
-
-impl TestApi {
-	pub fn new(genesis_authorities: Vec<(AuthorityId, u64)>) -> Self {
-		TestApi {
-			genesis_authorities,
-			scheduled_changes: Arc::new(Mutex::new(HashMap::new())),
-			forced_changes: Arc::new(Mutex::new(HashMap::new())),
-		}
-	}
-}
-
-pub(crate) struct RuntimeApi {
-	inner: TestApi,
-}
-
-impl ProvideRuntimeApi for TestApi {
-	type Api = RuntimeApi;
-
-	fn runtime_api<'a>(&'a self) -> ApiRef<'a, Self::Api> {
-		RuntimeApi {
-			inner: self.clone(),
-		}
-		.into()
-	}
-}
-
-impl Core<Block> for RuntimeApi {
-	fn Core_version_runtime_api_impl(
-		&self,
-		_: &BlockId<Block>,
-		_: ExecutionContext,
-		_: Option<()>,
-		_: Vec<u8>,
-	) -> Result<NativeOrEncoded<RuntimeVersion>> {
-		unimplemented!("Not required for testing!")
-	}
-
-	fn Core_execute_block_runtime_api_impl(
-		&self,
-		_: &BlockId<Block>,
-		_: ExecutionContext,
-		_: Option<(Block)>,
-		_: Vec<u8>,
-	) -> Result<NativeOrEncoded<()>> {
-		unimplemented!("Not required for testing!")
-	}
-
-	fn Core_initialize_block_runtime_api_impl(
-		&self,
-		_: &BlockId<Block>,
-		_: ExecutionContext,
-		_: Option<&<Block as BlockT>::Header>,
-		_: Vec<u8>,
-	) -> Result<NativeOrEncoded<()>> {
-		unimplemented!("Not required for testing!")
-	}
-}
-
-impl ApiExt<Block> for RuntimeApi {
-	fn map_api_result<F: FnOnce(&Self) -> result::Result<R, E>, R, E>(
-		&self,
-		_: F,
-	) -> result::Result<R, E> {
-		unimplemented!("Not required for testing!")
-	}
-
-	fn runtime_version_at(&self, _: &BlockId<Block>) -> Result<RuntimeVersion> {
-		unimplemented!("Not required for testing!")
-	}
-
-	fn record_proof(&mut self) {
-		unimplemented!("Not required for testing!")
-	}
-
-	fn extract_proof(&mut self) -> Option<Vec<Vec<u8>>> {
-		unimplemented!("Not required for testing!")
-	}
+	});
+	let _ = runtime
+		.block_on(drive_to_completion.map(|_: ()| ()).map_err(|_: ()| ()))
+		.unwrap();
 }

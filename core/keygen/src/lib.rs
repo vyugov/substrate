@@ -11,6 +11,7 @@ use curv::cryptographic_primitives::proofs::sigma_dlog::DLogProof;
 use curv::cryptographic_primitives::secret_sharing::feldman_vss::VerifiableSS;
 use curv::FE;
 use futures::{prelude::*, stream::Fuse, sync::mpsc};
+use keystore::KeyStorePtr;
 use log::{debug, error, info};
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{
 	KeyGenBroadcastMessage1 as KeyGenCommit, KeyGenDecommitMessage1 as KeyGenDecommit, Keys,
@@ -225,6 +226,7 @@ where
 
 pub fn run_key_gen<B, E, Block, N, RA>(
 	local_peer_id: PeerId,
+	keystore: KeyStorePtr,
 	client: Arc<Client<B, E, Block, RA>>,
 	network: N,
 ) -> ClientResult<impl Future<Item = (), Error = ()> + Send + 'static>
@@ -243,6 +245,8 @@ where
 		players: 3,
 	};
 
+	let keystore = keystore.read();
+
 	// let persistent_data: SharedState = load_persistent(&**client.backend()).unwrap();
 	// println!("{:?}", persistent_data);
 	// println!("Local peer ID {:?}", current_id.as_bytes());
@@ -260,5 +264,5 @@ where
 	Ok(key_gen_work)
 }
 
-// #[cfg(test)]
-// mod tests;
+#[cfg(test)]
+mod tests;
