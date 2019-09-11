@@ -1010,7 +1010,7 @@ where
         {
           debug!("[{:?}] bytes Pushed to the block.", pending.len());
         }
-        Err(error::Error::ApplyExtrinsicFailed(ApplyError::FullBlock)) =>
+        Err(error::Error::ApplyExtrinsicFailed(ApplyError::BadState)) =>
         {
           if is_first
           {
