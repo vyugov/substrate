@@ -37,11 +37,11 @@ use client::{
 	block_builder::api::{self as block_builder_api, InherentData, CheckInherentsResult},
 	runtime_api as client_api, impl_runtime_apis
 };
-use sr_primitives::{ApplyResult, impl_opaque_keys, generic, create_runtime_str, key_types};
+use sr_primitives::{ApplyResult,  generic, create_runtime_str, key_types};
 use sr_primitives::transaction_validity::TransactionValidity;
 use sr_primitives::weights::Weight;
 use sr_primitives::traits::{
-	BlakeTwo256, Block as BlockT, DigestFor, NumberFor, StaticLookup,
+	BlakeTwo256, Block as BlockT,  NumberFor, StaticLookup,
 };
 use version::RuntimeVersion;
 use elections::VoteIndex;
@@ -179,14 +179,6 @@ impl authorship::Trait for Runtime {
 	type EventHandler = ();
 }
 
-type SessionHandlers = (Badger);
-
-impl_opaque_keys! {
-	pub struct SessionKeys {
-		#[id(key_types::HB_NODE)]
-		pub badger: hb_node_primitives::AuthorityId,
-	}
-}
 
 
 parameter_types! {
@@ -238,7 +230,11 @@ impl sudo::Trait for Runtime {
 }
 
 
+impl srml_badger::Trait for Runtime 
+{
+	type Event=Event;
 
+}
 
 
 parameter_types! {
@@ -261,13 +257,11 @@ construct_runtime!(
 		System: system::{Module, Call, Storage, Config, Event},
 		Timestamp: timestamp::{Module, Call, Storage, Inherent},
 		Authorship: authorship::{Module, Call, Storage, Inherent},
-		Session: session::{Module, Call, Storage, Event, Config<T>},
-		Badger: srml_badger::{Module, Call, Storage, Event, Config<T>},
+		Badger: srml_badger::{Module,  Storage, Event},
 		Indices: indices,
 		Balances: balances,
 		FinalityTracker: finality_tracker::{Module, Call, Inherent},
 		Sudo: sudo,
-		Badger: 
 	}
 );
 

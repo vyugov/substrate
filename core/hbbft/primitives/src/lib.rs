@@ -56,7 +56,7 @@ impl parity_codec::Encode for SecretKeyWrap {
  
 	fn encode_to<T: parity_codec::Output>(&self, dest: &mut T) {
 		//let len = <C::Affine as CurveAffine>::Compressed::size();
-		 for bt in bincode::serialize(&SerdeSecret(&self.0)).expect("Falied serialize").iter()
+		 for bt in bincode::serialize(&SerdeSecret(&self.0)).expect("Failed serialize").iter()
 		 {
 			 dest.push_byte(*bt);
 		 }

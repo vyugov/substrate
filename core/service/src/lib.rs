@@ -271,7 +271,7 @@ macro_rules! new_impl {
 				.map(|v| Ok::<_, ()>(v)).compat()
 				.for_each(move |_| {
 					if let Some(network) = network.upgrade() {
-						if(propagat)
+						if propagat 
 						{
 						network.trigger_repropagate();
 						}

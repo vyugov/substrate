@@ -58,6 +58,7 @@ use runtime_primitives::{
   generic::{self, BlockId},
   ApplyError, Justification,
 };
+use keystore::KeyStorePtr;
 //use runtime_primitives::{
 //traits::{Block as BlockT, Hash as HashT, Header as HeaderT, ProvideRuntimeApi, DigestFor, },
 //generic::BlockId,
@@ -177,10 +178,10 @@ where
 {
   fn check_inherents<B: BlockT>(
     &self,
-    block: B,
-    block_id: BlockId<B>,
-    inherent_data: InherentData,
-    timestamp_now: u64,
+    _block: B,
+    _block_id: BlockId<B>,
+    _inherent_data: InherentData,
+    _timestamp_now: u64,
   ) -> Result<(), String>
   where
     C: ProvideRuntimeApi,
@@ -227,8 +228,8 @@ where
 
 /// Register the aura inherent data provider, if not registered already.
 fn register_badger_inherent_data_provider(
-  inherent_data_providers: &InherentDataProviders,
-  slot_duration: u64,
+  _inherent_data_providers: &InherentDataProviders,
+  _slot_duration: u64,
 ) -> Result<(), consensus_common::Error>
 {
   Ok(())
@@ -288,7 +289,7 @@ const CATCH_UP_THRESHOLD: u64 = 2;
 const KEEP_RECENT_ROUNDS: usize = 3;
 
 const BADGER_TOPIC: &str = "itsasnake";
-
+ 
 /// Configuration for the Badger service.
 #[derive(Clone)]
 pub struct Config
@@ -302,6 +303,7 @@ pub struct Config
   pub batch_size: u32,
   pub initial_validators: BTreeMap<PeerIdW, PublicKey>,
   pub node_indices: BTreeMap<PeerIdW, usize>,
+ 
 }
 fn secret_share_from_string(st: &str) -> Result<SecretKeyShareWrap, Error>
 {
@@ -901,6 +903,7 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash = H256>, N, RA, SC, X, I, A>(
   block_import: Arc<Mutex<I>>,
   inherent_data_providers: InherentDataProviders,
   selch: SC,
+  keystore: KeyStorePtr,
 ) -> ::client::error::Result<impl Future<Output = ()> + Send + Unpin>
 where
   Block::Hash: Ord,
@@ -981,7 +984,7 @@ where
 
     // proceed with transactions
     let mut is_first = true;
-    let mut skipped = 0;
+    //let mut skipped = 0;
     info!(
       "Attempting to push transactions from the batch. {}",
       batch.len()
