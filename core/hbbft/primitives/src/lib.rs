@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with Substrate.  If not, see <http://www.gnu.org/licenses/>.
 
-//! Primitives for GRANDPA integration, suitable for WASM compilation.
+//! Primitives for Badger integration, suitable for WASM compilation.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -26,14 +26,11 @@ use serde::Serialize;
 
 #[cfg(feature = "std")]
 use serde::Deserialize;
-//#[cfg(feature = "std")]
-//use serde::Deserialize;
 
 
-use parity_codec::{Encode, Decode, Codec,Input};
-use sr_primitives::{ConsensusEngineId, traits::{DigestFor, NumberFor}};
-use client::decl_runtime_apis;
-use rstd::vec::Vec;
+
+use parity_codec::{Input};//Encode, Decode, Codec,
+use sr_primitives::{ConsensusEngineId,};
 use badger::crypto::{ PublicKey, PublicKeySet, PublicKeyShare, SecretKey, SecretKeyShare,Signature,};
 /// The hbbft crypto scheme defined via the keypair type.
 #[cfg(feature = "std")]

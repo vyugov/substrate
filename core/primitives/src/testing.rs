@@ -17,7 +17,7 @@
 //! Types that should only be used for testing!
 
 #[cfg(feature = "std")]
-use crate::{ed25519, sr25519, crypto::{Public, Pair, KeyTypeId}};
+use crate::{ed25519, sr25519,hbbft_thresh, crypto::{Public, Pair, KeyTypeId}};
 
 /// A keystore implementation usable in tests.
 #[cfg(feature = "std")]
@@ -48,6 +48,18 @@ impl crate::traits::BareCryptoStore for KeyStore {
 			.unwrap_or_default()
 	}
 
+		fn hb_node_public_keys(&self, id: KeyTypeId) -> Vec<hbbft_thresh::Public> {
+		self.keys.get(&id)
+			.map(|keys|
+				keys.values()
+					.map(|s| hbbft_thresh::Pair::from_string(s, None).expect("`hb_node` seed slice is valid"))
+					.map(|p| p.public())
+					.collect()
+			)
+			.unwrap_or_default()
+	}
+
+
 	fn sr25519_generate_new(
 		&mut self,
 		id: KeyTypeId,
@@ -74,6 +86,15 @@ impl crate::traits::BareCryptoStore for KeyStore {
 					.map(|s| sr25519::Pair::from_string(s, None).expect("`sr25519` seed slice is valid"))
 			)
 	}
+
+		fn hb_node_key_pair(&self, id: KeyTypeId, pub_key: &hbbft_thresh::Public) -> Option<hbbft_thresh::Pair> {
+		self.keys.get(&id)
+			.and_then(|inner|
+				inner.get(pub_key.as_slice())
+					.map(|s| hbbft_thresh::Pair::from_string(s, None).expect("`hbbft_thresh` seed slice is valid"))
+			)
+	}
+
 
 	fn ed25519_public_keys(&self, id: KeyTypeId) -> Vec<ed25519::Public> {
 		self.keys.get(&id)
@@ -104,6 +125,26 @@ impl crate::traits::BareCryptoStore for KeyStore {
 			}
 		}
 	}
+
+	fn hb_node_generate_new(
+		&mut self,
+		id: KeyTypeId,
+		seed: Option<&str>,
+	) -> std::result::Result<hbbft_thresh::Public, String> {
+	match seed {
+			Some(seed) => {
+				let pair = hbbft_thresh::Pair::from_string(seed, None).expect("Generates an `hbbft_thresh` pair.");
+				self.keys.entry(id).or_default().insert(pair.public().to_raw_vec(), seed.into());
+				Ok(pair.public())
+			},
+			None => {
+				let (pair, phrase, _) = hbbft_thresh::Pair::generate_with_phrase(None);
+				self.keys.entry(id).or_default().insert(pair.public().to_raw_vec(), phrase);
+				Ok(pair.public())
+			}
+		}
+	}
+
 
 	fn ed25519_key_pair(&self, id: KeyTypeId, pub_key: &ed25519::Public) -> Option<ed25519::Pair> {
 		self.keys.get(&id)

@@ -24,7 +24,7 @@ use primitives::{
 	crypto::{KeyTypeId, Pair as PairT, Public, IsWrappedBy, Protected}, traits::BareCryptoStore,
 };
 
-use app_crypto::{AppKey, AppPublic, AppPair, ed25519, sr25519};
+use app_crypto::{AppKey, AppPublic, AppPair, ed25519, sr25519,hbbft_thresh};
 
 use parking_lot::RwLock;
 
@@ -286,6 +286,7 @@ impl BareCryptoStore for Store {
 		self.public_keys_by_type::<ed25519::Public>(key_type).unwrap_or_default()
 	}
 
+
 	fn ed25519_generate_new(
 		&mut self,
 		id: KeyTypeId,
@@ -294,6 +295,26 @@ impl BareCryptoStore for Store {
 		let pair = match seed {
 			Some(seed) => self.insert_ephemeral_from_seed_by_type::<ed25519::Pair>(seed, id),
 			None => self.generate_by_type::<ed25519::Pair>(id),
+		}.map_err(|e| e.to_string())?;
+
+		Ok(pair.public())
+	}
+
+	fn hb_node_key_pair(&self, id: KeyTypeId, pub_key: &hbbft_thresh::Public) -> Option<hbbft_thresh::Pair> {
+		self.key_pair_by_type::<hbbft_thresh::Pair>(pub_key, id).ok()
+	}
+	fn hb_node_public_keys(&self, key_type: KeyTypeId) -> Vec<hbbft_thresh::Public> {
+		self.public_keys_by_type::<hbbft_thresh::Public>(key_type).unwrap_or_default()
+	}
+
+	fn hb_node_generate_new(
+		&mut self,
+		id: KeyTypeId,
+		seed: Option<&str>,
+	) -> std::result::Result<hbbft_thresh::Public, String> {
+		let pair = match seed {
+			Some(seed) => self.insert_ephemeral_from_seed_by_type::<hbbft_thresh::Pair>(seed, id),
+			None => self.generate_by_type::<hbbft_thresh::Pair>(id),
 		}.map_err(|e| e.to_string())?;
 
 		Ok(pair.public())

@@ -168,7 +168,7 @@ macro_rules! new_full {
       //service.config().custom.inherent_data_providers.clone(),
       InherentDataProviders::new(),
       select_chain,
-	  service.keystore()
+	  service.keystore(),
     )?;
     service.spawn_task(badger.unit_error().boxed().compat());
 

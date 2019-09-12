@@ -15,7 +15,7 @@
 // along with Substrate.  If not, see <http://www.gnu.org/licenses/>.
 
 use primitives::{
-	blake2_128, blake2_256, twox_128, twox_256, twox_64, ed25519, Blake2Hasher, sr25519, Pair,
+	blake2_128, blake2_256, twox_128, twox_256, twox_64, ed25519, Blake2Hasher, sr25519, Pair,hbbft_thresh,
 	traits::Externalities, child_storage_key::ChildStorageKey,
 };
 // Switch to this after PoC-3
@@ -201,6 +201,50 @@ impl OtherApi for () {
 }
 
 impl CryptoApi for () {
+
+    fn hb_node_public_keys(id: KeyTypeId) -> Vec<hbbft_thresh::Public> {
+		ext::with(|ext| {
+			ext.keystore()
+				.expect("No `keystore` associated for the current context!")
+				.read()
+				.hb_node_public_keys(id)
+		}).expect("`hb_node_public_keys` cannot be called outside of an Externalities-provided environment.")
+	}
+
+
+
+	fn hb_node_generate(id:KeyTypeId, seed: Option<&str>) -> hbbft_thresh::Public
+	{
+		ext::with(|ext| {
+			ext.keystore()
+				.expect("No `keystore` associated for the current context!")
+				.write()
+				.hb_node_generate_new(id, seed)
+				.expect("`ed25519_generate` failed")
+		}).expect("`ed25519_generate` cannot be called outside of an Externalities-provided environment.")
+
+	}
+	
+	fn hb_node_sign<M: AsRef<[u8]>>(
+		id: KeyTypeId,
+		pubkey: &hbbft_thresh::Public,
+		msg: &M,
+	) -> Option<hbbft_thresh::Signature> {
+		let pub_key = hbbft_thresh::Public::try_from(pubkey.as_ref()).ok()?;
+
+		ext::with(|ext| {
+			ext.keystore()
+				.expect("No `keystore` associated for the current context!")
+				.read()
+				.hb_node_key_pair(id, &pub_key)
+				.map(|k| k.sign(msg.as_ref()))
+		}).expect("`hb_node_sign` cannot be called outside of an Externalities-provided environment.")
+	}
+
+	fn hb_node_verify(sig: &hbbft_thresh::Signature, msg: &[u8], pubkey: &hbbft_thresh::Public) -> bool {
+		hbbft_thresh::Pair::verify(sig, msg, pubkey)
+	}
+	
 	fn ed25519_public_keys(id: KeyTypeId) -> Vec<ed25519::Public> {
 		ext::with(|ext| {
 			ext.keystore()
@@ -209,6 +253,7 @@ impl CryptoApi for () {
 				.ed25519_public_keys(id)
 		}).expect("`ed25519_public_keys` cannot be called outside of an Externalities-provided environment.")
 	}
+
 
 	fn ed25519_generate(id: KeyTypeId, seed: Option<&str>) -> ed25519::Public {
 		ext::with(|ext| {
