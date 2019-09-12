@@ -38,7 +38,8 @@ impl TestNet {
 		let mut net = Self {
 			peers: Vec::with_capacity(n_peers),
 		};
-		let config = Self::default_config();
+		let mut config = Self::default_config();
+		config.roles = Roles::AUTHORITY;
 		for _ in 0..n_peers {
 			net.add_full_peer(&config);
 		}
@@ -89,20 +90,24 @@ fn test_1_of_3_key_gen() {
 	];
 
 	let mut runtime = current_thread::Runtime::new().unwrap();
+
 	let mut net = TestNet::new(peers.len());
 	net.peer(0).push_blocks(10, false);
 	net.block_until_sync(&mut runtime);
+	assert_eq!(net.peer(0).client().info().chain.best_number, 10);
 
 	let net = Arc::new(Mutex::new(net));
 
-	let all_peers = peers.iter().cloned();
 	let mut finality_notifications = Vec::new();
+
+	let all_peers = peers.iter().cloned();
 
 	for (peer_id, local_key) in all_peers.enumerate() {
 		let net = net.lock();
 		let client = net.peers[peer_id].client().clone();
 		let network = net.peers[peer_id].network_service().clone();
 		let local_peer_id = network.local_peer_id();
+
 		let (keystore, keystore_path) = create_keystore(local_key);
 
 		finality_notifications.push(
