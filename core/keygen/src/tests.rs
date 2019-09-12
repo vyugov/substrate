@@ -89,26 +89,44 @@ fn test_1_of_3_key_gen() {
 	];
 
 	let mut runtime = current_thread::Runtime::new().unwrap();
-	let mut net = TestNet::new(3);
+	let mut net = TestNet::new(peers.len());
+	net.peer(0).push_blocks(10, false);
+	net.block_until_sync(&mut runtime);
+
 	let net = Arc::new(Mutex::new(net));
 
 	let all_peers = peers.iter().cloned();
+	let mut finality_notifications = Vec::new();
 
 	for (peer_id, local_key) in all_peers.enumerate() {
 		let net = net.lock();
-		let client = net.peers[peer_id].client().clone().as_full().unwrap();
+		let client = net.peers[peer_id].client().clone();
 		let network = net.peers[peer_id].network_service().clone();
 		let local_peer_id = network.local_peer_id();
 		let (keystore, keystore_path) = create_keystore(local_key);
 
-		let node = run_key_gen(local_peer_id, keystore, client, network).unwrap();
+		finality_notifications.push(
+			client
+				.finality_notification_stream()
+				.map(|v| Ok::<_, ()>(v))
+				.compat()
+				.take_while(|n| Ok(n.header.number() < &10))
+				.for_each(move |_| Ok(())),
+		);
+		let node =
+			run_key_gen(local_peer_id, keystore, client.as_full().unwrap(), network).unwrap();
 		runtime.spawn(node);
 	}
+
+	let wait_for = futures::future::join_all(finality_notifications)
+		.map(|_| ())
+		.map_err(|_| ());
+
 	let drive_to_completion = futures::future::poll_fn(|| {
 		net.lock().poll();
 		Ok(Async::NotReady)
 	});
 	let _ = runtime
-		.block_on(drive_to_completion.map(|_: ()| ()).map_err(|_: ()| ()))
+		.block_on(wait_for.select(drive_to_completion).map_err(|_| ()))
 		.unwrap();
 }
