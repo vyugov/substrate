@@ -76,80 +76,23 @@ pub struct ScheduledChange<N> {
 #[cfg_attr(feature = "std", derive(Serialize, Debug))]
 #[derive(Decode, Encode, PartialEq, Eq, Clone)]
 pub enum ConsensusLog<N: Codec> {
-	/// Schedule an authority set change.
-	///
-	/// Precedence towards earlier or later digest items can be given
-	/// based on the rules of the chain.
-	///
-	/// No change should be scheduled if one is already and the delay has not
-	/// passed completely.
-	///
-	/// This should be a pure function: i.e. as long as the runtime can interpret
-	/// the digest type it should return the same result regardless of the current
-	/// state.
+
+	///  Request for a new key to be generated, with provided requestid
 	#[codec(index = "1")]
-	ScheduledChange(ScheduledChange<N>),
-	/// Force an authority set change.
-	///
-	/// Forced changes are applied after a delay of _imported_ blocks,
-	/// while pending changes are applied after a delay of _finalized_ blocks.
-	///
-	/// Precedence towards earlier or later digest items can be given
-	/// based on the rules of the chain.
-	///
-	/// No change should be scheduled if one is already and the delay has not
-	/// passed completely.
-	///
-	/// This should be a pure function: i.e. as long as the runtime can interpret
-	/// the digest type it should return the same result regardless of the current
-	/// state.
-	#[codec(index = "2")]
-	ForcedChange(N, ScheduledChange<N>),
-	/// Note that the authority with given index is disabled until the next change.
-	#[codec(index = "3")]
-	OnDisabled(AuthorityIndex),
-	/// A signal to pause the current authority set after the given delay.
-	/// After finalizing the block at _delay_ the authorities should stop voting.
-	#[codec(index = "4")]
-	Pause(N),
-	/// A signal to resume the current authority set after the given delay.
-	/// After authoring the block at _delay_ the authorities should resume voting.
-	#[codec(index = "5")]
-	Resume(N),
+	RequestForKeygen(Vec<u8>),
+
 }
 
 impl<N: Codec> ConsensusLog<N> {
 	/// Try to cast the log entry as a contained signal.
-	pub fn try_into_change(self) -> Option<ScheduledChange<N>> {
+	pub fn try_into_vec(self) -> Option<Vec<u8>> {
 		match self {
-			ConsensusLog::ScheduledChange(change) => Some(change),
+			ConsensusLog::RequestForKeygen(change) => Some(change),
 			_ => None,
 		}
 	}
 
-	/// Try to cast the log entry as a contained forced signal.
-	pub fn try_into_forced_change(self) -> Option<(N, ScheduledChange<N>)> {
-		match self {
-			ConsensusLog::ForcedChange(median, change) => Some((median, change)),
-			_ => None,
-		}
-	}
-
-	/// Try to cast the log entry as a contained pause signal.
-	pub fn try_into_pause(self) -> Option<N> {
-		match self {
-			ConsensusLog::Pause(delay) => Some(delay),
-			_ => None,
-		}
-	}
-
-	/// Try to cast the log entry as a contained resume signal.
-	pub fn try_into_resume(self) -> Option<N> {
-		match self {
-			ConsensusLog::Resume(delay) => Some(delay),
-			_ => None,
-		}
-	}
+	
 }
 
 pub const PENDING_CHANGE_CALL: &str = "hbbft_pending_change";

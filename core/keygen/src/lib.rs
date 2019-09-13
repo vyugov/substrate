@@ -93,7 +93,7 @@ pub struct KeyGenState {
 	pub vsss: BTreeMap<PeerIndex, VerifiableSS>,
 	pub secret_shares: BTreeMap<PeerIndex, FE>,
 	pub proofs: BTreeMap<PeerIndex, DLogProof>,
-	pub shared_keys: Option<SharedKeys>,
+	pub shared_keys: Option<SharedKeys>, //public key is shared_keys.y?
 }
 
 impl Default for KeyGenState {
@@ -243,7 +243,7 @@ where
 	let config = NodeConfig {
 		name: None,
 		threshold: 1,
-		players: 3,
+		players: 4,
 	};
 
 	// let persistent_data: SharedState = load_persistent(&**client.backend()).unwrap();

@@ -83,6 +83,17 @@ pub trait BareCryptoStore: Send + Sync {
 
 	/// Get the password for this store.
 	fn password(&self) -> Option<&str>;
+
+    /// Initiates a (key) request with a given id, returns error if request exists or could not be created
+	fn initiate_request(&self, request_id: &[u8],key_type: KeyTypeId) -> Result<(), ()>;
+
+	/// returns key data or 
+    fn get_request_data(&self, request_id: &[u8],key_type: KeyTypeId) -> Option<Vec<u8>>;
+	fn set_request_data(&self, request_id: &[u8],key_type: KeyTypeId,request_data: &[u8]) ->Result<(),()>;
+
+
+
+
 }
 
 /// A pointer to the key store.

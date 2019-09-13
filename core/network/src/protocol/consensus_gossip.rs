@@ -47,7 +47,7 @@ use std::collections::{HashMap, HashSet, hash_map::Entry};
 use std::sync::Arc;
 use std::iter;
 use std::time;
-use log::{trace, debug,info};
+use log::{trace, debug};
 
 #[cfg(feature = "upgraded")]
 use futures03::channel::mpsc;

@@ -48,6 +48,21 @@ impl crate::traits::BareCryptoStore for KeyStore {
 			.unwrap_or_default()
 	}
 
+	 fn initiate_request(&self, _request_id: &[u8],_key_type: KeyTypeId) -> Result<(), ()>
+	 {
+		 Ok(())
+	 }
+	 fn get_request_data(&self, _request_id: &[u8],_key_type: KeyTypeId) -> Option<Vec<u8>>
+	 {
+		 None
+	 }
+fn set_request_data(&self, _request_id: &[u8],_key_type: KeyTypeId,_request_data: &[u8]) -> Result<(), ()>
+{
+Ok(())
+}
+
+
+
 		fn hb_node_public_keys(&self, id: KeyTypeId) -> Vec<hbbft_thresh::Public> {
 		self.keys.get(&id)
 			.map(|keys|

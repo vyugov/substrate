@@ -258,6 +258,19 @@ impl Store {
 		buf.push(key_type + key.as_str());
 		buf
 	}
+
+	fn key_request_file_path(&self,request_id: &[u8],key_type: KeyTypeId) -> PathBuf
+	{
+		let mut buf = self.path.clone();
+		let key_type = hex::encode(key_type.0);
+		let request = hex::encode(request_id);
+		buf.push("rq_".to_owned()+&key_type + request.as_str());
+		buf
+	}
+	fn request_exists(&self,request_id: &[u8],key_type: KeyTypeId) -> bool
+	{
+		self.key_request_file_path(request_id,key_type).exists()
+	}
 }
 
 impl BareCryptoStore for Store {
@@ -277,6 +290,81 @@ impl BareCryptoStore for Store {
 
 		Ok(pair.public())
 	}
+
+    /// Initiates a (key) request with a given id, returns error if request exists or could not be created
+	fn initiate_request(&self, request_id: &[u8],key_type: KeyTypeId) -> std::result::Result<(), ()>
+	{
+        let pth=self.key_request_file_path(request_id,key_type);
+		if pth.exists()
+		{
+			return Err(())
+		}
+		let mut file =match  File::create(pth)
+		{
+			Ok(fl) => fl,
+			Err(_) => return Err(())
+		};
+		
+		let v=Vec::<u8>::new();
+		match serde_json::to_writer(&file, &v)
+		{
+			Ok(fl) => fl,
+			Err(_) => return Err(())
+		};
+		match file.flush()
+		{
+			Ok(fl) => fl,
+			Err(_) => return Err(())
+		};
+		Ok(())
+	}
+
+	/// returns key data or 
+    fn get_request_data(&self, request_id: &[u8],key_type: KeyTypeId) -> Option<Vec<u8>>
+	{
+		let pth=self.key_request_file_path(request_id,key_type);
+		if !pth.exists()
+		{
+			return  None
+		}
+		let file = match File::open(pth)
+		{
+			Ok(fl) => fl,
+			Err(_) => return None
+		};
+
+		let data: Vec<u8> =match  serde_json::from_reader(&file)
+		{
+			Ok(fl) => fl,
+			Err(_) => return None
+		};
+		if data.len()==0
+		{
+			return None
+		}
+		Some(data)
+	}
+	fn set_request_data(&self, request_id: &[u8],key_type: KeyTypeId,request_data: &[u8]) ->std::result::Result<(),()>
+	{
+		let pth=self.key_request_file_path(request_id,key_type);
+		let mut file = match File::open(pth)
+		{
+			Ok(fl) => fl,
+			Err(_) => return Err(())
+		
+		};
+		match serde_json::to_writer(&file, &request_data)
+		{
+			Ok(fl) => {},
+			Err(_) => return Err(())
+		};;
+		match file.flush(){
+			Ok(fl) => {},
+			Err(_) => return Err(())
+		};
+		Ok(())
+	}
+
 
 	fn sr25519_key_pair(&self, id: KeyTypeId, pub_key: &sr25519::Public) -> Option<sr25519::Pair> {
 		self.key_pair_by_type::<sr25519::Pair>(pub_key, id).ok()
