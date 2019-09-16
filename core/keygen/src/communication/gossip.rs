@@ -200,14 +200,14 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 		};
 
 		Box::new(move |who, intent, topic, mut data| {
+			println!("In `message_allowed` rebroadcast: {:?}", do_rebroadcast);
+
 			if let MessageIntent::PeriodicRebroadcast = intent {
-				println!("INTENT PERIODIC");
 				return do_rebroadcast;
 			}
 
 			let gossip_msg = GossipMessage::decode(&mut data);
 			if let Ok(gossip_msg) = gossip_msg {
-				println!("In `message_allowed` inner: {:?}", inner);
 				match gossip_msg {
 					GossipMessage::Message(Message::ConfirmPeers(_)) => return true,
 					GossipMessage::Message(Message::KeyGen(_)) => return true,
@@ -229,15 +229,16 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 				match gossip_msg {
 					GossipMessage::Message(msg) => match msg {
 						Message::ConfirmPeers(cpm) => {
+							let invalid_state =
+								inner.local_peer_info.state != PeerState::AwaitingPeers;
 							match cpm {
 								ConfirmPeersMessage::Confirming(from, hash) => {
 									let our_hash = inner.get_peers_hash();
-									println!("{:?} {:?}", hash, our_hash);
-									return our_hash != hash;
+									return our_hash != hash || invalid_state;
 								}
 								_ => {}
 							}
-							return inner.local_peer_info.state != PeerState::AwaitingPeers;
+							return invalid_state;
 						}
 						Message::KeyGen(_) => {
 							return inner.local_peer_info.state == PeerState::Complete

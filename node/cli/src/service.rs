@@ -188,7 +188,7 @@ macro_rules! new_full {
 				service.client(),
 				service.network()
 			)?;
-			service.spawn_task(Box::new(key_gen));
+			service.spawn_task(key_gen);
 		}
 
 		let config = grandpa::Config {
@@ -258,12 +258,15 @@ pub fn new_light<C: Send + Default + 'static>(
 				transaction_pool::ChainApi::new(client),
 			))
 		})?
+		.with_transaction_pool(|config, client| {
+			Ok(TransactionPool::new(
+				config,
+				transaction_pool::ChainApi::new(client),
+			))
+		})?
 		.with_import_queue_and_fprb(
-			|_config, client, backend, _select_chain, transaction_pool| {
-				let fetch_checker = backend
-					.blockchain()
-					.fetcher()
-					.upgrade()
+			|_config, client, backend, fetcher, _select_chain, transaction_pool| {
+				let fetch_checker = fetcher
 					.map(|fetcher| fetcher.checker().clone())
 					.ok_or_else(|| {
 						"Trying to start light import queue without active fetch checker"
@@ -300,10 +303,17 @@ pub fn new_light<C: Send + Default + 'static>(
 			Ok(Arc::new(GrandpaFinalityProofProvider::new(backend, client)) as _)
 		})?
 		.with_rpc_extensions(|client, pool| {
-			use node_rpc::accounts::{Accounts, AccountsApi};
+			use node_rpc::{
+				accounts::{Accounts, AccountsApi},
+				contracts::{Contracts, ContractsApi},
+			};
 
 			let mut io = jsonrpc_core::IoHandler::default();
-			io.extend_with(AccountsApi::to_delegate(Accounts::new(client, pool)));
+			io.extend_with(AccountsApi::to_delegate(Accounts::new(
+				client.clone(),
+				pool,
+			)));
+			io.extend_with(ContractsApi::to_delegate(Contracts::new(client)));
 			io
 		})?
 		.build()?;

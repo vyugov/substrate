@@ -113,7 +113,10 @@ fn test_1_of_3_key_gen() {
 		finality_notifications.push(
 			client
 				.finality_notification_stream()
-				.map(|v| Ok::<_, ()>(v))
+				.map(|v| {
+					println!("notification {:?}", v);
+					Ok::<_, ()>(v)
+				})
 				.compat()
 				.take_while(|n| Ok(n.header.number() < &10))
 				.for_each(move |_| Ok(())),

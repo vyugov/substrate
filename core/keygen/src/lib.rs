@@ -9,7 +9,7 @@ use std::{
 use codec::{Decode, Encode};
 use curv::cryptographic_primitives::proofs::sigma_dlog::DLogProof;
 use curv::cryptographic_primitives::secret_sharing::feldman_vss::VerifiableSS;
-use curv::FE;
+use curv::{FE, GE};
 use futures::{prelude::*, stream::Fuse, sync::mpsc};
 use keystore::KeyStorePtr;
 use log::{debug, error, info};
@@ -94,6 +94,12 @@ pub struct KeyGenState {
 	pub secret_shares: BTreeMap<PeerIndex, FE>,
 	pub proofs: BTreeMap<PeerIndex, DLogProof>,
 	pub shared_keys: Option<SharedKeys>,
+}
+
+impl KeyGenState {
+	pub fn shared_public_key(&self) -> Option<GE> {
+		self.shared_keys.map(|sk| sk.y)
+	}
 }
 
 impl Default for KeyGenState {
