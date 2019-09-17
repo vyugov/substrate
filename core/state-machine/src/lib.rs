@@ -18,7 +18,10 @@
 
 #![warn(missing_docs)]
 
-use std::{fmt, panic::UnwindSafe, result, marker::PhantomData};
+use std::{
+	fmt, result, collections::HashMap,
+	marker::PhantomData, panic::UnwindSafe,
+};
 use log::warn;
 use hash_db::Hasher;
 use codec::{Decode, Encode};
@@ -89,13 +92,26 @@ pub enum ExecutionStrategy {
 	NativeElseWasm,
 }
 
+/// Storage backend trust level.
+#[derive(Debug, Clone)]
+pub enum BackendTrustLevel {
+	/// Panics from trusted backends are considered justified, and never caught.
+	Trusted,
+	/// Panics from untrusted backend are caught and interpreted as runtime error.
+	/// Untrusted backend may be missing some parts of the trie, so panics are not considered
+	/// fatal.
+	Untrusted,
+}
+
 /// Like `ExecutionStrategy` only it also stores a handler in case of consensus failure.
 #[derive(Clone)]
 pub enum ExecutionManager<F> {
 	/// Execute with the native equivalent if it is compatible with the given wasm module; otherwise fall back to the wasm.
 	NativeWhenPossible,
-	/// Use the given wasm module.
-	AlwaysWasm,
+	/// Use the given wasm module. The backend on which code is executed code could be
+	/// trusted to provide all storage or not (i.e. the light client cannot be trusted to provide
+	/// for all storage queries since the storage entries it has come from an external node).
+	AlwaysWasm(BackendTrustLevel),
 	/// Run with both the wasm and the native variant (if compatible). Call `F` in the case of any discrepency.
 	Both(F),
 	/// First native, then if that fails or is not possible, wasm.
@@ -106,7 +122,7 @@ impl<'a, F> From<&'a ExecutionManager<F>> for ExecutionStrategy {
 	fn from(s: &'a ExecutionManager<F>) -> Self {
 		match *s {
 			ExecutionManager::NativeWhenPossible => ExecutionStrategy::NativeWhenPossible,
-			ExecutionManager::AlwaysWasm => ExecutionStrategy::AlwaysWasm,
+			ExecutionManager::AlwaysWasm(_) => ExecutionStrategy::AlwaysWasm,
 			ExecutionManager::NativeElseWasm => ExecutionStrategy::NativeElseWasm,
 			ExecutionManager::Both(_) => ExecutionStrategy::Both,
 		}
@@ -119,7 +135,7 @@ impl ExecutionStrategy {
 		self,
 	) -> ExecutionManager<DefaultHandler<R, E>> {
 		match self {
-			ExecutionStrategy::AlwaysWasm => ExecutionManager::AlwaysWasm,
+			ExecutionStrategy::AlwaysWasm => ExecutionManager::AlwaysWasm(BackendTrustLevel::Trusted),
 			ExecutionStrategy::NativeWhenPossible => ExecutionManager::NativeWhenPossible,
 			ExecutionStrategy::NativeElseWasm => ExecutionManager::NativeElseWasm,
 			ExecutionStrategy::Both => ExecutionManager::Both(|wasm_result, native_result| {
@@ -137,6 +153,16 @@ impl ExecutionStrategy {
 /// Evaluate to ExecutionManager::NativeElseWasm, without having to figure out the type.
 pub fn native_else_wasm<E, R: Decode>() -> ExecutionManager<DefaultHandler<R, E>> {
 	ExecutionManager::NativeElseWasm
+}
+
+/// Evaluate to ExecutionManager::AlwaysWasm with trusted backend, without having to figure out the type.
+fn always_wasm<E, R: Decode>() -> ExecutionManager<DefaultHandler<R, E>> {
+	ExecutionManager::AlwaysWasm(BackendTrustLevel::Trusted)
+}
+
+/// Evaluate ExecutionManager::AlwaysWasm with untrusted backend, without having to figure out the type.
+fn always_untrusted_wasm<E, R: Decode>() -> ExecutionManager<DefaultHandler<R, E>> {
+	ExecutionManager::AlwaysWasm(BackendTrustLevel::Untrusted)
 }
 
 /// The substrate state machine.
@@ -375,7 +401,11 @@ impl<'a, B, H, N, T, O, Exec> StateMachine<'a, B, H, N, T, O, Exec> where
 						orig_prospective,
 					)
 				},
-				ExecutionManager::AlwaysWasm => {
+				ExecutionManager::AlwaysWasm(trust_level) => {
+					let _abort_guard = match trust_level {
+						BackendTrustLevel::Trusted => None,
+						BackendTrustLevel::Untrusted => Some(panic_handler::AbortGuard::never_abort()),
+					};
 					let res = self.execute_aux(compute_tx, false, native_call);
 					(res.0, res.2, res.3)
 				},
@@ -444,7 +474,7 @@ where
 	);
 
 	let (result, _, _) = sm.execute_using_consensus_failure_handler::<_, NeverNativeValue, fn() -> _>(
-		native_else_wasm(),
+		always_wasm(),
 		false,
 		None,
 	)?;
@@ -490,104 +520,137 @@ where
 	);
 
 	sm.execute_using_consensus_failure_handler::<_, NeverNativeValue, fn() -> _>(
-		native_else_wasm(),
+		always_untrusted_wasm(),
 		false,
 		None,
 	).map(|(result, _, _)| result.into_encoded())
 }
 
 /// Generate storage read proof.
-pub fn prove_read<B, H>(
+pub fn prove_read<B, H, I>(
 	mut backend: B,
-	key: &[u8]
-) -> Result<(Option<Vec<u8>>, Vec<Vec<u8>>), Box<dyn Error>>
+	keys: I,
+) -> Result<Vec<Vec<u8>>, Box<dyn Error>>
 where
 	B: Backend<H>,
 	H: Hasher,
 	H::Out: Ord,
+	I: IntoIterator,
+	I::Item: AsRef<[u8]>,
 {
 	let trie_backend = backend.as_trie_backend()
 		.ok_or_else(
 			|| Box::new(ExecutionError::UnableToGenerateProof) as Box<dyn Error>
 		)?;
-	prove_read_on_trie_backend(trie_backend, key)
+	prove_read_on_trie_backend(trie_backend, keys)
 }
 
 /// Generate child storage read proof.
-pub fn prove_child_read<B, H>(
+pub fn prove_child_read<B, H, I>(
 	mut backend: B,
 	storage_key: &[u8],
-	key: &[u8],
-) -> Result<(Option<Vec<u8>>, Vec<Vec<u8>>), Box<dyn Error>>
+	keys: I,
+) -> Result<Vec<Vec<u8>>, Box<dyn Error>>
 where
 	B: Backend<H>,
 	H: Hasher,
 	H::Out: Ord,
+	I: IntoIterator,
+	I::Item: AsRef<[u8]>,
 {
 	let trie_backend = backend.as_trie_backend()
 		.ok_or_else(|| Box::new(ExecutionError::UnableToGenerateProof) as Box<dyn Error>)?;
-	prove_child_read_on_trie_backend(trie_backend, storage_key, key)
+	prove_child_read_on_trie_backend(trie_backend, storage_key, keys)
 }
 
 /// Generate storage read proof on pre-created trie backend.
-pub fn prove_read_on_trie_backend<S, H>(
+pub fn prove_read_on_trie_backend<S, H, I>(
 	trie_backend: &TrieBackend<S, H>,
-	key: &[u8]
-) -> Result<(Option<Vec<u8>>, Vec<Vec<u8>>), Box<dyn Error>>
+	keys: I,
+) -> Result<Vec<Vec<u8>>, Box<dyn Error>>
 where
 	S: trie_backend_essence::TrieBackendStorage<H>,
 	H: Hasher,
 	H::Out: Ord,
+	I: IntoIterator,
+	I::Item: AsRef<[u8]>,
 {
 	let proving_backend = proving_backend::ProvingBackend::<_, H>::new(trie_backend);
-	let result = proving_backend.storage(key).map_err(|e| Box::new(e) as Box<dyn Error>)?;
-	Ok((result, proving_backend.extract_proof()))
+	for key in keys.into_iter() {
+		proving_backend
+			.storage(key.as_ref())
+			.map_err(|e| Box::new(e) as Box<dyn Error>)?;
+	}
+	Ok(proving_backend.extract_proof())
 }
 
 /// Generate storage read proof on pre-created trie backend.
-pub fn prove_child_read_on_trie_backend<S, H>(
+pub fn prove_child_read_on_trie_backend<S, H, I>(
 	trie_backend: &TrieBackend<S, H>,
 	storage_key: &[u8],
-	key: &[u8]
-) -> Result<(Option<Vec<u8>>, Vec<Vec<u8>>), Box<dyn Error>>
+	keys: I,
+) -> Result<Vec<Vec<u8>>, Box<dyn Error>>
 where
 	S: trie_backend_essence::TrieBackendStorage<H>,
 	H: Hasher,
 	H::Out: Ord,
+	I: IntoIterator,
+	I::Item: AsRef<[u8]>,
 {
 	let proving_backend = proving_backend::ProvingBackend::<_, H>::new(trie_backend);
-	let result = proving_backend.child_storage(storage_key, key)
-		.map_err(|e| Box::new(e) as Box<dyn Error>)?;
-	Ok((result, proving_backend.extract_proof()))
+	for key in keys.into_iter() {
+		proving_backend
+			.child_storage(storage_key, key.as_ref())
+			.map_err(|e| Box::new(e) as Box<dyn Error>)?;
+	}
+	Ok(proving_backend.extract_proof())
 }
 
 /// Check storage read proof, generated by `prove_read` call.
-pub fn read_proof_check<H>(
+pub fn read_proof_check<H, I>(
 	root: H::Out,
 	proof: Vec<Vec<u8>>,
-	key: &[u8],
-) -> Result<Option<Vec<u8>>, Box<dyn Error>>
+	keys: I,
+) -> Result<HashMap<Vec<u8>, Option<Vec<u8>>>, Box<dyn Error>>
 where
 	H: Hasher,
 	H::Out: Ord,
+	I: IntoIterator,
+	I::Item: AsRef<[u8]>,
 {
 	let proving_backend = create_proof_check_backend::<H>(root, proof)?;
-	read_proof_check_on_proving_backend(&proving_backend, key)
+	let mut result = HashMap::new();
+	for key in keys.into_iter() {
+		let value = read_proof_check_on_proving_backend(&proving_backend, key.as_ref())?;
+		result.insert(key.as_ref().to_vec(), value);
+	}
+	Ok(result)
 }
 
 /// Check child storage read proof, generated by `prove_child_read` call.
-pub fn read_child_proof_check<H>(
+pub fn read_child_proof_check<H, I>(
 	root: H::Out,
 	proof: Vec<Vec<u8>>,
 	storage_key: &[u8],
-	key: &[u8],
-) -> Result<Option<Vec<u8>>, Box<dyn Error>>
+	keys: I,
+) -> Result<HashMap<Vec<u8>, Option<Vec<u8>>>, Box<dyn Error>>
 where
 	H: Hasher,
 	H::Out: Ord,
+	I: IntoIterator,
+	I::Item: AsRef<[u8]>,
 {
 	let proving_backend = create_proof_check_backend::<H>(root, proof)?;
-	read_child_proof_check_on_proving_backend(&proving_backend, storage_key, key)
+	let mut result = HashMap::new();
+	for key in keys.into_iter() {
+		let value = read_child_proof_check_on_proving_backend(
+			&proving_backend,
+			storage_key,
+			key.as_ref(),
+		)?;
+		result.insert(key.as_ref().to_vec(), value);
+	}
+	Ok(result)
 }
 
 /// Check storage read proof on pre-created proving backend.
@@ -936,20 +999,23 @@ mod tests {
 		// fetch read proof from 'remote' full node
 		let remote_backend = trie_backend::tests::test_trie();
 		let remote_root = remote_backend.storage_root(::std::iter::empty()).0;
-		let remote_proof = prove_read(remote_backend, b"value2").unwrap().1;
+		let remote_proof = prove_read(remote_backend, &[b"value2"]).unwrap();
  		// check proof locally
-		let local_result1 = read_proof_check::<Blake2Hasher>(
+		let local_result1 = read_proof_check::<Blake2Hasher, _>(
 			remote_root,
 			remote_proof.clone(),
-			b"value2"
+			&[b"value2"],
 		).unwrap();
-		let local_result2 = read_proof_check::<Blake2Hasher>(
+		let local_result2 = read_proof_check::<Blake2Hasher, _>(
 			remote_root,
 			remote_proof.clone(),
-			&[0xff]
+			&[&[0xff]],
 		).is_ok();
  		// check that results are correct
-		assert_eq!(local_result1, Some(vec![24]));
+		assert_eq!(
+			local_result1.into_iter().collect::<Vec<_>>(),
+			vec![(b"value2".to_vec(), Some(vec![24]))],
+		);
 		assert_eq!(local_result2, false);
 		// on child trie
 		let remote_backend = trie_backend::tests::test_trie();
@@ -957,21 +1023,28 @@ mod tests {
 		let remote_proof = prove_child_read(
 			remote_backend,
 			b":child_storage:default:sub1",
-			b"value3"
-		).unwrap().1;
-		let local_result1 = read_child_proof_check::<Blake2Hasher>(
-			remote_root,
-			remote_proof.clone(),
-			b":child_storage:default:sub1",b"value3"
+			&[b"value3"],
 		).unwrap();
-		let local_result2 = read_child_proof_check::<Blake2Hasher>(
+		let local_result1 = read_child_proof_check::<Blake2Hasher, _>(
 			remote_root,
 			remote_proof.clone(),
 			b":child_storage:default:sub1",
-			b"value2"
+			&[b"value3"],
 		).unwrap();
-		assert_eq!(local_result1, Some(vec![142]));
-		assert_eq!(local_result2, None);
+		let local_result2 = read_child_proof_check::<Blake2Hasher, _>(
+			remote_root,
+			remote_proof.clone(),
+			b":child_storage:default:sub1",
+			&[b"value2"],
+		).unwrap();
+		assert_eq!(
+			local_result1.into_iter().collect::<Vec<_>>(),
+			vec![(b"value3".to_vec(), Some(vec![142]))],
+		);
+		assert_eq!(
+			local_result2.into_iter().collect::<Vec<_>>(),
+			vec![(b"value2".to_vec(), None)],
+		);
 	}
 
 	#[test]
