@@ -2,24 +2,18 @@ use std::{
 	collections::VecDeque,
 	fmt::Debug,
 	marker::PhantomData,
-	sync::Arc,
 	time::{Duration, Instant},
 };
 
-use client::blockchain::HeaderBackend;
 use client::{
-	backend::Backend, error::Error as ClientError, error::Result, BlockchainEvents, CallExecutor,
-	Client,
+	backend::Backend, blockchain::HeaderBackend, error::Error as ClientError, error::Result,
+	BlockchainEvents, CallExecutor, Client,
 };
 use codec::{Decode, Encode};
 use consensus_common::SelectChain;
 use futures::{future::Loop as FutureLoop, prelude::*, stream::Fuse, sync::mpsc};
 use inherents::InherentDataProviders;
 use log::{debug, info, warn};
-use mpe_primitives::HbbftApi;
-use network;
-use primitives::H256;
-use sr_primitives::generic::BlockId;
 use sr_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
 use tokio_timer::Interval;
 

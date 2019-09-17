@@ -6,7 +6,6 @@ use futures::sync::{mpsc, oneshot};
 use log::{error, info, trace};
 
 use gossip::{GossipMessage, GossipValidator};
-use mpe_primitives::{AuthorityId, Keypair};
 use network::{consensus_gossip as network_gossip, NetworkService, PeerId};
 use network_gossip::ConsensusMessage;
 use sr_primitives::traits::{

@@ -184,6 +184,7 @@ macro_rules! new_full {
 
 			let key_gen = keygen::run_key_gen(
 				service.network().local_peer_id(),
+				service.keystore(),
 				service.client(),
 				service.network()
 			)?;
