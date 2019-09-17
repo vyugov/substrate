@@ -98,7 +98,7 @@ pub struct KeyGenState {
 
 impl KeyGenState {
 	pub fn shared_public_key(&self) -> Option<GE> {
-		self.shared_keys.map(|sk| sk.y)
+		self.shared_keys.clone().map(|sk| sk.y)
 	}
 }
 
