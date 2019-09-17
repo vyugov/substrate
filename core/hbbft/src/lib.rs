@@ -221,7 +221,7 @@ where
       auxiliary: Vec::new(),
       fork_choice: ForkChoiceStrategy::LongestChain,
     };
-
+   info!("VERIFIER BADGER");
     Ok((import_block, None))
   }
 }
