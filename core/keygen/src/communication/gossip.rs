@@ -241,7 +241,8 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 							return invalid_state;
 						}
 						Message::KeyGen(_) => {
-							return inner.local_peer_info.state == PeerState::Complete
+							let complet_state = inner.local_peer_info.state == PeerState::Complete;
+							return complet_state;
 						}
 						_ => return false,
 					},

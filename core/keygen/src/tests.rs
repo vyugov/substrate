@@ -26,9 +26,6 @@ use tokio::runtime::current_thread;
 
 use super::*;
 
-type PeerData = Mutex<Option<(u8, u8)>>;
-type MecPeer = Peer<PeerData, DummySpecialization>;
-
 pub struct TestNet {
 	peers: Vec<Peer<(), DummySpecialization>>,
 }
