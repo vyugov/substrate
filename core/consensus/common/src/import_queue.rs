@@ -229,7 +229,7 @@ pub fn import_single_block<B: BlockT, V: Verifier<B>>(
 			}
 			BlockImportError::VerificationFailed(peer.clone(), msg)
 		})?;
-
+   
 	let mut cache = HashMap::new();
 	if let Some(keys) = maybe_keys {
 		cache.extend(keys.into_iter());

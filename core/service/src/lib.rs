@@ -40,7 +40,7 @@ use exit_future::Signal;
 use futures::prelude::*;
 use futures03::stream::{StreamExt as _, TryStreamExt as _};
 use network::{NetworkService, NetworkState, specialization::NetworkSpecialization, Event, DhtEvent};
-use log::{log, warn, debug, error, Level};
+use log::{log, warn, debug, error, Level,info};
 use codec::{Encode, Decode};
 use primitives::{Blake2Hasher, H256};
 use sr_primitives::BuildStorage;
@@ -698,6 +698,7 @@ fn build_network_future<
 			last = Some(item);
 		}
 		if let Some(notification) = last {
+			info!("FINALIZED");
 			network.on_block_finalized(notification.hash, notification.header);
 		}
 

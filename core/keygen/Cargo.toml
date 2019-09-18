@@ -49,3 +49,4 @@ tempfile = "3.1"
 [features]
 default = ["service-integration"]
 service-integration = ["service"]
+upgraded = []

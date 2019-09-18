@@ -2,7 +2,20 @@ use std::{collections::VecDeque, marker::PhantomData, sync::Arc};
 
 use codec::{Decode, Encode};
 use curv::GE;
+
+#[cfg(not(feature = "upgraded"))]
 use futures::prelude::*;
+
+#[cfg(feature = "upgraded")]
+use futures03::prelude::*;
+
+#[cfg(feature = "upgraded")]
+use futures03::Poll;
+
+#[cfg(feature = "upgraded")]
+use futures03::core_reexport::pin::Pin;
+
+
 use log::{debug, error, info, warn};
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{Keys, Parameters};
 use tokio_executor::DefaultExecutor;
@@ -23,12 +36,17 @@ use super::{
 	ConfirmPeersMessage, Environment, Error, GossipMessage, KeyGenMessage, Message,
 	MessageWithSender, Network, PeerIndex, SignMessage,
 };
+use crate::communication::MWSStream;
+use crate::communication::MWSSink;
 
+#[cfg(not(feature = "upgraded"))]
 struct Buffered<S: Sink> {
 	inner: S,
 	buffer: VecDeque<S::SinkItem>,
 }
 
+
+#[cfg(not(feature = "upgraded"))]
 impl<S: Sink> Buffered<S> {
 	fn new(inner: S) -> Buffered<S> {
 		Buffered {
@@ -76,6 +94,99 @@ impl<S: Sink> Buffered<S> {
 	}
 }
 
+
+#[cfg(feature = "upgraded")]
+struct Buffered<A,S>
+where S: futures03::sink::Sink<A, Error = Error>+Unpin
+ {
+	inner:S,
+	buffer: VecDeque<A>,
+}
+
+impl<A,S>  Unpin for  Buffered<A,S>
+where S: futures03::sink::Sink<A, Error = Error>+Unpin
+{}
+
+#[cfg(feature = "upgraded")]
+impl<SinkItem,S> Buffered<SinkItem,S> 
+where S: futures03::sink::Sink<SinkItem, Error = Error>+Unpin,
+{
+	fn new(inner: S) -> Buffered<SinkItem,S>
+	 {
+		Buffered {
+			buffer: VecDeque::new(),
+			inner,
+		}
+	}
+
+	// push an item into the buffered sink.
+	// the sink _must_ be driven to completion with `poll` afterwards.
+	fn push(&mut self, item: SinkItem) {
+		self.buffer.push_back(item);
+	}
+    fn ginner(self: Pin<&mut Self>)->Pin<&mut S>
+	{
+		 unsafe { self.map_unchecked_mut(|s| &mut s.inner) }
+	}
+	// returns ready when the sink and the buffer are completely flushed.
+	fn poll(mut self: Pin<&mut Self>,cx: &mut std::task::Context<'_>) -> Poll<()> {
+		let polled =  (*self).schedule_all(cx);
+
+		let respoll=match polled {
+			futures03::Poll::Ready(()) => Pin::new((&mut (*self).inner)).poll_flush(cx),
+			futures03::Poll::Pending => {
+				Pin::new((&mut (*self).inner)).poll_flush(cx);
+				futures03::Poll::Pending 
+			}
+		};
+		match respoll
+		{
+        Poll::Pending => Poll::Pending,
+		Poll::Ready(Ok(_)) =>Poll::Ready(()),
+		Poll::Ready(Err(_)) =>Poll::Pending,
+		}
+	}
+
+	fn schedule_all(&mut self,cx: &mut std::task::Context<'_>) -> Poll<()> {
+		match Pin::new(&mut self.inner).poll_ready(cx)
+		{
+			Poll::Pending => return Poll::Pending,
+			Poll::Ready(Ok( () )) => {},
+			Poll::Ready(Err(_)) => return Poll::Pending,
+		}
+		while let Some(front) = self.buffer.pop_front() {
+
+			match Pin::new(&mut self.inner).start_send(front) {
+				Ok(()) => {
+             match Pin::new(&mut self.inner).poll_ready(cx)
+		 {
+			Poll::Pending => return Poll::Pending,
+			Poll::Ready(Ok( () )) => continue,
+			Poll::Ready(Err(_)) => return Poll::Pending, //todo::convert
+		 }
+
+				},
+				Err(_)=> {
+				//	self.buffer.push_front(front);
+					break;
+				}
+			}
+			
+		}
+
+		if self.buffer.is_empty() {
+			Poll::Ready(())
+		} else {
+			Poll::Pending
+		}
+	}
+}
+
+
+
+
+
+#[cfg(not(feature = "upgraded"))]
 pub(crate) struct Signer<B, E, Block: BlockT, N: Network<Block>, RA, In, Out>
 where
 	In: Stream<Item = MessageWithSender, Error = Error>,
@@ -86,6 +197,18 @@ where
 	global_out: Buffered<Out>,
 }
 
+#[cfg(feature = "upgraded")]
+pub(crate) struct Signer<B, E, Block: BlockT, N: Network<Block>, RA, In, Out>
+where
+	In: Stream<Item = MessageWithSender>,
+	Out: Sink<MessageWithSender, Error = Error>+Unpin,
+{
+	env: Arc<Environment<B, E, Block, N, RA>>,
+	global_in: In,
+	global_out: Buffered<MessageWithSender,Out>,
+}
+
+
 impl<B, E, Block, N, RA, In, Out> Signer<B, E, Block, N, RA, In, Out>
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
@@ -95,8 +218,8 @@ where
 	N: Network<Block> + Sync,
 	N::In: Send + 'static,
 	RA: Send + Sync + 'static,
-	In: Stream<Item = MessageWithSender, Error = Error>,
-	Out: Sink<SinkItem = MessageWithSender, SinkError = Error>,
+	In: MWSStream,
+	Out: MWSSink,
 {
 	pub fn new(env: Arc<Environment<B, E, Block, N, RA>>, global_in: In, global_out: Out) -> Self {
 		Signer {
@@ -311,11 +434,21 @@ where
 	N: Network<Block> + Sync,
 	N::In: Send + 'static,
 	RA: Send + Sync + 'static,
-	In: Stream<Item = MessageWithSender, Error = Error>,
-	Out: Sink<SinkItem = MessageWithSender, SinkError = Error>,
+	In: MWSStream,
+	Out: MWSSink,
 {
+    #[cfg(feature = "upgraded")]
+	type Output=Result<(),Error>;
+
+
+    #[cfg(not(feature = "upgraded"))]
 	type Item = ();
+
+	#[cfg(not(feature = "upgraded"))]
 	type Error = Error;
+
+
+	#[cfg(not(feature = "upgraded"))]
 	fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
 		while let Async::Ready(Some(item)) = self.global_in.poll()? {
 			let (msg, sender) = item;
@@ -332,4 +465,23 @@ where
 
 		Ok(Async::NotReady)
 	}
+
+    #[cfg(feature = "upgraded")]
+	fn poll(mut self: Pin<&mut Self>,cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+		while let Poll::Ready(Some(item)) = Pin::new(&mut self.global_in).poll_next(cx) {
+			let (msg, sender) = item;
+			self.handle_incoming(&msg, &sender);
+		}
+
+		// send messages generated by `handle_incoming`
+		 Pin::new(&mut self.global_out).poll(cx);
+		{
+			let state = self.env.state.read();
+			println!("state: {:?}", state.confirmations);
+		}
+		self.generate_shared_keys();
+
+		Poll::Pending
+	}
+
 }

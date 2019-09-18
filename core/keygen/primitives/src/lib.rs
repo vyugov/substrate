@@ -3,6 +3,9 @@
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 
+#[cfg(feature = "std")]
+use serde::Serialize;
+
 use client::decl_runtime_apis;
 use codec::{Codec, Decode, Encode, Error as CodecError, Input};
 use rstd::vec::Vec;
@@ -17,19 +20,10 @@ pub type AuthorityWeight = u64;
 
 pub type AuthorityIndex = u64;
 
-/// A scheduled change of authority set.
-#[cfg_attr(feature = "std", derive(Debug, Serialize))]
-#[derive(Clone, Eq, PartialEq, Encode, Decode)]
-pub struct ScheduledChange<N> {
-	/// The new authorities after the change, along with their respective weights.
-	pub next_authorities: Vec<(AuthorityId, AuthorityWeight)>,
-	/// The number of blocks to delay.
-	pub delay: N,
-}
 
 #[cfg_attr(feature = "std", derive(Serialize, Debug))]
 #[derive(Decode, Encode, PartialEq, Eq, Clone)]
-pub enum ConsensusLog<N: Codec> {
+pub enum ConsensusLog {
 
 	///  Request for a new key to be generated, with provided requestid
 	#[codec(index = "1")]
@@ -37,7 +31,7 @@ pub enum ConsensusLog<N: Codec> {
 
 }
 
-impl<N: Codec> ConsensusLog<N> {
+impl ConsensusLog  {
 	/// Try to cast the log entry as a contained signal.
 	pub fn try_into_vec(self) -> Option<Vec<u8>> {
 		match self {

@@ -960,7 +960,7 @@ where
       batch.epoch(),
       batch.len()
     );
-    let mut chain_head = match selch.best_chain()
+    let chain_head = match selch.best_chain()
     {
       Ok(x) => x,
       Err(e) =>

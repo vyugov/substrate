@@ -1,8 +1,21 @@
+#![feature(trait_alias)]
+
+
 use std::{marker::PhantomData, sync::Arc};
 
 use codec::{Decode, Encode};
+#[cfg(not(feature = "upgraded"))]
 use futures::prelude::*;
+
+#[cfg(not(feature = "upgraded"))]
 use futures::sync::{mpsc, oneshot};
+
+
+#[cfg(feature="upgraded")]
+use futures03::channel::{mpsc, oneshot};
+#[cfg(feature="upgraded")]
+use futures03::prelude::*;
+
 use log::{error, info, trace};
 
 use gossip::{GossipMessage, GossipValidator};
@@ -25,11 +38,18 @@ use message::{
 	SignMessage,
 };
 
-pub struct NetworkStream {
-	inner: Option<mpsc::UnboundedReceiver<network_gossip::TopicNotification>>,
-	outer: oneshot::Receiver<mpsc::UnboundedReceiver<network_gossip::TopicNotification>>,
+	type Item = network_gossip::TopicNotification;
+
+/// A stream used by NetworkBridge in its implementation of Network.
+pub struct NetworkStream
+{
+  inner: Option<mpsc::UnboundedReceiver<network_gossip::TopicNotification>>,
+  outer: oneshot::Receiver<
+    futures03::channel::mpsc::UnboundedReceiver<network_gossip::TopicNotification>,
+  >,
 }
 
+#[cfg(not(feature = "upgraded"))]
 impl Stream for NetworkStream {
 	type Item = network_gossip::TopicNotification;
 	type Error = ();
@@ -51,6 +71,48 @@ impl Stream for NetworkStream {
 	}
 }
 
+
+
+#[cfg(feature = "upgraded")]
+use std::{pin::Pin, task::Context, task::Poll};
+
+#[cfg(feature = "upgraded")]
+impl Stream for NetworkStream
+{
+  type Item = network_gossip::TopicNotification;
+
+  fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Option<Self::Item>>
+  {
+    if let Some(ref mut inner) = self.inner
+    {
+      match inner.try_next()
+      {
+        Ok(Some(opt)) => return futures03::Poll::Ready(Some(opt)),
+        Ok(None) => return futures03::Poll::Pending,
+        Err(_) => return futures03::Poll::Pending,
+      };
+    }
+    match self.outer.try_recv()
+    {
+      Ok(Some(mut inner)) =>
+      {
+        let poll_result = match inner.try_next()
+        {
+          Ok(Some(opt)) => futures03::Poll::Ready(Some(opt)),
+          Ok(None) => futures03::Poll::Pending,
+          Err(_) => futures03::Poll::Pending,
+        };
+        self.inner = Some(inner);
+        poll_result
+      }
+      Ok(None) => futures03::Poll::Pending,
+      Err(_) => futures03::Poll::Pending,
+    }
+  }
+}
+
+
+
 pub(crate) fn hash_topic<B: BlockT>(hash: u64) -> B::Hash {
 	<<B::Header as HeaderT>::Hashing as HashT>::hash(&hash.to_be_bytes())
 }
@@ -61,7 +123,11 @@ pub(crate) fn string_topic<B: BlockT>(input: &str) -> B::Hash {
 
 pub trait Network<Block: BlockT>: Clone + Send + 'static {
 	/// A stream of input messages for a topic.
+	#[cfg(not(feature = "upgraded"))]
 	type In: Stream<Item = network_gossip::TopicNotification, Error = ()>;
+
+	#[cfg(feature = "upgraded")]
+	type In: Stream<Item = network_gossip::TopicNotification>;
 
 	/// Get a stream of messages for a specific gossip topic.
 	fn messages_for(&self, topic: Block::Hash) -> Self::In;
@@ -180,6 +246,44 @@ where
 	}
 }
 
+#[cfg(feature="upgraded")]
+impl<Block: BlockT, N: Network<Block>> Sink<MessageWithReceiver> for MessageSender<Block, N>
+{
+  type Error = Error;
+
+  fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>>
+  {
+    Poll::Ready(Ok(()))
+  }
+
+ 	fn start_send(self:Pin<&mut Self> , item: MessageWithReceiver) ->  Result<(), Self::Error>
+	  {
+		let (msg, receiver_opt) = item;
+
+		if let Some(receiver) = receiver_opt {
+			self.send_message(receiver, msg);
+		} else {
+			self.broadcast(msg);
+		}
+
+		Ok(())
+	}
+
+	 fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>>
+  {
+    Poll::Ready(Ok(()))
+  }
+
+	fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>>
+  {
+    Poll::Ready(Ok(()))
+  }
+
+}
+
+
+
+#[cfg(not(feature = "upgraded"))]
 impl<Block, N> Sink for MessageSender<Block, N>
 where
 	Block: BlockT,
@@ -214,7 +318,31 @@ pub(crate) struct NetworkBridge<B: BlockT, N: Network<B>> {
 	pub validator: Arc<GossipValidator<B>>,
 }
 
-impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
+#[cfg(not(feature = "upgraded"))]
+trait MWSStream= Stream<Item = MessageWithSender, Error = Error>;
+
+
+#[cfg(not(feature = "upgraded"))]
+trait MWRSink= Sink<SinkItem = MessageWithReceiver, SinkError = Error>;
+
+#[cfg(not(feature = "upgraded"))]
+pub trait MWSSink= Sink<SinkItem = MessageWithSender, SinkError = Error>;
+
+
+#[cfg(feature = "upgraded")]
+pub trait MWSStream= Stream<Item = MessageWithSender>+Unpin;
+
+#[cfg(feature = "upgraded")]
+pub trait MWRSink= Sink<MessageWithReceiver,Error = Error>;
+
+#[cfg(feature = "upgraded")]
+pub trait MWSSink= Sink<MessageWithSender, Error = Error>+Unpin;
+
+
+
+impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> 
+where <N as Network<B>>::In: Unpin
+{
 	pub fn new(service: N, config: crate::NodeConfig, local_peer_id: PeerId) -> Self {
 		let validator = Arc::new(GossipValidator::new(config, local_peer_id));
 		service.register_validator(validator.clone());
@@ -225,28 +353,59 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 	pub fn global(
 		&self,
 	) -> (
-		impl Stream<Item = MessageWithSender, Error = Error>,
-		impl Sink<SinkItem = MessageWithReceiver, SinkError = Error>,
+		impl MWSStream,
+		impl MWRSink,
 	) {
 		let topic = string_topic::<B>("hash"); // related with fn validate in gossip.rs
 
 		let incoming = self
 			.service
-			.messages_for(topic)
-			.filter_map(|notification| {
+			.messages_for(topic).filter_map(|notification| {
 				let decoded = GossipMessage::decode(&mut &notification.message[..]);
 				if let Err(e) = decoded {
 					trace!("notification error {:?}", e);
+					#[cfg(not(feature = "upgraded"))]
 					return None;
+					#[cfg(feature = "upgraded")]
+					return future::ready(None);
 				}
-				Some((decoded.unwrap(), notification.sender))
+				#[cfg(not(feature = "upgraded"))]
+				 return Some((decoded.unwrap(), notification.sender));
+				#[cfg(feature = "upgraded")]
+				 return future::ready(Some((decoded.unwrap(), notification.sender)));
+				 
 			})
-			.filter_map(move |(msg, sender)| match msg {
-				GossipMessage::Message(message) => Some((message, sender)),
-			})
-			.map_err(|()| {
+			.filter_map(move |val|
+			 {
+				 #[cfg(not(feature = "upgraded"))]
+				 {
+				 let (msg, sender)=val;
+			     match msg 
+			     {
+				 GossipMessage::Message(message) => return Some((message, sender)),
+			     }
+				}
+                 #[cfg(feature = "upgraded")]
+                 {
+				  let (msg, sender)=val ;
+				  
+					match msg 
+			       {
+				   GossipMessage::Message(message) => return future::ready(Some((message, sender))),
+			        }
+				  
+				  return future::ready(None)
+				 }
+		
+			 }
+			 );
+
+
+		 #[cfg(not(feature = "upgraded"))]
+		let incoming=incoming.map_err(|()| {
 				Error::Network("Failed to receive message on unbounded stream".to_string())
 			});
+			
 
 		let outgoing = MessageSender::<B, N> {
 			network: self.service.clone(),

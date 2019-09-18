@@ -1,3 +1,5 @@
+#![feature(trait_alias)]
+
 use std::{
 	collections::{BTreeMap, VecDeque},
 	fmt::Debug,
@@ -10,7 +12,17 @@ use codec::{Decode, Encode};
 use curv::cryptographic_primitives::proofs::sigma_dlog::DLogProof;
 use curv::cryptographic_primitives::secret_sharing::feldman_vss::VerifiableSS;
 use curv::FE;
+
+#[cfg(not(feature = "upgraded"))]
 use futures::{prelude::*, stream::Fuse, sync::mpsc};
+
+#[cfg(feature = "upgraded")]
+use futures03::{prelude::*, stream::Fuse, channel::mpsc,Poll,core_reexport::pin::Pin,task::Context,Future};
+
+
+
+use sr_primitives::traits::Header;
+
 use keystore::KeyStorePtr;
 use log::{debug, error, info};
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{
@@ -31,6 +43,7 @@ use inherents::InherentDataProviders;
 use network::{self, PeerId};
 use primitives::{Blake2Hasher, H256};
 use sr_primitives::generic::BlockId;
+use sr_primitives::{generic::{ OpaqueDigestItemId}, Justification};
 use sr_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
 use substrate_telemetry::{telemetry, CONSENSUS_DEBUG, CONSENSUS_INFO, CONSENSUS_WARN};
 
@@ -49,6 +62,9 @@ use communication::{
 use periodic_stream::PeriodicStream;
 use shared_state::{load_persistent, set_signers, SharedState};
 use signer::Signer;
+
+use mpe_primitives::MP_ECDSA_ENGINE_ID;
+
 
 type Count = u16;
 
@@ -112,15 +128,20 @@ impl Default for KeyGenState {
 	}
 }
 
+use communication::MWRSink;
+use communication::MWSStream;
+use communication::MWSSink;
+
 fn global_comm<Block, N>(
 	bridge: &NetworkBridge<Block, N>,
 ) -> (
-	impl Stream<Item = MessageWithSender, Error = Error>,
-	impl Sink<SinkItem = MessageWithSender, SinkError = Error>,
+	impl MWSStream,
+	impl MWRSink,
 )
 where
-	Block: BlockT<Hash = H256>,
-	N: Network<Block>,
+	Block: BlockT<Hash = H256>+Unpin,
+	N:Network<Block>,
+	<N as Network<Block>>::In: Unpin,
 {
 	let (global_in, global_out) = bridge.global();
 	let global_in = PeriodicStream::<Block, _, MessageWithSender>::new(global_in);
@@ -134,19 +155,82 @@ pub(crate) struct Environment<B, E, Block: BlockT, N: Network<Block>, RA> {
 	pub state: Arc<RwLock<KeyGenState>>,
 }
 
-struct KeyGenWork<B, E, Block: BlockT, N: Network<Block>, RA> {
-	key_gen: Box<dyn Future<Item = (), Error = Error> + Send + 'static>,
-	env: Arc<Environment<B, E, Block, N, RA>>,
+#[cfg(not(feature = "upgraded"))]
+pub trait ErrorFuture=Future<Item = (), Error = Error>;
+
+#[cfg(feature = "upgraded")]
+pub trait ErrorFuture=futures03::Future<Output = Result<(),Error>>;
+
+#[cfg(not(feature = "upgraded"))]
+pub trait EmptyFuture=Future<Item = (), Error = ()>;
+
+#[cfg(feature = "upgraded")]
+pub trait EmptyFuture=futures03::Future<Output = Result<(),()>>;
+
+#[cfg(not(feature = "upgraded"))]
+use futures::empty as fempty;
+
+#[cfg(not(feature = "upgraded"))]
+impl futures::Future for EmptyWrapper
+{
+	type Item=();
+	type Error=Error;
+
+  fn poll (&mut self) ->  Result<Async<Self::Item>, Self::Error>
+  {
+   Ok(Async::Ready(()))
+  }
 }
 
+
+
+#[cfg(not(feature = "upgraded"))]
+pub fn get_empty()->  KeyBox
+ {
+	 Box::new(EmptyWrapper{})
+ }
+
+struct EmptyWrapper;
+
+#[cfg(feature = "upgraded")]
+impl futures03::Future for EmptyWrapper
+{
+  type Output= Result<(),Error>;
+  fn poll (self:Pin <&mut Self>,_cx: &mut Context<'_>) -> Poll<Self::Output>
+  {
+	  Poll::Ready(Ok(()))
+  }
+}
+
+#[cfg(feature = "upgraded")]
+type KeyBox=Pin<Box<dyn  ErrorFuture+ Send >>;
+
+
+
+#[cfg(not(feature = "upgraded"))]
+type KeyBox=Box<dyn  ErrorFuture+ Send + 'static>;
+
+
+
+#[cfg(feature = "upgraded")]
+pub fn get_empty()->  KeyBox
+ {
+	 Box::pin(Box::new(EmptyWrapper{}))
+ }
+
+struct KeyGenWork<B, E, Block: BlockT, N: Network<Block>, RA> {
+	key_gen: KeyBox,
+	env: Arc<Environment<B, E, Block, N, RA>>,
+}
+//client::import_notification_stream 
 impl<B, E, Block, N, RA> KeyGenWork<B, E, Block, N, RA>
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
 	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
-	Block: BlockT<Hash = H256>,
+	Block: BlockT<Hash = H256>+Unpin,
 	Block::Hash: Ord,
-	N: Network<Block> + Sync,
-	N::In: Send + 'static,
+	N: Network<Block> + Sync+Unpin,
+	N::In: Send + 'static+Unpin,
 	RA: Send + Sync + 'static,
 {
 	fn new(
@@ -163,7 +247,7 @@ where
 			state: Arc::new(RwLock::new(state)),
 		});
 		let mut work = Self {
-			key_gen: Box::new(futures::empty()) as Box<_>,
+			key_gen: get_empty(),
 			env,
 		};
 		work.rebuild();
@@ -175,13 +259,49 @@ where
 		if should_rebuild {
 			let (incoming, outgoing) = global_comm(&self.env.bridge);
 			let signer = Signer::new(self.env.clone(), incoming, outgoing);
-			self.key_gen = Box::new(signer);
+			self.key_gen = new_signer(signer);
 		} else {
-			self.key_gen = Box::new(futures::empty());
+			self.key_gen=get_empty();
 		}
 	}
 }
 
+
+
+
+#[cfg(not(feature = "upgraded"))]
+fn new_signer<B,E,Block:BlockT,N: Network<Block>, RA, In, Out>(s:Signer<B,E,Block,N,RA,In,Out>) ->Box<Signer<B,E,Block,N,RA,In,Out>>
+where 	B: Backend<Block, Blake2Hasher> + 'static,
+	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
+	Block: BlockT<Hash = H256>,
+	Block::Hash: Ord,
+	N: Network<Block> + Sync,
+	N::In: Send + 'static,
+	RA: Send + Sync + 'static,
+	In: MWSStream,
+	Out: MWSSink,
+{
+	Box::new(s)
+}
+
+#[cfg(feature = "upgraded")]
+fn new_signer<B,E,Block:BlockT,N: Network<Block>, RA, In, Out>(s:Signer<B,E,Block,N,RA,In,Out>) ->Pin<Box<Signer<B,E,Block,N,RA,In,Out>>>
+where	B: Backend<Block, Blake2Hasher> + 'static,
+	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
+	Block: BlockT<Hash = H256>,
+	Block::Hash: Ord,
+	N: Network<Block> + Sync,
+	N::In: Send + 'static,
+	RA: Send + Sync + 'static,
+	In: MWSStream,
+	Out: MWSSink,
+{
+	Box::pin(s)
+}
+
+
+
+#[cfg(not(feature = "upgraded"))]
 impl<B, E, Block, N, RA> Future for KeyGenWork<B, E, Block, N, RA>
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
@@ -212,6 +332,31 @@ where
 	}
 }
 
+#[cfg(feature = "upgraded")]
+impl<B, E, Block, N, RA> futures03::Future for KeyGenWork<B, E, Block, N, RA>
+where
+	B: Backend<Block, Blake2Hasher> + 'static,
+	E: CallExecutor<Block, Blake2Hasher> + 'static + Send + Sync,
+	Block: BlockT<Hash = H256>,
+	Block::Hash: Ord,
+	N: Network<Block> + Send + Sync + 'static,
+	N::In: Send + 'static+Unpin,
+	RA: Send + Sync + 'static,
+{
+	type Output = Result<(),Error>;
+	
+	fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+		match Pin::new(&mut self.as_mut().key_gen).poll(cx) {
+			Poll::Pending => {
+				return Poll::Pending;
+			}
+			Poll::Ready(dat) => {
+				return Poll::Ready(dat);
+			}
+		}
+	}
+}
+
 pub fn init_shared_state<B, E, Block, RA>(client: Arc<Client<B, E, Block, RA>>) -> SharedState
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
@@ -224,19 +369,24 @@ where
 	persistent_data
 }
 
+//use futures::{Future, Stream};
+
+use futures::stream::Stream as OldStream;
+use futures03::{StreamExt as _, TryStreamExt as _};
+
 pub fn run_key_gen<B, E, Block, N, RA>(
 	local_peer_id: PeerId,
 	keystore: KeyStorePtr,
 	client: Arc<Client<B, E, Block, RA>>,
 	network: N,
-) -> ClientResult<impl Future<Item = (), Error = ()> + Send + 'static>
+) -> ClientResult<impl EmptyFuture + Send + 'static>
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
 	E: CallExecutor<Block, Blake2Hasher> + 'static + Send + Sync,
-	Block: BlockT<Hash = H256>,
+	Block: BlockT<Hash = H256>+Unpin,
 	Block::Hash: Ord,
-	N: Network<Block> + Send + Sync + 'static,
-	N::In: Send + 'static,
+	N: Network<Block> + Send + Sync + 'static+Unpin,
+	N::In: Send + 'static+Unpin,
 	RA: Send + Sync + 'static,
 {
 	let config = NodeConfig {
@@ -259,7 +409,20 @@ where
 	// 	set_signers(&**client.backend(), signers);
 	// }
 	let bridge = NetworkBridge::new(network, config.clone(), local_peer_id);
-
+    let streamer=client.clone().import_notification_stream().map(|v| Ok::<_, ()>(v)).compat().for_each(move |n| {
+        for log in n.header.digest().logs() 
+		{
+		 info!(target: "keygen", "Checking log {:?}, looking for consensus message", log);
+		 match log.try_as_raw(OpaqueDigestItemId::Consensus(&MP_ECDSA_ENGINE_ID))
+		 {
+			Some(data) => info!("Got log id! {:?}",data),
+			None => {}
+	     }
+		
+	    }
+		info!(target: "substrate", "Imported #{} ({})", n.header.number(), n.hash);
+		Ok(())
+	});
 	let key_gen_work = KeyGenWork::new(client, config, bridge).map_err(|e| error!("Error {:?}", e));
 	Ok(key_gen_work)
 }

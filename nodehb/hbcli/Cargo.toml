@@ -44,6 +44,7 @@ system = { package = "srml-system", path = "../../srml/system" }
 balances = { package = "srml-balances", path = "../../srml/balances", default-features = false }
 futures03 = { package = "futures-preview", version = "=0.3.0-alpha.17", features = ["compat"] }
 parking_lot = "0.8.0"
+keygen = { package="substrate-keygen", path = "../../core/keygen", features = ["upgraded"] }
 
 [dev-dependencies]
 consensus-common = { package = "substrate-consensus-common", path = "../../core/consensus/common" }
