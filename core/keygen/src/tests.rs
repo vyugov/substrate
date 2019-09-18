@@ -58,7 +58,7 @@ impl TestNetFactory for TestNet {
 	}
 
 	fn make_verifier(&self, _client: PeersClient, _config: &ProtocolConfig) -> Self::Verifier {
-		PassThroughVerifier(false)
+		PassThroughVerifier(true)
 	}
 
 	fn peer(&mut self, i: usize) -> &mut Peer<(), Self::Specialization> {
@@ -114,7 +114,7 @@ fn test_1_of_3_key_gen() {
 			client
 				.finality_notification_stream()
 				.map(|v| {
-					println!("notification {:?}", v);
+					println!(">>>notification {:?}", v);
 					Ok::<_, ()>(v)
 				})
 				.compat()

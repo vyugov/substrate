@@ -162,15 +162,10 @@ where
 				let validator = self.env.bridge.validator.inner.read();
 				let index = validator.get_peer_index(&sender) as PeerIndex;
 				let our_hash = validator.get_peers_hash();
-				println!(
-					"from index {:?} index {:?}, from hash {:?} hash {:?} {:?} {:?}",
-					from_index,
-					index,
-					hash,
-					our_hash,
-					*from_index == index,
-					*hash == our_hash
-				);
+
+				if *from_index != index || *hash != our_hash {
+					return;
+				}
 				self.global_out.push((
 					Message::ConfirmPeers(ConfirmPeersMessage::Confirmed(
 						validator.local_string_id(),
