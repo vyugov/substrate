@@ -80,21 +80,18 @@ fn create_keystore(authority: Ed25519Keyring) -> (KeyStorePtr, tempfile::TempDir
 #[test]
 fn test_1_of_3_key_gen() {
 	use super::*;
+
 	let peers = &[
 		Ed25519Keyring::Alice,
 		Ed25519Keyring::Bob,
 		Ed25519Keyring::Charlie,
 	];
 
+	let peers_len = peers.len();
+
 	let mut runtime = current_thread::Runtime::new().unwrap();
 
-	let mut net = TestNet::new(peers.len());
-	net.peer(0).push_blocks(3, false);
-	// net.peer(1).push_blocks(3, false);
-	// net.peer(2).push_blocks(3, false);
-	// net.block_until_sync(&mut runtime);
-	// assert_eq!(net.peer(0).client().info().chain.best_number, 3);
-	// assert_eq!(net.peer(1).client().info().chain.best_number, 3);
+	let mut net = TestNet::new(peers_len);
 
 	let net = Arc::new(Mutex::new(net));
 
@@ -119,25 +116,47 @@ fn test_1_of_3_key_gen() {
 						Ok::<_, ()>(v)
 					})
 					.compat()
-					.take_while(|n| Ok(n.header.number() < &3))
+					.take_while(|n| Ok(n.header.number() < &2))
 					.for_each(move |v| Ok(())),
 			);
 		}
-		// let node =
-		// 	run_key_gen(local_peer_id, keystore, client.as_full().unwrap(), network).unwrap();
+
+		let full_client = client.as_full().unwrap();
+		// let node = run_key_gen(local_peer_id, keystore, full_client, network).unwrap();
 		// runtime.spawn(node);
+	}
+
+	let sync = futures::future::poll_fn(|| {
+		// make sure all peers are connected first
+		net.lock().poll();
+		if net.lock().peer(0).num_peers() != peers_len - 1 {
+			Ok(Async::NotReady)
+		} else {
+			Ok(Async::Ready(()))
+		}
+	});
+
+	runtime.block_on(sync.map_err(|_: ()| ())).unwrap();
+
+	{
+		// at this time, the blocks are not synced
+		// so only peer 0 has 2 blocks
+		// but peer 0 doesn't get import_notifications since "block origin" is File
+		let mut net = net.lock();
+		net.peer(0).push_blocks(2, false);
+		assert_eq!(net.peer(0).client().info().chain.best_number, 2);
+		assert_eq!(net.peer(1).client().info().chain.best_number, 0);
 	}
 
 	let wait_for = futures::future::join_all(notifications)
 		.map(|_| ())
 		.map_err(|_| ());
 
-	let drive_to_completion = futures::future::poll_fn(|| {
+	let poll_forever = futures::future::poll_fn(|| {
 		net.lock().poll();
-		// Ok(net.lock().poll_until_sync())
 		Ok(Async::NotReady)
 	});
 	let _ = runtime
-		.block_on(wait_for.select(drive_to_completion).map_err(|_| ()))
+		.block_on(wait_for.select(poll_forever).map_err(|_| ()))
 		.unwrap();
 }
