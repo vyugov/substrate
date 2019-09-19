@@ -55,7 +55,7 @@ impl TestNetFactory for TestNet {
 	}
 
 	fn make_verifier(&self, _client: PeersClient, _config: &ProtocolConfig) -> Self::Verifier {
-		PassThroughVerifier(true)
+		PassThroughVerifier(false)
 	}
 
 	fn peer(&mut self, i: usize) -> &mut Peer<(), Self::Specialization> {
@@ -89,13 +89,16 @@ fn test_1_of_3_key_gen() {
 	let mut runtime = current_thread::Runtime::new().unwrap();
 
 	let mut net = TestNet::new(peers.len());
-	net.peer(0).push_blocks(10, false);
-	net.block_until_sync(&mut runtime);
-	assert_eq!(net.peer(0).client().info().chain.best_number, 10);
+	net.peer(0).push_blocks(3, false);
+	// net.peer(1).push_blocks(3, false);
+	// net.peer(2).push_blocks(3, false);
+	// net.block_until_sync(&mut runtime);
+	// assert_eq!(net.peer(0).client().info().chain.best_number, 3);
+	// assert_eq!(net.peer(1).client().info().chain.best_number, 3);
 
 	let net = Arc::new(Mutex::new(net));
 
-	let mut finality_notifications = Vec::new();
+	let mut notifications = Vec::new();
 
 	let all_peers = peers.iter().cloned();
 
@@ -107,28 +110,31 @@ fn test_1_of_3_key_gen() {
 
 		let (keystore, keystore_path) = create_keystore(local_key);
 
-		finality_notifications.push(
-			client
-				.finality_notification_stream()
-				.map(|v| {
-					println!(">>>notification {:?}", v);
-					Ok::<_, ()>(v)
-				})
-				.compat()
-				.take_while(|n| Ok(n.header.number() < &10))
-				.for_each(move |_| Ok(())),
-		);
-		let node =
-			run_key_gen(local_peer_id, keystore, client.as_full().unwrap(), network).unwrap();
-		runtime.spawn(node);
+		if peer_id != 0 {
+			notifications.push(
+				client
+					.import_notification_stream()
+					.map(move |v| {
+						println!(">>NOTIFICATION {:?} from {:?}", v, peer_id);
+						Ok::<_, ()>(v)
+					})
+					.compat()
+					.take_while(|n| Ok(n.header.number() < &3))
+					.for_each(move |v| Ok(())),
+			);
+		}
+		// let node =
+		// 	run_key_gen(local_peer_id, keystore, client.as_full().unwrap(), network).unwrap();
+		// runtime.spawn(node);
 	}
 
-	let wait_for = futures::future::join_all(finality_notifications)
+	let wait_for = futures::future::join_all(notifications)
 		.map(|_| ())
 		.map_err(|_| ());
 
 	let drive_to_completion = futures::future::poll_fn(|| {
 		net.lock().poll();
+		// Ok(net.lock().poll_until_sync())
 		Ok(Async::NotReady)
 	});
 	let _ = runtime
