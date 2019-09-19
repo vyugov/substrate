@@ -124,10 +124,6 @@ where S: futures03::sink::Sink<SinkItem, Error = Error>+Unpin,
 	fn push(&mut self, item: SinkItem) {
 		self.buffer.push_back(item);
 	}
-    fn ginner(self: Pin<&mut Self>)->Pin<&mut S>
-	{
-		 unsafe { self.map_unchecked_mut(|s| &mut s.inner) }
-	}
 	// returns ready when the sink and the buffer are completely flushed.
 	fn poll(mut self: Pin<&mut Self>,cx: &mut std::task::Context<'_>) -> Poll<()> {
 		let polled =  (*self).schedule_all(cx);
@@ -155,7 +151,7 @@ where S: futures03::sink::Sink<SinkItem, Error = Error>+Unpin,
 			Poll::Ready(Err(_)) => return Poll::Pending,
 		}
 		while let Some(front) = self.buffer.pop_front() {
-
+              info!("Some in FRONT {:?}",self.buffer.len());
 			match Pin::new(&mut self.inner).start_send(front) {
 				Ok(()) => {
              match Pin::new(&mut self.inner).poll_ready(cx)
@@ -230,6 +226,7 @@ where
 	}
 
 	fn generate_shared_keys(&mut self) {
+		info!("generate_shared_keys");
 		let mut state = self.env.state.write();
 		if state.confirmations.vss != state.confirmations.secret_share
 			|| state.confirmations.vss != self.env.config.players - 1
@@ -244,7 +241,16 @@ where
 			share_count: self.env.config.players,
 		};
 
-		let key: Keys = state.local_key.clone().unwrap();
+		let mut key: Keys;
+		if let Some(vk)= state.local_key.clone()
+		{
+			key=vk;
+		}
+		else
+       { 
+      return;
+       }
+
 
 		let vsss = state.vsss.values().cloned().collect::<Vec<_>>();
 
@@ -277,7 +283,7 @@ where
 
 	fn handle_incoming(&mut self, msg: &Message, sender: &Option<PeerId>) {
 		let players = self.env.config.players;
-
+        info!("Incoming: MSG {:?}",&msg);
 		match msg {
 			Message::ConfirmPeers(ConfirmPeersMessage::Confirming(from_index, hash)) => {
 				let sender = sender.clone().unwrap();

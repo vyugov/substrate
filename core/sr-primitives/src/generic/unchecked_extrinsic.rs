@@ -19,6 +19,8 @@
 #[cfg(feature = "std")]
 use std::fmt;
 
+
+
 use rstd::prelude::*;
 use runtime_io::blake2_256;
 use codec::{Decode, Encode, Input, Error};
@@ -93,6 +95,25 @@ impl<Address, Call, Signature, Extra: SignedExtension> Extrinsic
 	}
 }
 
+#[cfg(feature = "std")]
+use log::info;
+
+#[cfg(feature = "std")]
+fn badproof<A,B,C>(a: &A,b: &B,c: &C)
+where A:std::fmt::Debug,
+B:std::fmt::Debug,
+C:std::fmt::Debug,
+{
+info!("Your proof is BAD {:?} {:?} {:?} ",a,b,c);
+}
+
+#[cfg(not(feature = "std"))]
+fn badproof<A,B,C>(_a: &A,_b: &B,_c: &C)
+{
+//info!("Your proof is BAD");
+}
+
+
 impl<Address, AccountId, Call, Signature, Extra, Lookup>
 	Checkable<Lookup>
 for
@@ -115,6 +136,7 @@ where
 				if !raw_payload.using_encoded(|payload| {
 					signature.verify(payload, &signed)
 				}) {
+					badproof(&signed,&signed,&signature);
 					return Err(InvalidTransaction::BadProof.into())
 				}
 

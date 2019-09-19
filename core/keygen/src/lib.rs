@@ -409,7 +409,8 @@ where
 	// 	set_signers(&**client.backend(), signers);
 	// }
 	let bridge = NetworkBridge::new(network, config.clone(), local_peer_id);
-    let streamer=client.clone().import_notification_stream().map(|v| Ok::<_, ()>(v)).compat().for_each(move |n| {
+    let streamer=client.clone().import_notification_stream().for_each(move |n| {
+		info!(target: "keygen", "HEADER {:?}, looking for consensus message", &n.header);
         for log in n.header.digest().logs() 
 		{
 		 info!(target: "keygen", "Checking log {:?}, looking for consensus message", log);
@@ -421,10 +422,13 @@ where
 		
 	    }
 		info!(target: "substrate", "Imported #{} ({})", n.header.number(), n.hash);
-		Ok(())
+		futures03::future::ready( ())
+//		Ok(())
 	});
+	
 	let key_gen_work = KeyGenWork::new(client, config, bridge).map_err(|e| error!("Error {:?}", e));
-	Ok(key_gen_work)
+	//futures03::future::select(key_gen_work,streamer);
+	Ok(futures03::future::select(key_gen_work,streamer).then(|_| futures03::future::ready( Ok(())) ))//key_gen_work)
 }
 
 #[cfg(test)]

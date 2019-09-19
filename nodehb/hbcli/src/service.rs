@@ -35,6 +35,7 @@ use hb_node_primitives::Block;
 use hb_node_runtime::{GenesisConfig, RuntimeApi};
 use primitives::Pair;
 use std::path::PathBuf;
+use keygen::{self};
 use std::sync::Arc;
 use std::time::Duration;
 use substrate_service::{
@@ -170,7 +171,16 @@ macro_rules! new_full {
       select_chain,
 	  service.keystore(),
     )?;
+	
     service.spawn_task(badger.unit_error().boxed().compat());
+
+			let key_gen = keygen::run_key_gen(
+				service.network().local_peer_id(),
+				service.keystore(),
+				service.client(),
+				service.network()
+			)?;
+			service.spawn_task(Box::new(key_gen.unit_error().boxed().compat().map(|_|  () )));
 
     Ok((service, inherent_data_providers))
   }};

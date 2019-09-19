@@ -257,7 +257,7 @@ construct_runtime!(
 		System: system::{Module, Call, Storage, Config, Event},
 		Timestamp: timestamp::{Module, Call, Storage, Inherent},
 		Authorship: authorship::{Module, Call, Storage, Inherent},
-		Badger: srml_badger::{Module,  Storage, Event},
+		Badger: srml_badger::{Module, Call, Storage, Event},
 		Indices: indices,
 		Balances: balances,
 		FinalityTracker: finality_tracker::{Module, Call, Inherent},

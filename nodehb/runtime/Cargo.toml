@@ -75,4 +75,6 @@ std = [
 	"substrate-keyring",
 	"offchain-primitives/std",
 	"substrate-session/std",
+	"substrate-badger-rapi/std",
+	"srml-badger/std"
 ]

@@ -42,6 +42,9 @@ use srml_support::{
   storage::StorageValue,
 };
 
+#[cfg(feature = "std")]
+use serde::{Serialize,Deserialize};
+
 use sr_primitives::ConsensusEngineId;
 
 pub const HBBFT_ENGINE_ID: ConsensusEngineId = *b"BDGR";
@@ -51,7 +54,6 @@ pub const HBBFT_ENGINE_ID: ConsensusEngineId = *b"BDGR";
 use system::{ensure_signed, DigestOf};
 
 //#[derive(Decode, Encode, PartialEq, Eq, Clone,Hash)]
-//#[cfg_attr(feature = "std", derive(Serialize, Debug))]
 pub type AuthorityId = ([u8; 32],[u8; 16]);
 
 
@@ -111,7 +113,7 @@ pub trait Trait: system::Trait
 
 
 decl_event!(
- #[derive(Debug)]
+// #[derive(Debug)]
   pub enum Event
   {
     /// New authority set has been applied.
@@ -145,6 +147,13 @@ decl_module! {
         }
 
     //	Self::deposit_log(ConsensusLog::Resume(delay));
+	fn send_log(origin) ->Result
+	{
+	let who =	ensure_signed(origin)?;
+    Self::deposit_log(ConsensusLog::VoteToAdd(([0;32],[0;16])));
+	Ok(())
+	}
+		
   }
 }
 
