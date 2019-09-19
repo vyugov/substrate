@@ -2,7 +2,7 @@
 # It is not intended for manual editing.
 [[package]]
 name = "adler32"
-version = "1.0.3"
+version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
@@ -38,7 +38,7 @@ dependencies = [
 
 [[package]]
 name = "ahash"
-version = "0.2.12"
+version = "0.2.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "const-random 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1212,7 +1212,7 @@ name = "hashbrown"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "ahash 0.2.12 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ahash 0.2.13 (registry+https://github.com/rust-lang/crates.io-index)",
  "autocfg 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -2248,7 +2248,7 @@ name = "miniz_oxide"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "adler32 1.0.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "adler32 1.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -2302,8 +2302,8 @@ dependencies = [
 
 [[package]]
 name = "multi-party-ecdsa"
-version = "0.1.0"
-source = "git+https://github.com/kigawas/multi-party-ecdsa?branch=keygen-clippy#2e2a25cbf73e8ce849ba165e557aa15ca6d90dfc"
+version = "0.2.2"
+source = "git+https://github.com/kigawas/multi-party-ecdsa?branch=keygen-clippy#b709e52bd7086e3f4e21db9d26f89ce1aaa97707"
 dependencies = [
  "centipede 0.2.0 (git+https://github.com/KZen-networks/centipede?tag=v0.2.0)",
  "curv 0.2.0 (git+https://github.com/KZen-networks/curv?tag=v0.2.0)",
@@ -2869,14 +2869,6 @@ dependencies = [
 
 [[package]]
 name = "parity-wasm"
-version = "0.31.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-dependencies = [
- "byteorder 1.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "parity-wasm"
 version = "0.40.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
@@ -3169,12 +3161,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "pwasm-utils"
-version = "0.6.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "byteorder 1.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
- "parity-wasm 0.31.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "parity-wasm 0.40.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -4135,8 +4127,8 @@ dependencies = [
  "hex 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "hex-literal 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "parity-scale-codec 1.0.5 (registry+https://github.com/rust-lang/crates.io-index)",
- "parity-wasm 0.31.3 (registry+https://github.com/rust-lang/crates.io-index)",
- "pwasm-utils 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "parity-wasm 0.40.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "pwasm-utils 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.101 (registry+https://github.com/rust-lang/crates.io-index)",
  "sr-io 2.0.0",
  "sr-primitives 2.0.0",
@@ -4148,7 +4140,7 @@ dependencies = [
  "srml-timestamp 2.0.0",
  "substrate-primitives 2.0.0",
  "wabt 0.7.4 (registry+https://github.com/rust-lang/crates.io-index)",
- "wasmi-validation 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wasmi-validation 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -5007,7 +4999,7 @@ dependencies = [
  "libsecp256k1 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "parity-scale-codec 1.0.5 (registry+https://github.com/rust-lang/crates.io-index)",
- "parity-wasm 0.31.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "parity-wasm 0.40.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "parking_lot 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "sr-io 2.0.0",
  "sr-version 2.0.0",
@@ -5090,7 +5082,7 @@ dependencies = [
  "futures 0.1.29 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures-preview 0.3.0-alpha.17 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
- "multi-party-ecdsa 0.1.0 (git+https://github.com/kigawas/multi-party-ecdsa?branch=keygen-clippy)",
+ "multi-party-ecdsa 0.2.2 (git+https://github.com/kigawas/multi-party-ecdsa?branch=keygen-clippy)",
  "parity-multihash 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "parity-scale-codec 1.0.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "parking_lot 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -5642,7 +5634,7 @@ dependencies = [
 
 [[package]]
 name = "substrate-wasm-builder"
-version = "1.0.6"
+version = "1.0.7"
 dependencies = [
  "build-helper 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "cargo_metadata 0.8.2 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -6424,15 +6416,6 @@ dependencies = [
 
 [[package]]
 name = "wasmi-validation"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-dependencies = [
- "hashbrown 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)",
- "parity-wasm 0.31.3 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "wasmi-validation"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
@@ -6657,11 +6640,11 @@ dependencies = [
 ]
 
 [metadata]
-"checksum adler32 1.0.3 (registry+https://github.com/rust-lang/crates.io-index)" = "7e522997b529f05601e05166c07ed17789691f562762c7f3b987263d2dedee5c"
+"checksum adler32 1.0.4 (registry+https://github.com/rust-lang/crates.io-index)" = "5d2e7343e7fc9de883d1b0341e0b13970f764c14101234857d2ddafa1cb1cac2"
 "checksum aes-ctr 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "d2e5b0458ea3beae0d1d8c0f3946564f8e10f90646cf78c06b4351052058d1ee"
 "checksum aes-soft 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)" = "cfd7e7ae3f9a1fb5c03b389fc6bb9a51400d0c13053f0dca698c832bfd893a0d"
 "checksum aesni 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)" = "2f70a6b5f971e473091ab7cfb5ffac6cde81666c4556751d8d5620ead8abf100"
-"checksum ahash 0.2.12 (registry+https://github.com/rust-lang/crates.io-index)" = "e96e12a0287c75063711e04484e9b140d4a59ec074d3fe5f0b1cc90e0e992665"
+"checksum ahash 0.2.13 (registry+https://github.com/rust-lang/crates.io-index)" = "b58aeefd9396419a4f4f2b9778f2d832a11851b55010e231c5390cf2b1c416b4"
 "checksum aho-corasick 0.7.6 (registry+https://github.com/rust-lang/crates.io-index)" = "58fb5e95d83b38284460a5fda7d6470aa0b8844d283a0b614b8535e880800d2d"
 "checksum aio-limited 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "7f10b352bc3fc08ae24dc5d2d3ddcac153678533986122dc283d747b12071000"
 "checksum ansi_term 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)" = "ee49baf6cb617b853aa8d93bf420db2383fab46d314482ca2803b40d5fde979b"
@@ -6893,7 +6876,7 @@ dependencies = [
 "checksum mio-extras 2.0.5 (registry+https://github.com/rust-lang/crates.io-index)" = "46e73a04c2fa6250b8d802134d56d554a9ec2922bf977777c805ea5def61ce40"
 "checksum mio-uds 0.6.7 (registry+https://github.com/rust-lang/crates.io-index)" = "966257a94e196b11bb43aca423754d87429960a768de9414f3691d6957abf125"
 "checksum miow 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "8c1f2f3b1cf331de6896aabf6e9d55dca90356cc9960cca7eaaf408a355ae919"
-"checksum multi-party-ecdsa 0.1.0 (git+https://github.com/kigawas/multi-party-ecdsa?branch=keygen-clippy)" = "<none>"
+"checksum multi-party-ecdsa 0.2.2 (git+https://github.com/kigawas/multi-party-ecdsa?branch=keygen-clippy)" = "<none>"
 "checksum multimap 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)" = "2eb04b9f127583ed176e163fb9ec6f3e793b87e21deedd5734a69386a18a0151"
 "checksum multistream-select 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)" = "e8f3cb4c93f2d79811fc11fa01faab99d8b7b8cbe024b602c27434ff2b08a59d"
 "checksum names 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)" = "ef320dab323286b50fb5cdda23f61c796a72a89998ab565ca32525c5c556f2da"
@@ -6925,7 +6908,6 @@ dependencies = [
 "checksum parity-scale-codec-derive 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)" = "a81f3cd93ed368a8e41c4e79538e99ca6e8f536096de23e3a0bc3e782093ce28"
 "checksum parity-send-wrapper 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "aa9777aa91b8ad9dd5aaa04a9b6bcb02c7f1deb952fca5a66034d5e63afc5c6f"
 "checksum parity-util-mem 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "e2005637ccf93dbb60c85081ccaaf3f945f573da48dcc79f27f9646caa3ec1dc"
-"checksum parity-wasm 0.31.3 (registry+https://github.com/rust-lang/crates.io-index)" = "511379a8194230c2395d2f5fa627a5a7e108a9f976656ce723ae68fca4097bfc"
 "checksum parity-wasm 0.40.2 (registry+https://github.com/rust-lang/crates.io-index)" = "49d1e33551976be5345d2ecbfe995830719746c7f0902f0880a13d40e215f851"
 "checksum parking_lot 0.5.5 (registry+https://github.com/rust-lang/crates.io-index)" = "d4d05f1349491390b1730afba60bb20d55761bef489a954546b58b4b34e1e2ac"
 "checksum parking_lot 0.6.4 (registry+https://github.com/rust-lang/crates.io-index)" = "f0802bff09003b291ba756dc7e79313e51cc31667e94afbe847def490424cde5"
@@ -6958,7 +6940,7 @@ dependencies = [
 "checksum prost-derive 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)" = "5e7dc378b94ac374644181a2247cebf59a6ec1c88b49ac77f3a94b86b79d0e11"
 "checksum prost-types 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)" = "1de482a366941c8d56d19b650fac09ca08508f2a696119ee7513ad590c8bac6f"
 "checksum protobuf 2.8.1 (registry+https://github.com/rust-lang/crates.io-index)" = "40361836defdd5871ff7e84096c6f6444af7fc157f8ef1789f54f147687caa20"
-"checksum pwasm-utils 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)" = "efb0dcbddbb600f47a7098d33762a00552c671992171637f5bb310b37fe1f0e4"
+"checksum pwasm-utils 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)" = "1d473123ba135028544926f7aa6f34058d8bc6f120c4fcd3777f84af724280b3"
 "checksum quick-error 0.1.4 (registry+https://github.com/rust-lang/crates.io-index)" = "5fb6ccf8db7bbcb9c2eae558db5ab4f3da1c2a87e4e597ed394726bc8ea6ca1d"
 "checksum quick-error 1.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "9274b940887ce9addde99c4eee6b5c44cc494b182b97e73dc8ffdcb3397fd3f0"
 "checksum quickcheck 0.8.5 (registry+https://github.com/rust-lang/crates.io-index)" = "9c35d9c36a562f37eca96e79f66d5fd56eefbc22560dacc4a864cabd2d277456"
@@ -7130,7 +7112,6 @@ dependencies = [
 "checksum wasm-bindgen-webidl 0.2.50 (registry+https://github.com/rust-lang/crates.io-index)" = "be53d289bf2fa7645a089cfd5c7a34bf4fe94221f58cf86ee42a7b4bc854ff14"
 "checksum wasm-timer 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "3d6101df9a5987df809216bdda7289f52b58128e6b6a6546e9ee3e6b632b4921"
 "checksum wasmi 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)" = "f31d26deb2d9a37e6cfed420edce3ed604eab49735ba89035e13c98f9a528313"
-"checksum wasmi-validation 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "ab380192444b3e8522ae79c0a1976e42a82920916ccdfbce3def89f456ea33f3"
 "checksum wasmi-validation 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "6bc0356e3df56e639fc7f7d8a99741915531e27ed735d911ed83d7e1339c8188"
 "checksum web-sys 0.3.27 (registry+https://github.com/rust-lang/crates.io-index)" = "6435c477200ad486089a7a72c2bd6c9bdf9740bd7fff868806076218076d8c51"
 "checksum webpki 0.19.1 (registry+https://github.com/rust-lang/crates.io-index)" = "4f7e1cd7900a3a6b65a3e8780c51a3e6b59c0e2c55c6dc69578c288d69f7d082"
