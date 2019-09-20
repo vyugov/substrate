@@ -1019,21 +1019,21 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
   ) -> Box<dyn FnMut(&PeerId, MessageIntent, &Block::Hash, &[u8]) -> bool + 'b>
   {
     /*let (inner, do_rebroadcast) = {
-        use parking_lot::RwLockWriteGuard;
+      use parking_lot::RwLockWriteGuard;
 
-        let mut inner = self.inner.write();
-        let now = Instant::now();
-        let do_rebroadcast = false;
+      let mut inner = self.inner.write();
+      let now = Instant::now();
+      let do_rebroadcast = false;
 
-        /*if now >= inner.next_rebroadcast {
-            inner.next_rebroadcast = now + REBROADCAST_AFTER;
-            true
-        } else {
-            false
-        };*/
+      /*if now >= inner.next_rebroadcast {
+        inner.next_rebroadcast = now + REBROADCAST_AFTER;
+        true
+      } else {
+        false
+      };*/
 
-        // downgrade to read-lock.
-        (RwLockWriteGuard::downgrade(inner), do_rebroadcast)
+      // downgrade to read-lock.
+      (RwLockWriteGuard::downgrade(inner), do_rebroadcast)
     };*/
     //info!("MessageAllowed 2");
     Box::new(move |who, intent, topic, mut data| {

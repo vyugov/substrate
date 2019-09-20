@@ -50,6 +50,7 @@
 
 extern crate serde;
 extern crate unsigned_varint;
+use keystore::KeyStorePtr;
 use runtime_primitives::traits::Hash as THash;
 use runtime_primitives::traits::{
   BlakeTwo256, Block as BlockT, Header, NumberFor, ProvideRuntimeApi,
@@ -58,7 +59,6 @@ use runtime_primitives::{
   generic::{self, BlockId},
   ApplyError, Justification,
 };
-use keystore::KeyStorePtr;
 //use runtime_primitives::{
 //traits::{Block as BlockT, Hash as HashT, Header as HeaderT, ProvideRuntimeApi, DigestFor, },
 //generic::BlockId,
@@ -221,7 +221,7 @@ where
       auxiliary: Vec::new(),
       fork_choice: ForkChoiceStrategy::LongestChain,
     };
-   info!("VERIFIER BADGER");
+    info!("VERIFIER BADGER");
     Ok((import_block, None))
   }
 }
@@ -289,7 +289,7 @@ const CATCH_UP_THRESHOLD: u64 = 2;
 const KEEP_RECENT_ROUNDS: usize = 3;
 
 const BADGER_TOPIC: &str = "itsasnake";
- 
+
 /// Configuration for the Badger service.
 #[derive(Clone)]
 pub struct Config
@@ -303,7 +303,6 @@ pub struct Config
   pub batch_size: u32,
   pub initial_validators: BTreeMap<PeerIdW, PublicKey>,
   pub node_indices: BTreeMap<PeerIdW, usize>,
- 
 }
 fn secret_share_from_string(st: &str) -> Result<SecretKeyShareWrap, Error>
 {
