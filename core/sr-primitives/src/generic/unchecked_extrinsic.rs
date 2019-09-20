@@ -95,23 +95,7 @@ impl<Address, Call, Signature, Extra: SignedExtension> Extrinsic
 	}
 }
 
-#[cfg(feature = "std")]
-use log::info;
 
-#[cfg(feature = "std")]
-fn badproof<A,B,C>(a: &A,b: &B,c: &C)
-where A:std::fmt::Debug,
-B:std::fmt::Debug,
-C:std::fmt::Debug,
-{
-info!("Your proof is BAD {:?} {:?} {:?} ",a,b,c);
-}
-
-#[cfg(not(feature = "std"))]
-fn badproof<A,B,C>(_a: &A,_b: &B,_c: &C)
-{
-//info!("Your proof is BAD");
-}
 
 
 impl<Address, AccountId, Call, Signature, Extra, Lookup>
@@ -132,17 +116,10 @@ where
 		Ok(match self.signature {
 			Some((signed, signature, extra)) => {
 				let signed = lookup.lookup(signed)?;
-				#[cfg(feature = "std")]
-				extra.using_encoded(|e| info!("ENCO {:?} ",e));
 				let raw_payload = SignedPayload::new(self.function, extra)?;
-				#[cfg(feature = "std")]
-                info!("ENCO");
 				if !raw_payload.using_encoded(|payload| {
-						#[cfg(feature = "std")]
-				        info!("PAYLOAD {:?} ",&payload);
 					signature.verify(payload, &signed)
 				}) {
-					badproof(&signed,&signed,&signature);
 					return Err(InvalidTransaction::BadProof.into())
 				}
 
@@ -180,8 +157,6 @@ impl<Call, Extra> SignedPayload<Call, Extra> where
 	/// This function may fail if `additional_signed` of `Extra` is not available.
 	pub fn new(call: Call, extra: Extra) -> Result<Self, TransactionValidityError> {
 		let additional_signed = extra.additional_signed()?;
-		#[cfg(feature = "std")]
-        additional_signed.using_encoded(|e| info!("ADITIONAL {:?}",&e));
 		let raw_payload = (call, extra, additional_signed);
 		Ok(Self(raw_payload))
 	}
