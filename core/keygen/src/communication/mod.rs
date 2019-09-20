@@ -45,7 +45,7 @@ pub struct NetworkStream
 {
   inner: Option<mpsc::UnboundedReceiver<network_gossip::TopicNotification>>,
   outer: oneshot::Receiver<
-    futures03::channel::mpsc::UnboundedReceiver<network_gossip::TopicNotification>,
+    mpsc::UnboundedReceiver<network_gossip::TopicNotification>,
   >,
 }
 
@@ -319,11 +319,11 @@ pub(crate) struct NetworkBridge<B: BlockT, N: Network<B>> {
 }
 
 #[cfg(not(feature = "upgraded"))]
-trait MWSStream= Stream<Item = MessageWithSender, Error = Error>;
+pub trait MWSStream= Stream<Item = MessageWithSender, Error = Error>;
 
 
 #[cfg(not(feature = "upgraded"))]
-trait MWRSink= Sink<SinkItem = MessageWithReceiver, SinkError = Error>;
+pub trait MWRSink= Sink<SinkItem = MessageWithReceiver, SinkError = Error>;
 
 #[cfg(not(feature = "upgraded"))]
 pub trait MWSSink= Sink<SinkItem = MessageWithSender, SinkError = Error>;

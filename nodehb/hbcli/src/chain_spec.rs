@@ -16,7 +16,7 @@
 
 //! Substrate chain configurations.
 
-use primitives::{ed25519, sr25519, Pair, crypto::UncheckedInto};
+use primitives::{ed25519, sr25519, Pair,Public, crypto::UncheckedInto};
 use hb_node_primitives::{AccountId,  Balance};
 use substrate_service;
 use hex_literal::hex;
@@ -25,7 +25,7 @@ use badger_primitives::AuthorityId as BadgerId;
 
 use hb_node_runtime::{
 	GenesisConfig,  BalancesConfig,
-	SudoConfig, IndicesConfig, SystemConfig, WASM_BINARY
+	SudoConfig, IndicesConfig, SystemConfig,ContractsConfig, WASM_BINARY
 };
 //use hb_node_runtime::SessionKeys;
 use hb_node_runtime::constants::currency::DOLLARS;
@@ -69,6 +69,10 @@ fn staging_testnet_config_genesis() -> GenesisConfig {
 				.map(|k| (k, ENDOWMENT))
 				.collect(),
 			vesting: vec![],
+		}),
+		contracts: Some(ContractsConfig {
+			current_schedule: Default::default(),
+			gas_price: 1 * MILLICENTS,
 		}),
 		indices: Some(IndicesConfig {
 			ids: endowed_accounts.iter().cloned()
@@ -125,11 +129,15 @@ pub enum Alternative {
 	LocalTestnet,
 }
 
-
-fn account_key(s: &str) -> AccountId {
-	sr25519::Pair::from_string(&format!("//{}", s), None)
+pub fn get_from_seed<TPublic: Public>(seed: &str) -> <TPublic::Pair as Pair>::Public {
+	TPublic::Pair::from_string(&format!("//{}", seed), None)
 		.expect("static values are valid; qed")
 		.public()
+}
+
+
+fn account_key(s: &str) -> AccountId {
+	get_from_seed::<AccountId>(s)
 }
 
 impl Alternative {
@@ -218,6 +226,10 @@ fn testnet_genesis(endowed_accounts: Vec<AccountId>, root_key: AccountId) -> Gen
 		}),
 		indices: Some(IndicesConfig {
 			ids: endowed_accounts.clone(),
+		}),
+		contracts: Some(ContractsConfig {
+			current_schedule: Default::default(),
+			gas_price: 1 * MILLICENTS,
 		}),
 		balances: Some(BalancesConfig {
 			balances: endowed_accounts.iter().cloned().map(|k|(k, 1 << 60)).collect(),

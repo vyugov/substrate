@@ -49,8 +49,6 @@ im_online = { package = "srml-im-online", path = "../../srml/im-online", default
 sr-authority-discovery = { package = "srml-authority-discovery", path = "../../srml/authority-discovery", default-features = false }
 authority-discovery = { package = "substrate-authority-discovery", path = "../../core/authority-discovery"}
 
-keygen = { package="substrate-keygen", path = "../../core/keygen" }
-
 [dev-dependencies]
 keystore = { package = "substrate-keystore", path = "../../core/keystore" }
 babe = { package = "substrate-consensus-babe", path = "../../core/consensus/babe", features = ["test-helpers"] }

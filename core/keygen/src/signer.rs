@@ -103,6 +103,7 @@ where S: futures03::sink::Sink<A, Error = Error>+Unpin
 	buffer: VecDeque<A>,
 }
 
+#[cfg(feature = "upgraded")]
 impl<A,S>  Unpin for  Buffered<A,S>
 where S: futures03::sink::Sink<A, Error = Error>+Unpin
 {}

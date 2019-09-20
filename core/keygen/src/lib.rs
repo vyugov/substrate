@@ -427,7 +427,11 @@ where
 	});
 	
 	let key_gen_work = KeyGenWork::new(client, config, bridge).map_err(|e| error!("Error {:?}", e));
+
+    #[cfg(not(feature = "upgraded"))]
+	return Ok(key_gen_work);
 	//futures03::future::select(key_gen_work,streamer);
+	#[cfg(feature = "upgraded")]
 	Ok(futures03::future::select(key_gen_work,streamer).then(|_| futures03::future::ready( Ok(())) ))//key_gen_work)
 }
 

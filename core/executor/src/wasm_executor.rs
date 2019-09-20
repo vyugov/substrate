@@ -37,7 +37,7 @@ use primitives::{
 use trie::{TrieConfiguration, trie_types::Layout};
 use crate::sandbox;
 use crate::allocator;
-use log::trace;
+use log::{trace,info};
 use wasm_interface::{
 	FunctionContext, HostFunctions, Pointer, WordSize, Sandbox, MemoryId, PointerType,
 	Result as WResult,
@@ -856,6 +856,7 @@ impl_wasm_host_interface! {
 			pubkey_data: Pointer<u8>,
 		) -> u32 {
 			let mut sig = [0u8; 64];
+			info!("ext_ed25519_verify triggered");
 			context.read_memory_into(sig_data, &mut sig[..])
 				.map_err(|_| "Invalid attempt to get signature in ext_ed25519_verify")?;
 			let mut pubkey = [0u8; 32];
@@ -1073,6 +1074,7 @@ impl_wasm_host_interface! {
 			pubkey_data: Pointer<u8>,
 		) -> u32 {
 			let mut sig = [0u8; 64];
+			info!("ext_sr25519_verify triggered");
 			context.read_memory_into(sig_data, &mut sig[..])
 				.map_err(|_| "Invalid attempt to get signature in ext_sr25519_verify")?;
 			let mut pubkey = [0u8; 32];

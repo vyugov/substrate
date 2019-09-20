@@ -19,7 +19,7 @@ support = { package = "srml-support", path = "../../srml/support", default-featu
 authorship = { package = "srml-authorship", path = "../../srml/authorship", default-features = false }
 #badger = { package = "substrate-badger-mushroom", path = "../../core/hbbft" }
 #badger-primitives = { package = "substrate-badger-primitives", path = "../../core/hbbft/primitives" }
-
+contracts = { package = "srml-contracts", path = "../../srml/contracts", default-features = false }
 #consensus-primitives = { package = "substrate-consensus-common-primitives", path = "../../core/consensus/common/primitives", default-features = false }
 balances = { package = "srml-balances", path = "../../srml/balances", default-features = false }
 elections = { package = "srml-elections", path = "../../srml/elections", default-features = false }
@@ -57,6 +57,7 @@ std = [
 	"support/std",
 	"authorship/std",
 	"balances/std",
+	"contracts/std",
 	"elections/std",
 	"executive/std",
 	"finality-tracker/std",

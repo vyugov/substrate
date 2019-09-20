@@ -81,7 +81,7 @@ impl Default for NodeConfig
 macro_rules! new_full_start {
   ($config:expr) => {{
     let inherent_data_providers = inherents::InherentDataProviders::new();
-
+    type RpcExtension = jsonrpc_core::IoHandler<substrate_rpc::Metadata>;
     let builder = substrate_service::ServiceBuilder::new_full::<
       hb_node_primitives::Block,
       hb_node_runtime::RuntimeApi,
@@ -111,13 +111,9 @@ macro_rules! new_full_start {
       )
       .map_err(Into::into)
     })?
-    .with_rpc_extensions(|client, pool| {
-      use hb_node_rpc::accounts::{Accounts, AccountsApi};
-
-      let mut io = jsonrpc_core::IoHandler::<substrate_service::RpcMetadata>::default();
-      io.extend_with(AccountsApi::to_delegate(Accounts::new(client, pool)));
-      io
-    })?;
+	.with_rpc_extensions(|client, pool| ->RpcExtension{
+			hb_node_rpc::create(client, pool)
+		})?;
 
     (builder, inherent_data_providers)
   }};

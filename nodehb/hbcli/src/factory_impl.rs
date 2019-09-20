@@ -51,11 +51,13 @@ type Number = <<hb_node_primitives::Block as BlockT>::Header as HeaderT>::Number
 impl<Number> FactoryState<Number> {
 	fn build_extra(index: hb_node_primitives::Index, phase: u64) -> hb_node_runtime::SignedExtra {
 		(
+			system::CheckVersion::new(),
 			system::CheckGenesis::new(),
 			system::CheckEra::from(Era::mortal(256, phase)),
 			system::CheckNonce::from(index),
 			system::CheckWeight::new(),
-			balances::TakeFees::from(0)
+			balances::TakeFees::from(0),
+			Default::default(),
 		)
 	}
 }
@@ -126,13 +128,13 @@ impl RuntimeAdapter for FactoryState<Number> {
 		self.round = val;
 	}
 
-	fn transfer_extrinsic(
+fn transfer_extrinsic(
 		&self,
 		sender: &Self::AccountId,
 		key: &Self::Secret,
 		destination: &Self::AccountId,
 		amount: &Self::Balance,
-		_version: u32,
+		version: u32,
 		genesis_hash: &<Self::Block as BlockT>::Hash,
 		prior_block_hash: &<Self::Block as BlockT>::Hash,
 	) -> <Self::Block as BlockT>::Extrinsic {
@@ -146,7 +148,7 @@ impl RuntimeAdapter for FactoryState<Number> {
 					(*amount).into()
 				)
 			)
-		}, key, ( genesis_hash.clone(), prior_block_hash.clone(), (), (), ()))
+		}, key, (version, genesis_hash.clone(), prior_block_hash.clone(), (), (), (), ()))
 	}
 
 	fn inherent_extrinsics(&self) -> InherentData {

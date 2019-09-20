@@ -1,6 +1,7 @@
 [[bin]]
 name = "substrate"
 path = "nodehb/src/main.rs"
+#path = "node/src/main.rs"
 
 [package]
 name = "substrate"
