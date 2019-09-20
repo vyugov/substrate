@@ -99,7 +99,7 @@ use inherents::ProvideInherentData;
 use support::{StorageValue, Parameter, decl_storage, decl_module};
 use support::traits::{Time, Get};
 use sr_primitives::traits::{
-	SimpleArithmetic, Zero, SaturatedConversion, Scale
+	SimpleArithmetic,  SaturatedConversion, Scale
 };
 use sr_primitives::weights::SimpleDispatchInfo;
 use system::ensure_none;

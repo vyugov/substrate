@@ -77,6 +77,55 @@ impl Default for NodeConfig
 /// Use this macro if you don't actually need the full service, but just the builder in order to
 /// be able to perform chain operations.
 ///
+macro_rules! new_full_start {
+	($config:expr) => {{
+		type RpcExtension = jsonrpc_core::IoHandler<substrate_rpc::Metadata>;
+		let mut import_setup = None;
+		let inherent_data_providers = inherents::InherentDataProviders::new();
+		let mut tasks_to_spawn = Vec::new();
+
+		let builder = substrate_service::ServiceBuilder::new_full::<
+			node_primitives::Block, node_runtime::RuntimeApi, node_executor::Executor
+		>($config)?
+			.with_select_chain(|_config, backend| {
+				Ok(client::LongestChain::new(backend.clone()))
+			})?
+			.with_transaction_pool(|config, client|
+				Ok(transaction_pool::txpool::Pool::new(config, transaction_pool::ChainApi::new(client)))
+			)?
+			.with_import_queue(|_config, client, mut select_chain, transaction_pool| {
+				let select_chain = select_chain.take()
+					.ok_or_else(|| substrate_service::Error::SelectChainRequired)?;
+				let (block_import, link_half) =
+					grandpa::block_import::<_, _, _, node_runtime::RuntimeApi, _, _>(
+						client.clone(), client.clone(), select_chain
+					)?;
+				let justification_import = block_import.clone();
+
+				let (import_queue, babe_link, babe_block_import, pruning_task) = babe::import_queue(
+					babe::Config::get_or_compute(&*client)?,
+					block_import,
+					Some(Box::new(justification_import)),
+					None,
+					client.clone(),
+					client,
+					inherent_data_providers.clone(),
+					Some(transaction_pool)
+				)?;
+
+				import_setup = Some((babe_block_import.clone(), link_half, babe_link));
+				tasks_to_spawn.push(Box::new(pruning_task));
+
+				Ok(import_queue)
+			})?
+			.with_rpc_extensions(|client, pool| -> RpcExtension {
+				node_rpc::create(client, pool)
+			})?;
+
+		(builder, import_setup, inherent_data_providers, tasks_to_spawn)
+	}}
+}
+
 
 macro_rules! new_full_start {
   ($config:expr) => {{
@@ -97,9 +146,9 @@ macro_rules! new_full_start {
         transaction_pool::ChainApi::new(client),
       ))
     })?
-    .with_import_queue(|_config, client, mut select_chain, transaction_pool| {
+    .with_import_queue(|_config, client,  select_chain, _transaction_pool| {
       #[allow(deprecated)]
-      let fprb = Box::new(DummyFinalityProofRequestBuilder::default()) as Box<_>;
+     // let fprb = Box::new(DummyFinalityProofRequestBuilder::default()) as Box<_>;
       let block_import = client.clone();
       //let justification_import = block_import.clone();
       badger_import_queue::<_, _, PublicKeyWrap, SignatureWrap>(

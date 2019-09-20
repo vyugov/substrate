@@ -26,6 +26,7 @@ elections = { package = "srml-elections", path = "../../srml/elections", default
 executive = { package = "srml-executive", path = "../../srml/executive", default-features = false }
 finality-tracker = { package = "srml-finality-tracker", path = "../../srml/finality-tracker", default-features = false }
 srml-badger = { package = "srml-badger", path = "../../srml/hbbft", default-features = false }
+srml-keygen = { package = "srml-keygen", path = "../../srml/keygen", default-features = false }
 
 indices = { package = "srml-indices", path = "../../srml/indices", default-features = false }
 membership = { package = "srml-membership", path = "../../srml/membership", default-features = false }
@@ -77,5 +78,6 @@ std = [
 	"offchain-primitives/std",
 	"substrate-session/std",
 	"substrate-badger-rapi/std",
-	"srml-badger/std"
+	"srml-badger/std",
+	"srml-keygen/std"
 ]

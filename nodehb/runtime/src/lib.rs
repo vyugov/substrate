@@ -271,6 +271,12 @@ impl srml_badger::Trait for Runtime
 
 }
 
+impl srml_keygen::Trait for Runtime 
+{
+	type Event=Event;
+
+}
+
 
 parameter_types! {
 	pub const WindowSize: BlockNumber = DEFAULT_WINDOW_SIZE.into();
@@ -293,6 +299,7 @@ construct_runtime!(
 		Timestamp: timestamp::{Module, Call, Storage, Inherent},
 		Authorship: authorship::{Module, Call, Storage, Inherent},
 		Badger: srml_badger::{Module, Call, Storage, Event},
+		Keygen: srml_keygen::{Module, Call, Storage, Event},
 		Indices: indices,
 		Balances: balances,
 		Contracts: contracts,
