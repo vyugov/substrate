@@ -2401,6 +2401,7 @@ dependencies = [
  "srml-finality-tracker 2.0.0",
  "srml-im-online 0.1.0",
  "srml-indices 2.0.0",
+ "srml-keygen 0.1.0",
  "srml-support 2.0.0",
  "srml-system 2.0.0",
  "srml-timestamp 2.0.0",
@@ -4312,6 +4313,24 @@ dependencies = [
  "srml-support 2.0.0",
  "srml-system 2.0.0",
  "substrate-keyring 2.0.0",
+ "substrate-primitives 2.0.0",
+]
+
+[[package]]
+name = "srml-keygen"
+version = "0.1.0"
+dependencies = [
+ "parity-scale-codec 1.0.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde 1.0.101 (registry+https://github.com/rust-lang/crates.io-index)",
+ "sr-io 2.0.0",
+ "sr-primitives 2.0.0",
+ "sr-staking-primitives 2.0.0",
+ "sr-std 2.0.0",
+ "srml-im-online 0.1.0",
+ "srml-session 2.0.0",
+ "srml-support 2.0.0",
+ "srml-system 2.0.0",
+ "substrate-application-crypto 2.0.0",
  "substrate-primitives 2.0.0",
 ]
 

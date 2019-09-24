@@ -54,7 +54,12 @@ impl TestNetFactory for TestNet {
 		TestNet { peers: Vec::new() }
 	}
 
-	fn make_verifier(&self, _client: PeersClient, _config: &ProtocolConfig) -> Self::Verifier {
+	fn make_verifier(
+		&self,
+		_client: PeersClient,
+		_config: &ProtocolConfig,
+		_peer_data: &Self::PeerData,
+	) -> Self::Verifier {
 		PassThroughVerifier(false)
 	}
 
@@ -88,11 +93,11 @@ fn test_1_of_3_key_gen() {
 	];
 
 	let peers_len = peers.len();
+	let blocks = 3;
 
 	let mut runtime = current_thread::Runtime::new().unwrap();
 
-	let mut net = TestNet::new(peers_len);
-
+	let net = TestNet::new(peers_len);
 	let net = Arc::new(Mutex::new(net));
 
 	let mut notifications = Vec::new();
@@ -116,7 +121,7 @@ fn test_1_of_3_key_gen() {
 						Ok::<_, ()>(v)
 					})
 					.compat()
-					.take_while(|n| Ok(n.header.number() < &2))
+					.take_while(|n| Ok(n.header.number() < &blocks))
 					.for_each(move |v| Ok(())),
 			);
 		}
@@ -143,8 +148,8 @@ fn test_1_of_3_key_gen() {
 		// so only peer 0 has 2 blocks
 		// but peer 0 doesn't get import_notifications since "block origin" is File
 		let mut net = net.lock();
-		net.peer(0).push_blocks(2, false);
-		assert_eq!(net.peer(0).client().info().chain.best_number, 2);
+		net.peer(0).push_blocks(blocks as usize, false);
+		assert_eq!(net.peer(0).client().info().chain.best_number, blocks);
 		assert_eq!(net.peer(1).client().info().chain.best_number, 0);
 	}
 

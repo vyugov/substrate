@@ -50,6 +50,7 @@ sr-authority-discovery = { package = "srml-authority-discovery", path = "../../s
 authority-discovery = { package = "substrate-authority-discovery", path = "../../core/authority-discovery"}
 
 keygen = { package="substrate-keygen", path = "../../core/keygen" }
+sr-keygen = { package="srml-keygen", path = "../../srml/keygen"}
 
 [dev-dependencies]
 keystore = { package = "substrate-keystore", path = "../../core/keystore" }

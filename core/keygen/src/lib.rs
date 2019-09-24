@@ -58,11 +58,12 @@ pub enum Error {
 	Client(ClientError),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct NodeConfig {
 	pub threshold: Count,
 	pub players: Count,
 	pub name: Option<String>,
+	pub keystore: Option<KeyStorePtr>,
 }
 
 impl NodeConfig {
@@ -99,6 +100,10 @@ pub struct KeyGenState {
 impl KeyGenState {
 	pub fn shared_public_key(&self) -> Option<GE> {
 		self.shared_keys.clone().map(|sk| sk.y)
+	}
+
+	pub fn reset(&mut self) {
+		*self = Self::default();
 	}
 }
 
@@ -249,9 +254,10 @@ where
 		name: None,
 		threshold: 1,
 		players: 3,
+		keystore: Some(keystore),
 	};
 
-	let keystore = keystore.read();
+	// let keystore = keystore.read();
 
 	// let persistent_data: SharedState = load_persistent(&**client.backend()).unwrap();
 	// println!("{:?}", persistent_data);

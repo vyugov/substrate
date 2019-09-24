@@ -24,7 +24,6 @@ pub enum GossipMessage {
 	Message(Message),
 }
 
-#[derive(Debug)]
 pub struct Inner {
 	local_peer_id: PeerId,
 	local_peer_info: PeerInfo,
