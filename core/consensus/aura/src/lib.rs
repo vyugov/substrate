@@ -33,7 +33,7 @@ use std::{sync::Arc, time::Duration, thread, marker::PhantomData, hash::Hash, fm
 use codec::{Encode, Decode, Codec};
 use consensus_common::{self, BlockImport, Environment, Proposer,
 	ForkChoiceStrategy, BlockImportParams, BlockOrigin, Error as ConsensusError,
-	SelectChain, well_known_cache_keys::{self, Id as CacheKeyId}
+	SelectChain,
 };
 use consensus_common::import_queue::{
 	Verifier, BasicQueue, BoxBlockImport, BoxJustificationImport, BoxFinalityProofImport,
@@ -41,6 +41,7 @@ use consensus_common::import_queue::{
 use client::{
 	block_builder::api::BlockBuilder as BlockBuilderApi, blockchain::ProvideCache,
 	runtime_api::ApiExt, error::Result as CResult, backend::AuxStore, BlockOf,
+	well_known_cache_keys::{self, Id as CacheKeyId},
 };
 
 use sr_primitives::{generic::{BlockId, OpaqueDigestItemId}, Justification};
@@ -217,8 +218,8 @@ impl<H, B, C, E, I, P, Error, SO> slots::SimpleSlotWorker<B> for AuraWorker<C, E
 		self.block_import.clone()
 	}
 
-	fn epoch_data(&self, block: &B::Hash) -> Result<Self::EpochData, consensus_common::Error> {
-		authorities(self.client.as_ref(), &BlockId::Hash(*block))
+	fn epoch_data(&self, header: &B::Header, _slot_number: u64) -> Result<Self::EpochData, consensus_common::Error> {
+		authorities(self.client.as_ref(), &BlockId::Hash(header.hash()))
 	}
 
 	fn authorities_len(&self, epoch_data: &Self::EpochData) -> usize {
@@ -740,7 +741,7 @@ mod tests {
 			}
 		}
 
-		fn make_verifier(&self, client: PeersClient, _cfg: &ProtocolConfig)
+		fn make_verifier(&self, client: PeersClient, _cfg: &ProtocolConfig, _peer_data: &())
 			-> Self::Verifier
 		{
 			match client {
