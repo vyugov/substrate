@@ -93,7 +93,7 @@ fn test_1_of_3_key_gen() {
 	];
 
 	let peers_len = peers.len();
-	let blocks = 20;
+	let blocks = 50;
 
 	let mut runtime = current_thread::Runtime::new().unwrap();
 

@@ -68,10 +68,12 @@ impl super::Network<Block> for TestNetwork {
 		let _ = self.sender.unbounded_send(Event::Report(who, cost_benefit));
 	}
 
-	fn announce(&self, block: Hash) {
+	/// Inform peers that a block with given hash should be downloaded.
+	fn announce(&self, block: Hash, _associated_data: Vec<u8>) {
 		let _ = self.sender.unbounded_send(Event::Announce(block));
 	}
 }
+
 impl network_gossip::ValidatorContext<Block> for TestNetwork {
 	fn broadcast_topic(&mut self, _: Hash, _: bool) {}
 

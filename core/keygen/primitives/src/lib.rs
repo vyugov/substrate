@@ -4,12 +4,8 @@
 extern crate alloc;
 
 use client::decl_runtime_apis;
-use codec::{Codec, Decode, Encode, Error as CodecError, Input};
 use rstd::vec::Vec;
-use sr_primitives::{
-	traits::{DigestFor, NumberFor},
-	ConsensusEngineId,
-};
+use sr_primitives::ConsensusEngineId;
 
 pub const MP_ECDSA_ENGINE_ID: ConsensusEngineId = *b"MPEC";
 

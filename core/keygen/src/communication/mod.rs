@@ -32,7 +32,6 @@ impl Stream for NetworkStream {
 	type Error = ();
 
 	fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-		println!("POLL ");
 		if let Some(ref mut inner) = self.inner {
 			return inner.poll();
 		}
@@ -85,7 +84,7 @@ pub trait Network<Block: BlockT>: Clone + Send + 'static {
 	fn report(&self, who: network::PeerId, cost_benefit: i32);
 
 	/// Inform peers that a block with given hash should be downloaded.
-	fn announce(&self, block: Block::Hash);
+	fn announce(&self, block: Block::Hash, associated_data: Vec<u8>);
 }
 
 impl<B, S, H> Network<B> for Arc<NetworkService<B, S, H>>
@@ -149,15 +148,14 @@ where
 		self.report_peer(who, cost_benefit)
 	}
 
-	fn announce(&self, block: B::Hash) {
-		self.announce_block(block)
+	fn announce(&self, block: B::Hash, associated_data: Vec<u8>) {
+		self.announce_block(block, associated_data)
 	}
 }
 
 struct MessageSender<Block: BlockT, N: Network<Block>> {
 	network: N,
 	validator: Arc<GossipValidator<Block>>,
-	// received_msg_cache_tx:
 }
 
 impl<Block, N> MessageSender<Block, N>
@@ -240,11 +238,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 				Some((decoded.unwrap(), notification.sender))
 			})
 			.filter_map(move |(msg, sender)| Some((msg, sender)))
-			.map_err(|()| {
-				Error::Network("Failed to receive message on unbounded stream".to_string())
-			});
-
-		// let msg_cache = mpsc
+			.map_err(|()| Error::Network("Failed to receive gossip message".to_string()));
 
 		let outgoing = MessageSender::<B, N> {
 			network: self.service.clone(),

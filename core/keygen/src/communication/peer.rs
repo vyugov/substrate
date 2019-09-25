@@ -90,6 +90,9 @@ impl Peers {
 		hasher.finish()
 	}
 
+	pub fn set_awaiting_peers(&mut self, who: &PeerId) {
+		self.set_state(who, PeerState::AwaitingPeers);
+	}
 	pub fn set_generating(&mut self, who: &PeerId) {
 		self.set_state(who, PeerState::Generating);
 	}

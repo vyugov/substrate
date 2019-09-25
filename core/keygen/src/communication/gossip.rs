@@ -72,7 +72,7 @@ impl Inner {
 	}
 
 	pub fn get_local_index(&self) -> usize {
-		self.get_peer_index(&self.local_id())
+		self.get_peer_index(&self.local_peer_id())
 	}
 
 	pub fn get_peer_index(&self, who: &PeerId) -> usize {
@@ -83,11 +83,11 @@ impl Inner {
 		self.peers.get_peer_id_by_index(index)
 	}
 
-	pub fn local_id(&self) -> PeerId {
+	pub fn local_peer_id(&self) -> PeerId {
 		self.local_peer_id.clone()
 	}
 
-	pub fn local_string_id(&self) -> String {
+	pub fn local_string_peer_id(&self) -> String {
 		self.local_peer_id.to_base58()
 	}
 
@@ -111,19 +111,28 @@ impl Inner {
 		self.local_peer_info.state == PeerState::Canceled
 	}
 
+	pub fn set_local_awaiting_peers(&mut self) {
+		self.set_peer_awaiting_peers(&self.local_peer_id());
+		self.local_peer_info.state = PeerState::AwaitingPeers;
+	}
+
 	pub fn set_local_generating(&mut self) {
-		self.set_peer_generating(&self.local_id());
+		self.set_peer_generating(&self.local_peer_id());
 		self.local_peer_info.state = PeerState::Generating;
 	}
 
 	pub fn set_local_complete(&mut self) {
-		self.set_peer_complete(&self.local_id());
+		self.set_peer_complete(&self.local_peer_id());
 		self.local_peer_info.state = PeerState::Complete;
 	}
 
 	pub fn set_local_canceled(&mut self) {
-		self.set_peer_canceled(&self.local_id());
+		self.set_peer_canceled(&self.local_peer_id());
 		self.local_peer_info.state = PeerState::Canceled;
+	}
+
+	pub fn set_peer_awaiting_peers(&mut self, who: &PeerId) {
+		self.peers.set_awaiting_peers(who);
 	}
 
 	pub fn set_peer_canceled(&mut self, who: &PeerId) {
@@ -172,6 +181,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 		let (players, all_peers) = {
 			let mut inner = self.inner.write();
 			inner.add_peer(who.clone());
+			inner.set_local_awaiting_peers();
 			(inner.config.players as usize, inner.peers.len())
 		};
 
@@ -255,7 +265,6 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 	fn message_expired<'a>(&'a self) -> Box<dyn FnMut(Block::Hash, &[u8]) -> bool + 'a> {
 		Box::new(move |topic, mut data| {
 			let inner = self.inner.read();
-
 			let gossip_msg = GossipMessage::decode(&mut data);
 			if let Ok(gossip_msg) = gossip_msg {
 				println!("In `message_expired`");
@@ -263,14 +272,16 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 				let our_hash = inner.get_peers_hash();
 				match gossip_msg {
 					GossipMessage::ConfirmPeers(_, all_peers_hash) => {
+						// println!("{:?} {:?}", our_hash, all_peers_hash);
 						let invalid_state = inner.local_peer_info.state != PeerState::AwaitingPeers;
-						return invalid_state; //|| our_hash != all_peers_hash;
+						return invalid_state || our_hash != all_peers_hash;
 					}
 					GossipMessage::KeyGen(_, all_peers_hash) => {
+						// println!("{:?} {:?}", our_hash, all_peers_hash);
 						let complete_state = inner.local_peer_info.state == PeerState::Complete;
-						return complete_state; //|| our_hash != all_peers_hash;
+						return complete_state || our_hash != all_peers_hash;
 					}
-					_ => return false,
+					_ => return true,
 				}
 			}
 			true

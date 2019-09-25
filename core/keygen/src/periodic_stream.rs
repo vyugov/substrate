@@ -66,10 +66,10 @@ where
 			}
 		}
 
-		while let Async::Ready(Some(p)) = self
+		while let Async::Ready(Some(_)) = self
 			.check_pending
 			.poll()
-			.map_err(|e| Error::Network("pending err".to_string()))?
+			.map_err(|e| Error::Network("Check pending error".to_string()))?
 		{}
 
 		if let Some(ready) = self.ready.pop_front() {
@@ -77,10 +77,8 @@ where
 		}
 
 		if self.incoming.is_done() {
-			println!("worker incoming done");
 			Ok(Async::Ready(None))
 		} else {
-			println!("worker incoming not ready");
 			Ok(Async::NotReady)
 		}
 	}

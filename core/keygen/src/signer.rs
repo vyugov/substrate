@@ -162,10 +162,7 @@ where
 		match msg {
 			GossipMessage::ConfirmPeers(cpm, all_peers_hash) => {
 				let validator = self.env.bridge.validator.inner.read();
-				println!("{:?}", validator.local_info());
 				if !validator.is_local_awaiting_peers() {
-					// self.global_out
-					// .push((original_msg, Some(validator.local_id())));
 					return;
 				}
 				drop(validator);
@@ -180,12 +177,12 @@ where
 						let index = validator.get_peer_index(&sender) as PeerIndex;
 						let our_hash = validator.get_peers_hash();
 
-						// if *from_index != index || *all_peers_hash != our_hash {
-						// 	return;
-						// }
+						if *from_index != index || *all_peers_hash != our_hash {
+							return;
+						}
 						self.global_out.push((
 							GossipMessage::ConfirmPeers(
-								ConfirmPeersMessage::Confirmed(validator.local_string_id()),
+								ConfirmPeersMessage::Confirmed(validator.local_string_peer_id()),
 								our_hash,
 							),
 							Some(sender),
@@ -195,9 +192,9 @@ where
 						println!("recv confirmed msg");
 
 						let sender = sender.clone().unwrap();
-						// if sender.to_base58() != *sender_string_id {
-						// 	return;
-						// }
+						if sender.to_base58() != *sender_string_id {
+							return;
+						}
 
 						let mut state = self.env.state.write();
 						state.confirmations.peer += 1;
@@ -380,7 +377,11 @@ where
 		self.global_out.poll()?;
 		{
 			let state = self.env.state.read();
-			println!("state: {:?} {:?}", state.confirmations, state.local_key);
+			println!(
+				"state: {:?} {:?}",
+				state.confirmations,
+				state.local_key.is_some()
+			);
 		}
 		self.generate_shared_keys();
 
