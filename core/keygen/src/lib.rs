@@ -15,7 +15,7 @@ use keystore::KeyStorePtr;
 use log::{debug, error, info};
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{
 	KeyGenBroadcastMessage1 as KeyGenCommit, KeyGenDecommitMessage1 as KeyGenDecommit, Keys,
-	Parameters, SharedKeys,
+	Parameters, PartyPrivate, SharedKeys, SignKeys,
 };
 use parking_lot::RwLock;
 use tokio_executor::DefaultExecutor;
@@ -40,10 +40,8 @@ mod shared_state;
 mod signer;
 
 use communication::{
-	gossip::GossipMessage,
-	message::{
-		ConfirmPeersMessage, KeyGenMessage, Message, MessageWithSender, PeerIndex, SignMessage,
-	},
+	gossip::{GossipMessage, MessageWithSender},
+	message::{ConfirmPeersMessage, KeyGenMessage, PeerIndex, SignMessage},
 	Network, NetworkBridge,
 };
 use periodic_stream::PeriodicStream;
@@ -76,7 +74,7 @@ impl NodeConfig {
 }
 
 #[derive(Debug, Default)]
-pub struct Confirmations {
+pub struct KeyGenConfirmations {
 	pub peer: Count,
 	pub com_decom: Count,
 	pub secret_share: Count,
@@ -87,7 +85,7 @@ pub struct Confirmations {
 #[derive(Debug)]
 pub struct KeyGenState {
 	pub complete: bool,
-	pub confirmations: Confirmations,
+	pub confirmations: KeyGenConfirmations,
 	pub local_key: Option<Keys>,
 	pub commits: BTreeMap<PeerIndex, KeyGenCommit>,
 	pub decommits: BTreeMap<PeerIndex, KeyGenDecommit>,
@@ -111,7 +109,7 @@ impl Default for KeyGenState {
 	fn default() -> Self {
 		Self {
 			complete: false,
-			confirmations: Confirmations::default(),
+			confirmations: KeyGenConfirmations::default(),
 			local_key: None,
 			commits: BTreeMap::new(),
 			decommits: BTreeMap::new(),
@@ -121,6 +119,17 @@ impl Default for KeyGenState {
 			shared_keys: None,
 		}
 	}
+}
+
+#[derive(Default)]
+pub struct SigGenConfirmations {
+	pub peer: Count, // peer == t+1 and we'll start
+	pub com_decom: Count,
+}
+
+pub struct SigGenState {
+	pub complete: bool,
+	pub sign_key: Option<SignKeys>,
 }
 
 fn global_comm<Block, N>(

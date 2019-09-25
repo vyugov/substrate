@@ -93,7 +93,7 @@ fn test_1_of_3_key_gen() {
 	];
 
 	let peers_len = peers.len();
-	let blocks = 3;
+	let blocks = 20;
 
 	let mut runtime = current_thread::Runtime::new().unwrap();
 
@@ -116,10 +116,7 @@ fn test_1_of_3_key_gen() {
 			notifications.push(
 				client
 					.import_notification_stream()
-					.map(move |v| {
-						println!(">>NOTIFICATION {:?} from {:?}", v, peer_id);
-						Ok::<_, ()>(v)
-					})
+					.map(move |n| Ok::<_, ()>(n))
 					.compat()
 					.take_while(|n| Ok(n.header.number() < &blocks))
 					.for_each(move |v| Ok(())),
@@ -127,8 +124,8 @@ fn test_1_of_3_key_gen() {
 		}
 
 		let full_client = client.as_full().unwrap();
-		// let node = run_key_gen(local_peer_id, keystore, full_client, network).unwrap();
-		// runtime.spawn(node);
+		let node = run_key_gen(local_peer_id, keystore, full_client, network).unwrap();
+		runtime.spawn(node);
 	}
 
 	let sync = futures::future::poll_fn(|| {

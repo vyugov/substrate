@@ -5,7 +5,6 @@ use futures::prelude::*;
 use futures::sync::{mpsc, oneshot};
 use log::{error, info, trace};
 
-use gossip::{GossipMessage, GossipValidator};
 use network::{consensus_gossip as network_gossip, NetworkService, PeerId};
 use network_gossip::ConsensusMessage;
 use sr_primitives::traits::{
@@ -20,10 +19,8 @@ mod peer;
 
 use crate::Error;
 
-use message::{
-	ConfirmPeersMessage, KeyGenMessage, Message, MessageWithReceiver, MessageWithSender,
-	SignMessage,
-};
+use gossip::{GossipMessage, GossipValidator, MessageWithReceiver, MessageWithSender};
+use message::{ConfirmPeersMessage, KeyGenMessage, SignMessage};
 
 pub struct NetworkStream {
 	inner: Option<mpsc::UnboundedReceiver<network_gossip::TopicNotification>>,
@@ -160,6 +157,7 @@ where
 struct MessageSender<Block: BlockT, N: Network<Block>> {
 	network: N,
 	validator: Arc<GossipValidator<Block>>,
+	// received_msg_cache_tx:
 }
 
 impl<Block, N> MessageSender<Block, N>
@@ -167,15 +165,15 @@ where
 	Block: BlockT,
 	N: Network<Block>,
 {
-	fn broadcast(&self, msg: Message) {
-		let raw_msg = GossipMessage::Message(msg).encode();
+	fn broadcast(&self, msg: GossipMessage) {
+		let raw_msg = msg.encode();
 		let inner = self.validator.inner.read();
 		let peers = inner.get_peers();
 		self.network.send_message(peers, raw_msg.clone());
 	}
 
-	fn send_message(&self, target: PeerId, msg: Message) {
-		let raw_msg = GossipMessage::Message(msg).encode();
+	fn send_message(&self, target: PeerId, msg: GossipMessage) {
+		let raw_msg = msg.encode();
 		self.network.send_message(vec![target], raw_msg);
 	}
 }
@@ -228,7 +226,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 		impl Stream<Item = MessageWithSender, Error = Error>,
 		impl Sink<SinkItem = MessageWithReceiver, SinkError = Error>,
 	) {
-		let topic = string_topic::<B>("hash"); // related with fn validate in gossip.rs
+		let topic = string_topic::<B>("hash"); // related with `fn validate` in gossip.rs
 
 		let incoming = self
 			.service
@@ -241,12 +239,12 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 				}
 				Some((decoded.unwrap(), notification.sender))
 			})
-			.filter_map(move |(msg, sender)| match msg {
-				GossipMessage::Message(message) => Some((message, sender)),
-			})
+			.filter_map(move |(msg, sender)| Some((msg, sender)))
 			.map_err(|()| {
 				Error::Network("Failed to receive message on unbounded stream".to_string())
 			});
+
+		// let msg_cache = mpsc
 
 		let outgoing = MessageSender::<B, N> {
 			network: self.service.clone(),

@@ -12,22 +12,27 @@ use network::{config::Roles, PeerId};
 use sr_primitives::traits::{Block as BlockT, Zero};
 
 use super::{
-	message::{ConfirmPeersMessage, KeyGenMessage, Message, SignMessage},
+	message::{ConfirmPeersMessage, KeyGenMessage, SignMessage},
 	peer::{PeerInfo, PeerState, Peers},
 	string_topic,
 };
 
 const REBROADCAST_AFTER: Duration = Duration::from_secs(60 * 5);
 
-#[derive(Debug, Encode, Decode)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub enum GossipMessage {
-	Message(Message),
+	ConfirmPeers(ConfirmPeersMessage, u64), // hash of all peers
+	KeyGen(KeyGenMessage, u64),
+	Sign(SignMessage),
 }
+
+pub type MessageWithSender = (GossipMessage, Option<PeerId>);
+pub type MessageWithReceiver = (GossipMessage, Option<PeerId>);
 
 pub struct Inner {
 	local_peer_id: PeerId,
 	local_peer_info: PeerInfo,
-	peers: Peers,
+	pub peers: Peers,
 	config: crate::NodeConfig,
 	next_rebroadcast: Instant,
 }
@@ -90,6 +95,22 @@ impl Inner {
 		self.local_peer_info.clone()
 	}
 
+	pub fn is_local_awaiting_peers(&self) -> bool {
+		self.local_peer_info.state == PeerState::AwaitingPeers
+	}
+
+	pub fn is_local_generating(&self) -> bool {
+		self.local_peer_info.state == PeerState::Generating
+	}
+
+	pub fn is_local_complete(&self) -> bool {
+		self.local_peer_info.state == PeerState::Complete
+	}
+
+	pub fn is_local_canceled(&self) -> bool {
+		self.local_peer_info.state == PeerState::Canceled
+	}
+
 	pub fn set_local_generating(&mut self) {
 		self.set_peer_generating(&self.local_id());
 		self.local_peer_info.state = PeerState::Generating;
@@ -98,6 +119,15 @@ impl Inner {
 	pub fn set_local_complete(&mut self) {
 		self.set_peer_complete(&self.local_id());
 		self.local_peer_info.state = PeerState::Complete;
+	}
+
+	pub fn set_local_canceled(&mut self) {
+		self.set_peer_canceled(&self.local_id());
+		self.local_peer_info.state = PeerState::Canceled;
+	}
+
+	pub fn set_peer_canceled(&mut self, who: &PeerId) {
+		self.peers.set_canceled(who);
 	}
 
 	pub fn set_peer_generating(&mut self, who: &PeerId) {
@@ -152,16 +182,21 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 
 			let all_peers_hash = inner.peers.get_hash();
 			let from_index = inner.peers.get_position(&inner.local_peer_id).unwrap() as u16;
-			let msg =
-				Message::ConfirmPeers(ConfirmPeersMessage::Confirming(from_index, all_peers_hash));
-			self.broadcast(context, GossipMessage::Message(msg).encode());
+			let msg = GossipMessage::ConfirmPeers(
+				ConfirmPeersMessage::Confirming(from_index),
+				all_peers_hash,
+			);
+			self.broadcast(context, msg.encode());
 		}
 	}
 
 	fn peer_disconnected(&self, _context: &mut dyn ValidatorContext<Block>, who: &PeerId) {
-		{
-			let mut inner = self.inner.write();
-			inner.del_peer(who);
+		let mut inner = self.inner.write();
+		inner.del_peer(who);
+
+		let players = inner.config.players as usize;
+		if inner.peers.len() < players {
+			inner.set_local_canceled();
 		}
 	}
 
@@ -208,8 +243,8 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 			let gossip_msg = GossipMessage::decode(&mut data);
 			if let Ok(gossip_msg) = gossip_msg {
 				match gossip_msg {
-					GossipMessage::Message(Message::ConfirmPeers(_)) => return true,
-					GossipMessage::Message(Message::KeyGen(_)) => return true,
+					GossipMessage::ConfirmPeers(_, _) => return true,
+					GossipMessage::KeyGen(_, _) => return true,
 					_ => return false,
 				}
 			}
@@ -218,33 +253,24 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 	}
 
 	fn message_expired<'a>(&'a self) -> Box<dyn FnMut(Block::Hash, &[u8]) -> bool + 'a> {
-		let inner = self.inner.read();
-
 		Box::new(move |topic, mut data| {
+			let inner = self.inner.read();
+
 			let gossip_msg = GossipMessage::decode(&mut data);
 			if let Ok(gossip_msg) = gossip_msg {
 				println!("In `message_expired`");
 				// println!("msg: {:?}", gossip_msg);
+				let our_hash = inner.get_peers_hash();
 				match gossip_msg {
-					GossipMessage::Message(msg) => match msg {
-						Message::ConfirmPeers(cpm) => {
-							let invalid_state =
-								inner.local_peer_info.state != PeerState::AwaitingPeers;
-							match cpm {
-								ConfirmPeersMessage::Confirming(from, hash) => {
-									let our_hash = inner.get_peers_hash();
-									return our_hash != hash || invalid_state;
-								}
-								_ => {}
-							}
-							return invalid_state;
-						}
-						Message::KeyGen(_) => {
-							let complet_state = inner.local_peer_info.state == PeerState::Complete;
-							return complet_state;
-						}
-						_ => return false,
-					},
+					GossipMessage::ConfirmPeers(_, all_peers_hash) => {
+						let invalid_state = inner.local_peer_info.state != PeerState::AwaitingPeers;
+						return invalid_state; //|| our_hash != all_peers_hash;
+					}
+					GossipMessage::KeyGen(_, all_peers_hash) => {
+						let complete_state = inner.local_peer_info.state == PeerState::Complete;
+						return complete_state; //|| our_hash != all_peers_hash;
+					}
+					_ => return false,
 				}
 			}
 			true

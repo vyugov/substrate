@@ -18,6 +18,7 @@ pub enum PeerState {
 	AwaitingPeers,
 	Generating,
 	Complete,
+	Canceled,
 }
 
 impl Default for PeerState {
@@ -40,7 +41,7 @@ impl Default for PeerInfo {
 }
 
 #[derive(Debug)]
-pub(crate) struct Peers {
+pub struct Peers {
 	map: HashMap<PeerId, PeerInfo>,
 	set: BTreeSet<String>,
 }
@@ -95,6 +96,10 @@ impl Peers {
 
 	pub fn set_complete(&mut self, who: &PeerId) {
 		self.set_state(who, PeerState::Complete);
+	}
+
+	pub fn set_canceled(&mut self, who: &PeerId) {
+		self.set_state(who, PeerState::Canceled);
 	}
 
 	pub fn get_position(&self, who: &PeerId) -> Option<usize> {

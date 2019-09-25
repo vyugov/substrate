@@ -10,8 +10,8 @@ use tokio::runtime::current_thread;
 use tokio_executor::Executor;
 
 use super::{
-	gossip::{self, GossipValidator},
-	message::{ConfirmPeersMessage, KeyGenMessage, Message, SignMessage},
+	gossip::{GossipMessage, GossipValidator},
+	message::{ConfirmPeersMessage, KeyGenMessage, SignMessage},
 };
 
 use crate::NodeConfig;
@@ -147,11 +147,6 @@ fn test_confirm_peer_message() {
 
 	let global_topic = super::string_topic::<Block>("hash");
 
-	let encoded_msg = gossip::GossipMessage::Message(Message::ConfirmPeers(
-		ConfirmPeersMessage::Confirming(0, 1),
-	))
-	.encode();
-
 	let test = make_test_network()
 		.and_then(move |tester| {
 			tester.gossip_validator.new_peer(
@@ -165,8 +160,13 @@ fn test_confirm_peer_message() {
 		.and_then(move |(tester, id)| {
 			let (global_in, _) = tester.net_handle.global();
 
+			let all_hash = {
+				let inner = tester.gossip_validator.inner.read();
+				inner.get_peers_hash()
+			};
 			let sender_id = id.clone();
-			let msg_to_send = encoded_msg.clone();
+			let msg_to_send =
+				GossipMessage::ConfirmPeers(ConfirmPeersMessage::Confirming(0), all_hash);
 
 			let send_message = tester.filter_network_events(move |event| match event {
 				Event::MessagesFor(topic, sender) => {
@@ -174,7 +174,7 @@ fn test_confirm_peer_message() {
 						return false;
 					}
 					let _ = sender.unbounded_send(network_gossip::TopicNotification {
-						message: msg_to_send.clone(),
+						message: msg_to_send.encode(),
 						sender: Some(sender_id.clone()),
 					});
 
@@ -190,9 +190,12 @@ fn test_confirm_peer_message() {
 				.map(move |(item, _)| {
 					let (msg, sender_opt) = item.unwrap();
 					match msg {
-						Message::ConfirmPeers(ConfirmPeersMessage::Confirming(from, hash)) => {
+						GossipMessage::ConfirmPeers(
+							ConfirmPeersMessage::Confirming(from),
+							hash,
+						) => {
 							assert_eq!(from, 0);
-							assert_eq!(hash, 1);
+							assert_eq!(hash, all_hash);
 						}
 						_ => panic!("invalid msg"),
 					}

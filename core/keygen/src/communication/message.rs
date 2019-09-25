@@ -14,9 +14,6 @@ use network::PeerId;
 
 pub type PeerIndex = u16;
 
-pub type MessageWithSender = (Message, Option<PeerId>);
-pub type MessageWithReceiver = (Message, Option<PeerId>);
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum KeyGenMessage {
 	CommitAndDecommit(PeerIndex, KeyGenCommit, KeyGenDecommit),
@@ -83,16 +80,16 @@ impl Decode for SignMessage {
 
 #[derive(Clone, Debug, Serialize, Deserialize, Encode, Decode)]
 pub enum ConfirmPeersMessage {
-	Confirming(PeerIndex, u64), // from_index, hash
+	Confirming(PeerIndex), // from_index
 	Confirmed(String),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Encode, Decode)]
-pub enum Message {
-	ConfirmPeers(ConfirmPeersMessage),
-	KeyGen(KeyGenMessage),
-	Sign(SignMessage),
-}
+// #[derive(Clone, Debug, Serialize, Deserialize, Encode, Decode)]
+// pub enum Message {
+// 	ConfirmPeers(ConfirmPeersMessage, u64), // hash of all peers
+// 	KeyGen(KeyGenMessage, u64),
+// 	Sign(SignMessage),
+// }
 
 #[cfg(test)]
 mod tests {
