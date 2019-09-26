@@ -2,9 +2,10 @@ use std::{collections::VecDeque, marker::PhantomData, sync::Arc};
 
 use codec::{Decode, Encode};
 use curv::GE;
-use futures::prelude::*;
+use futures::{prelude::*, sync::mpsc};
 use log::{debug, error, info, warn};
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{Keys, Parameters};
+use rand::prelude::*;
 use tokio_executor::DefaultExecutor;
 use tokio_timer::Interval;
 
@@ -84,6 +85,7 @@ where
 	env: Arc<Environment<B, E, Block, N, RA>>,
 	global_in: In,
 	global_out: Buffered<Out>,
+	// message_cache_tx: mpsc::UnboundedSender<MessageWithSender>,
 }
 
 impl<B, E, Block, N, RA, In, Out> Signer<B, E, Block, N, RA, In, Out>
@@ -98,20 +100,27 @@ where
 	In: Stream<Item = MessageWithSender, Error = Error>,
 	Out: Sink<SinkItem = MessageWithSender, SinkError = Error>,
 {
-	pub fn new(env: Arc<Environment<B, E, Block, N, RA>>, global_in: In, global_out: Out) -> Self {
+	pub fn new(
+		env: Arc<Environment<B, E, Block, N, RA>>,
+		global_in: In,
+		global_out: Out,
+		// tx: mpsc::UnboundedSender<MessageWithSender>,
+	) -> Self {
 		Self {
 			env,
 			global_in,
 			global_out: Buffered::new(global_out),
+			// message_cache_tx: tx,
 		}
 	}
 
 	fn generate_shared_keys(&mut self) {
+		let players = self.env.config.players as usize;
 		let mut state = self.env.state.write();
-		if state.confirmations.vss != state.confirmations.secret_share
-			|| state.confirmations.vss != self.env.config.players - 1
-			|| state.confirmations.secret_share != self.env.config.players - 1
-			|| state.complete
+		if state.complete
+			|| state.vsss.len() != players
+			|| state.secret_shares.len() != players
+			|| state.decommits.len() != players
 		{
 			return;
 		}
@@ -139,8 +148,6 @@ where
 			)
 			.unwrap();
 
-		println!("shared keys: {:?} proof: {:?}", shared_keys, proof);
-
 		let i = key.party_index as PeerIndex;
 		state.proofs.insert(i, proof.clone());
 		state.complete = true;
@@ -155,31 +162,33 @@ where
 			.push((GossipMessage::KeyGen(proof_msg, hash), None));
 	}
 
-	fn handle_incoming(&mut self, msg: &GossipMessage, sender: &Option<PeerId>) {
+	fn handle_incoming(&mut self, msg: &GossipMessage, sender: &Option<PeerId>) -> bool {
 		let players = self.env.config.players;
-		let original_msg = msg.clone();
 
 		match msg {
 			GossipMessage::ConfirmPeers(cpm, all_peers_hash) => {
 				let validator = self.env.bridge.validator.inner.read();
+				println!("cpm msg local state {:?}", validator.local_state());
+
 				if !validator.is_local_awaiting_peers() {
-					return;
+					return false;
 				}
 				drop(validator);
 
 				match cpm {
 					ConfirmPeersMessage::Confirming(from_index) => {
 						println!("recv confirming msg");
-
 						let sender = sender.clone().unwrap();
 
 						let validator = self.env.bridge.validator.inner.read();
 						let index = validator.get_peer_index(&sender) as PeerIndex;
 						let our_hash = validator.get_peers_hash();
+						let peer_len = validator.peers.len();
+						println!("{:?}  {:?} {:?}", *all_peers_hash, our_hash, peer_len);
 
-						if *from_index != index || *all_peers_hash != our_hash {
-							return;
-						}
+						// if *from_index != index || *all_peers_hash != our_hash {
+						// 	return;
+						// }
 						self.global_out.push((
 							GossipMessage::ConfirmPeers(
 								ConfirmPeersMessage::Confirmed(validator.local_string_peer_id()),
@@ -192,17 +201,15 @@ where
 						println!("recv confirmed msg");
 
 						let sender = sender.clone().unwrap();
-						if sender.to_base58() != *sender_string_id {
-							return;
-						}
-
-						let mut state = self.env.state.write();
-						state.confirmations.peer += 1;
+						println!("sender id {:?} {:?}", sender.to_base58(), *sender_string_id);
+						// if sender.to_base58() != *sender_string_id {
+						// 	return;
+						// }
 
 						let mut validator = self.env.bridge.validator.inner.write();
 						validator.set_peer_generating(&sender);
 
-						if state.confirmations.peer == players - 1 {
+						if validator.get_peers().len() == players as usize - 1 {
 							validator.set_local_generating();
 							let local_index = validator.get_local_index();
 							drop(validator);
@@ -212,11 +219,13 @@ where
 								key.phase1_broadcast_phase3_proof_of_correct_key();
 
 							let index = local_index as PeerIndex;
-							state.commits.insert(index, commit.clone());
-							state.decommits.insert(index, decommit.clone());
 
-							state.local_key = Some(key);
-							drop(state);
+							{
+								let mut state = self.env.state.write();
+								state.commits.insert(index, commit.clone());
+								state.decommits.insert(index, decommit.clone());
+								state.local_key = Some(key);
+							}
 
 							let cad_msg = KeyGenMessage::CommitAndDecommit(index, commit, decommit);
 
@@ -230,26 +239,31 @@ where
 			GossipMessage::KeyGen(kgm, all_peers_hash) => {
 				println!("recv key gen msg");
 				let validator = self.env.bridge.validator.inner.read();
+				println!("kgm local state {:?}", validator.local_state());
 				if !validator.is_local_generating() {
-					return;
+					return false;
 				}
 				drop(validator);
 
 				match kgm {
 					KeyGenMessage::CommitAndDecommit(from_index, commit, decommit) => {
+						let mut rng = rand::thread_rng();
+						let b = rng.gen_bool(0.5);
+						if b {
+							return false;
+						}
 						let mut state = self.env.state.write();
-						state.confirmations.com_decom += 1;
 
 						state.commits.insert(*from_index, commit.clone());
 						state.decommits.insert(*from_index, decommit.clone());
 
-						if state.confirmations.com_decom == players - 1 {
+						if state.commits.len() == players as usize {
 							let params = Parameters {
 								threshold: self.env.config.threshold,
 								share_count: self.env.config.players,
 							};
 
-							let key: Keys = state.local_key.clone().unwrap();
+							let key = state.local_key.clone().unwrap();
 
 							let commits = state.commits.values().cloned().collect::<Vec<_>>();
 							let decommits = state.decommits.values().cloned().collect::<Vec<_>>();
@@ -292,29 +306,22 @@ where
 					}
 					KeyGenMessage::VSS(from_index, vss) => {
 						let mut state = self.env.state.write();
-						state.confirmations.vss += 1;
 
 						state.vsss.insert(*from_index, vss.clone());
 					}
 					KeyGenMessage::SecretShare(from_index, ss) => {
 						let mut state = self.env.state.write();
-						state.confirmations.secret_share += 1;
 
 						state.secret_shares.insert(*from_index, ss.clone());
 					}
 					KeyGenMessage::Proof(from_index, proof) => {
 						let mut state = self.env.state.write();
-						state.confirmations.proof += 1;
 
 						state.proofs.insert(*from_index, proof.clone());
 
-						let mut validator = self.env.bridge.validator.inner.write();
-						let sender = validator
-							.get_peer_id_by_index(*from_index as usize)
-							.unwrap();
-						validator.set_peer_complete(&sender);
-
-						if state.confirmations.proof == players - 1 {
+						if state.proofs.len() == players as usize
+							&& state.decommits.len() == players as usize
+						{
 							let params = Parameters {
 								threshold: self.env.config.threshold,
 								share_count: self.env.config.players,
@@ -324,10 +331,7 @@ where
 							let points =
 								state.decommits.values().map(|x| x.y_i).collect::<Vec<_>>();
 
-							if proofs.len() != players as usize || points.len() != players as usize
-							{
-								return;
-							}
+							let mut validator = self.env.bridge.validator.inner.write();
 
 							if Keys::verify_dlog_proofs(
 								&params,
@@ -342,6 +346,7 @@ where
 							} else {
 								// reset everything?
 								error!("Key generation failed");
+								validator.set_local_canceled();
 							}
 						}
 					}
@@ -350,6 +355,8 @@ where
 			GossipMessage::Sign(_) => {}
 			_ => {}
 		}
+
+		true
 	}
 }
 
@@ -370,7 +377,7 @@ where
 	fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
 		while let Async::Ready(Some(item)) = self.global_in.poll()? {
 			let (msg, sender) = item;
-			self.handle_incoming(&msg, &sender);
+			let is_ok = self.handle_incoming(&msg, &sender);
 		}
 
 		// send messages generated by `handle_incoming`
@@ -378,9 +385,14 @@ where
 		{
 			let state = self.env.state.read();
 			println!(
-				"state: {:?} {:?}",
-				state.confirmations,
-				state.local_key.is_some()
+				"state: commits {:?} decommits {:?} vss {:?} ss {:?}  proof {:?} has key {:?} complete {:?}",
+				state.commits.len(),
+				state.decommits.len(),
+				state.vsss.len(),
+				state.secret_shares.len(),
+				state.proofs.len(),
+				state.local_key.is_some(),
+				state.complete
 			);
 		}
 		self.generate_shared_keys();

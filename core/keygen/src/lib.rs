@@ -32,7 +32,6 @@ use network::{self, PeerId};
 use primitives::{Blake2Hasher, H256};
 use sr_primitives::generic::BlockId;
 use sr_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
-use substrate_telemetry::{telemetry, CONSENSUS_DEBUG, CONSENSUS_INFO, CONSENSUS_WARN};
 
 mod communication;
 mod periodic_stream;
@@ -73,19 +72,9 @@ impl NodeConfig {
 	}
 }
 
-#[derive(Debug, Default)]
-pub struct KeyGenConfirmations {
-	pub peer: Count,
-	pub com_decom: Count,
-	pub secret_share: Count,
-	pub vss: Count,
-	pub proof: Count,
-}
-
 #[derive(Debug)]
 pub struct KeyGenState {
 	pub complete: bool,
-	pub confirmations: KeyGenConfirmations,
 	pub local_key: Option<Keys>,
 	pub commits: BTreeMap<PeerIndex, KeyGenCommit>,
 	pub decommits: BTreeMap<PeerIndex, KeyGenDecommit>,
@@ -109,7 +98,6 @@ impl Default for KeyGenState {
 	fn default() -> Self {
 		Self {
 			complete: false,
-			confirmations: KeyGenConfirmations::default(),
 			local_key: None,
 			commits: BTreeMap::new(),
 			decommits: BTreeMap::new(),
@@ -119,12 +107,6 @@ impl Default for KeyGenState {
 			shared_keys: None,
 		}
 	}
-}
-
-#[derive(Default)]
-pub struct SigGenConfirmations {
-	pub peer: Count, // peer == t+1 and we'll start
-	pub com_decom: Count,
 }
 
 pub struct SigGenState {
@@ -194,6 +176,11 @@ where
 		let should_rebuild = true;
 		if should_rebuild {
 			let (incoming, outgoing) = global_comm(&self.env.bridge);
+
+			// let (tx, rx) = mpsc::unbounded();
+			// let incoming =
+			// 	incoming.select(rx.map_err(|_| Error::Network("cached msg failed".to_string())));
+
 			let signer = Signer::new(self.env.clone(), incoming, outgoing);
 			self.key_gen = Box::new(signer);
 		} else {
@@ -262,7 +249,7 @@ where
 	let config = NodeConfig {
 		name: None,
 		threshold: 1,
-		players: 3,
+		players: 5,
 		keystore: Some(keystore),
 	};
 

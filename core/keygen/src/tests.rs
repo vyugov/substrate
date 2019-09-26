@@ -90,6 +90,8 @@ fn test_1_of_3_key_gen() {
 		Ed25519Keyring::Alice,
 		Ed25519Keyring::Bob,
 		Ed25519Keyring::Charlie,
+		Ed25519Keyring::Dave,
+		Ed25519Keyring::Eve,
 	];
 
 	let peers_len = peers.len();
@@ -112,16 +114,16 @@ fn test_1_of_3_key_gen() {
 
 		let (keystore, keystore_path) = create_keystore(local_key);
 
-		if peer_id != 0 {
-			notifications.push(
-				client
-					.import_notification_stream()
-					.map(move |n| Ok::<_, ()>(n))
-					.compat()
-					.take_while(|n| Ok(n.header.number() < &blocks))
-					.for_each(move |v| Ok(())),
-			);
-		}
+		// if peer_id != 0 {
+		notifications.push(
+			client
+				.import_notification_stream()
+				.map(move |n| Ok::<_, ()>(n))
+				.compat()
+				.take_while(|n| Ok(n.header.number() < &blocks))
+				.for_each(move |_| Ok(())),
+		);
+		// }
 
 		let full_client = client.as_full().unwrap();
 		let node = run_key_gen(local_peer_id, keystore, full_client, network).unwrap();

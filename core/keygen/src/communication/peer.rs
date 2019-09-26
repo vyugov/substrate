@@ -79,7 +79,7 @@ impl Peers {
 		self.map.keys()
 	}
 
-	fn set_state(&mut self, who: &PeerId, state: PeerState) {
+	pub fn set_state(&mut self, who: &PeerId, state: PeerState) {
 		let peer = self.map.get_mut(who).expect("Peer not found!");
 		peer.state = state;
 	}
@@ -88,21 +88,6 @@ impl Peers {
 		let mut hasher = DefaultHasher::new();
 		self.set.hash(&mut hasher);
 		hasher.finish()
-	}
-
-	pub fn set_awaiting_peers(&mut self, who: &PeerId) {
-		self.set_state(who, PeerState::AwaitingPeers);
-	}
-	pub fn set_generating(&mut self, who: &PeerId) {
-		self.set_state(who, PeerState::Generating);
-	}
-
-	pub fn set_complete(&mut self, who: &PeerId) {
-		self.set_state(who, PeerState::Complete);
-	}
-
-	pub fn set_canceled(&mut self, who: &PeerId) {
-		self.set_state(who, PeerState::Canceled);
 	}
 
 	pub fn get_position(&self, who: &PeerId) -> Option<usize> {
