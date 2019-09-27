@@ -66,11 +66,10 @@ where
 			}
 		}
 
-		while let Async::Ready(Some(_)) = self
-			.check_pending
-			.poll()
-			.map_err(|e| Error::Network("Check pending error".to_string()))?
-		{}
+		let mut is_ready = false;
+		while let Async::Ready(Some(_)) = self.check_pending.poll().map_err(|_| Error::Periodic)? {
+			is_ready = true;
+		}
 
 		if let Some(ready) = self.ready.pop_front() {
 			return Ok(Async::Ready(Some(ready)));

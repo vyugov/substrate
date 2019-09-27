@@ -284,13 +284,13 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 		Box::new(move |topic, mut data| {
 			let gossip_msg = GossipMessage::decode(&mut data);
 			if let Ok(gossip_msg) = gossip_msg {
-				println!("In `message_expired`");
+				println!("In `message_expired` of {:?}", inner.get_local_index());
 				// println!("msg: {:?}", gossip_msg);
 				// let gmsg = gossip_msg.clone();
 				// match gmsg {
 				// 	GossipMessage::ConfirmPeers(cpm, all_peers_hash) => match cpm {
 				// 		ConfirmPeersMessage::Confirming(from) => {
-				// 			println!("confirming {:?}", from);
+				// 			println!("confirming from {:?}", from);
 				// 		}
 				// 		_ => {}
 				// 	},
@@ -305,6 +305,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 				let our_hash = inner.get_peers_hash();
 				let is_complete = inner.is_local_complete();
 				let is_canceled = inner.is_local_canceled();
+				println!("exit `message_expired` of {:?}", inner.get_local_index());
 
 				match gossip_msg {
 					GossipMessage::ConfirmPeers(_, all_peers_hash) => {

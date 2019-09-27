@@ -18,6 +18,7 @@ use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{
 	Parameters, PartyPrivate, SharedKeys, SignKeys,
 };
 use parking_lot::RwLock;
+use rand::prelude::Rng;
 use tokio_executor::DefaultExecutor;
 use tokio_timer::Interval;
 
@@ -52,6 +53,7 @@ type Count = u16;
 #[derive(Debug)]
 pub enum Error {
 	Network(String),
+	Periodic,
 	Client(ClientError),
 }
 
@@ -176,11 +178,6 @@ where
 		let should_rebuild = true;
 		if should_rebuild {
 			let (incoming, outgoing) = global_comm(&self.env.bridge);
-
-			// let (tx, rx) = mpsc::unbounded();
-			// let incoming =
-			// 	incoming.select(rx.map_err(|_| Error::Network("cached msg failed".to_string())));
-
 			let signer = Signer::new(self.env.clone(), incoming, outgoing);
 			self.key_gen = Box::new(signer);
 		} else {
@@ -203,11 +200,39 @@ where
 	type Error = Error;
 
 	fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+		// println!("validator {:?}",  )
+		println!("POLLLLLLLLLLLLLLLLLLLL");
 		match self.key_gen.poll() {
 			Ok(Async::NotReady) => {
+				let (is_generating, commits_len) = {
+					let state = self.env.state.read();
+					let validator = self.env.bridge.validator.inner.read();
+
+					println!(
+						"INDEX {:?} state: commits {:?} decommits {:?} vss {:?} ss {:?}  proof {:?} has key {:?} complete {:?}",
+						validator.get_local_index(),
+						state.commits.len(),
+						state.decommits.len(),
+						state.vsss.len(),
+						state.secret_shares.len(),
+						state.proofs.len(),
+						state.local_key.is_some(),
+						state.complete
+					);
+					(validator.is_local_generating(), state.commits.len())
+				};
+				let mut rng = rand::thread_rng();
+				let b = rng.gen_bool(0.1);
+				if b && is_generating && commits_len != 5 {
+					println!("rebuilt");
+					self.rebuild();
+					futures::task::current().notify();
+				};
+				// self.rebuild();
 				return Ok(Async::NotReady);
 			}
 			Ok(Async::Ready(())) => {
+				println!("FUCKING FINISHED");
 				return Ok(Async::Ready(()));
 			}
 			Err(e) => {

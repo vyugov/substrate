@@ -406,7 +406,7 @@ impl<B: BlockT> ConsensusGossip<B> {
 			(check_fn)(entry.topic, &entry.message.data)
 		};
 
-		self.messages.retain(|entry| !message_expired(entry));
+		self.messages.retain(|entry| { !message_expired(entry)});
 
 		trace!(target: "gossip", "Cleaned up {} stale messages, {} left ({} known)",
 			before - self.messages.len(),
