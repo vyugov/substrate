@@ -437,13 +437,12 @@ where
 impl<B: BlockT> BadgerNode<B, QHB>
 {
   fn push_transaction(
-    &mut self,
-    tx: Vec<u8>,
+    &mut self, tx: Vec<u8>,
   ) -> Result<CpStep<QHB>, badger::sender_queue::Error<badger::queueing_honey_badger::Error>>
   {
-    //info!("BaDGER pushing transaction");
+    info!("BaDGER pushing transaction {:?}",&tx);
     let ret = self.algo.push_transaction(tx, &mut self.main_rng);
-    info!("BaDGER pushed: complete");
+    info!("BaDGER pushed: complete ");
     ret
   }
 }
@@ -617,10 +616,7 @@ pub struct BadgerGossipValidator<Block: BlockT>
 impl<Block: BlockT> BadgerGossipValidator<Block>
 {
   fn send_message_either<N: Network<Block>>(
-    &self,
-    who: PeerId,
-    vdata: Vec<u8>,
-    context_net: Option<&N>,
+    &self, who: PeerId, vdata: Vec<u8>, context_net: Option<&N>,
     context_val: &mut Option<&mut dyn ValidatorContext<Block>>,
   )
   {
@@ -636,9 +632,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
   }
 
   fn flush_message_either<N: Network<Block>>(
-    &self,
-    context_net: Option<&N>,
-    context_val: &mut Option<&mut dyn ValidatorContext<Block>>,
+    &self, context_net: Option<&N>, context_val: &mut Option<&mut dyn ValidatorContext<Block>>,
   )
   {
     let topic = badger_topic::<Block>();
@@ -758,6 +752,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
   pub fn pop_output(&self) -> Option<<QHB as ConsensusProtocol>::Output>
   {
     let mut locked = self.inner.write();
+    info!("OUTPUTS: {:?}",locked.outputs.len());
     locked.outputs.pop()
   }
 
@@ -812,9 +807,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
   }
 
   pub fn do_validate(
-    &self,
-    who: &PeerId,
-    mut data: &[u8],
+    &self, who: &PeerId, mut data: &[u8],
   ) -> (Action<Block::Hash>, Option<GossipMessage>)
   {
     let mut peer_reply = None;
@@ -978,10 +971,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
   }
 
   fn validate(
-    &self,
-    context: &mut dyn ValidatorContext<Block>,
-    who: &PeerId,
-    data: &[u8],
+    &self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, data: &[u8],
   ) -> network_gossip::ValidationResult<Block::Hash>
   {
     let (action, peer_reply) = self.do_validate(who, data);
@@ -1260,8 +1250,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N>
   /// If a voter set state is given it registers previous round votes with the
   /// gossip service.
   pub fn new(
-    service: N,
-    config: crate::Config,
+    service: N, config: crate::Config,
   ) -> (
     Self,
     impl futures03::future::Future<Output = ()> + Send + Unpin,
@@ -1294,8 +1283,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N>
 
   /// Set up the global communication streams. blocks out transaction in. Maybe reverse of grandpa...
   pub fn global_communication(
-    &self,
-    is_voter: bool,
+    &self, is_voter: bool,
   ) -> (
     impl Stream<Item = <QHB as ConsensusProtocol>::Output>,
     impl SendOut,
@@ -1373,9 +1361,7 @@ impl<Block: BlockT, N: Network<Block>> TransactionFeed<Block, N>
 {
   /// Create a new commit output stream.
   pub fn new(
-    network: N,
-    is_voter: bool,
-    gossip_validator: Arc<BadgerGossipValidator<Block>>,
+    network: N, is_voter: bool, gossip_validator: Arc<BadgerGossipValidator<Block>>,
   ) -> Self
   {
     TransactionFeed {

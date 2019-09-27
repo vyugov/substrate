@@ -261,11 +261,14 @@ use support::{
 	}
 };
 use session::{historical::OnSessionEnding, SelectInitialValidators};
-use sr_primitives::Perbill;
-use sr_primitives::weights::SimpleDispatchInfo;
-use sr_primitives::traits::{
-	Convert, Zero, One, StaticLookup, CheckedSub, Saturating, Bounded, SimpleArithmetic,
-	SaturatedConversion,
+use sr_primitives::{
+	Perbill,
+	curve::PiecewiseLinear,
+	weights::SimpleDispatchInfo,
+	traits::{
+		Convert, Zero, One, StaticLookup, CheckedSub, Saturating, Bounded, SimpleArithmetic,
+		SaturatedConversion,
+	}
 };
 use phragmen::{elect, equalize, Support, SupportMap, ExtendedBalance, ACCURACY};
 use sr_staking_primitives::{
@@ -523,6 +526,9 @@ pub trait Trait: system::Trait {
 
 	/// Interface for interacting with a session module.
 	type SessionInterface: self::SessionInterface<Self::AccountId>;
+
+	/// The NPoS reward curve to use.
+	type RewardCurve: Get<&'static PiecewiseLinear<'static>>;
 }
 
 /// Mode of era-forcing.
@@ -1173,6 +1179,7 @@ impl<T: Trait> Module<T> {
 			let total_rewarded_stake = Self::slot_stake() * validator_len;
 
 			let total_payout = inflation::compute_total_payout(
+				&T::RewardCurve::get(),
 				total_rewarded_stake.clone(),
 				T::Currency::total_issuance(),
 				// Duration of era; more than u64::MAX is rewarded as u64::MAX.
@@ -1245,7 +1252,8 @@ impl<T: Trait> Module<T> {
 		);
 
 		if let Some(phragmen_result) = maybe_phragmen_result {
-			let elected_stashes = phragmen_result.winners.iter().map(|s| s.clone()).collect::<Vec<T::AccountId>>();
+			//let elected_stashes = phragmen_result.winners.iter().map(|s| s.clone()).collect::<Vec<T::AccountId>>();
+			let elected_stashes = phragmen_result.winners.iter().map(|(s, _)| s.clone()).collect::<Vec<T::AccountId>>();
 			let mut assignments = phragmen_result.assignments;
 
 			// helper closure.

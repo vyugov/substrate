@@ -19,7 +19,7 @@
 //! Service and ServiceFactory implementation. Specialized wrapper over substrate service.
 
 use badger::{self};
-use badger::{badger_import_queue, run_honey_badger, BadgerImportQueue, Config as BadgerConfig};
+use badger::{badger_import_queue, run_honey_badger,  Config as BadgerConfig};
 use badger_primitives::SignatureWrap;
 use badger_primitives::{
   PublicKeySetWrap, PublicKeyShareWrap, PublicKeyWrap, SecretKeyShareWrap, SecretKeyWrap,
@@ -77,59 +77,11 @@ impl Default for NodeConfig
 /// Use this macro if you don't actually need the full service, but just the builder in order to
 /// be able to perform chain operations.
 ///
-macro_rules! new_full_start {
-	($config:expr) => {{
-		type RpcExtension = jsonrpc_core::IoHandler<substrate_rpc::Metadata>;
-		let mut import_setup = None;
-		let inherent_data_providers = inherents::InherentDataProviders::new();
-		let mut tasks_to_spawn = Vec::new();
-
-		let builder = substrate_service::ServiceBuilder::new_full::<
-			node_primitives::Block, node_runtime::RuntimeApi, node_executor::Executor
-		>($config)?
-			.with_select_chain(|_config, backend| {
-				Ok(client::LongestChain::new(backend.clone()))
-			})?
-			.with_transaction_pool(|config, client|
-				Ok(transaction_pool::txpool::Pool::new(config, transaction_pool::ChainApi::new(client)))
-			)?
-			.with_import_queue(|_config, client, mut select_chain, transaction_pool| {
-				let select_chain = select_chain.take()
-					.ok_or_else(|| substrate_service::Error::SelectChainRequired)?;
-				let (block_import, link_half) =
-					grandpa::block_import::<_, _, _, node_runtime::RuntimeApi, _, _>(
-						client.clone(), client.clone(), select_chain
-					)?;
-				let justification_import = block_import.clone();
-
-				let (import_queue, babe_link, babe_block_import, pruning_task) = babe::import_queue(
-					babe::Config::get_or_compute(&*client)?,
-					block_import,
-					Some(Box::new(justification_import)),
-					None,
-					client.clone(),
-					client,
-					inherent_data_providers.clone(),
-					Some(transaction_pool)
-				)?;
-
-				import_setup = Some((babe_block_import.clone(), link_half, babe_link));
-				tasks_to_spawn.push(Box::new(pruning_task));
-
-				Ok(import_queue)
-			})?
-			.with_rpc_extensions(|client, pool| -> RpcExtension {
-				node_rpc::create(client, pool)
-			})?;
-
-		(builder, import_setup, inherent_data_providers, tasks_to_spawn)
-	}}
-}
 
 
 macro_rules! new_full_start {
   ($config:expr) => {{
-    let inherent_data_providers = inherents::InherentDataProviders::new();
+    let  inherent_data_providers = inherents::InherentDataProviders::new();
     type RpcExtension = jsonrpc_core::IoHandler<substrate_rpc::Metadata>;
     let builder = substrate_service::ServiceBuilder::new_full::<
       hb_node_primitives::Block,
@@ -156,7 +108,7 @@ macro_rules! new_full_start {
         None,
         None,
         client,
-        InherentDataProviders::new(),
+        inherent_data_providers.clone(),
       )
       .map_err(Into::into)
     })?
@@ -209,10 +161,10 @@ macro_rules! new_full {
       t_pool,
       BadgerConfig::from_json_file_with_name(nconf, &node_name).unwrap(),
       service.network(),
-      service.on_exit().clone().compat().map(|_| ()),
+      service.on_exit().clone().compat().map(|_| {info!("OnExit"); () } ),
       Arc::new(Mutex::new(service.client().clone())), //block_import?
       //service.config().custom.inherent_data_providers.clone(),
-      InherentDataProviders::new(),
+      inherent_data_providers.clone(),
       select_chain,
 	  service.keystore(),
     )?;
@@ -225,7 +177,8 @@ macro_rules! new_full {
 				service.client(),
 				service.network()
 			)?;
-			service.spawn_task(Box::new(key_gen.unit_error().boxed().compat().map(|_|  () )));
+      let svc=    futures03::future::select(service.on_exit().clone().compat(),key_gen);
+			service.spawn_task(Box::new(svc.unit_error().boxed().compat().map(|_|  () )) );
 
     Ok((service, inherent_data_providers))
   }};

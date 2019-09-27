@@ -96,6 +96,11 @@ use codec::Encode;
 use codec::Decode;
 #[cfg(feature = "std")]
 use inherents::ProvideInherentData;
+
+#[cfg(feature = "std")]
+use log::info;
+
+
 use support::{StorageValue, Parameter, decl_storage, decl_module};
 use support::traits::{Time, Get};
 use sr_primitives::traits::{
@@ -166,7 +171,7 @@ impl ProvideInherentData for InherentDataProvider {
 
 	fn provide_inherent_data(&self, inherent_data: &mut InherentData) -> Result<(), RuntimeString> {
 		use std::time::SystemTime;
-
+        info!("Providing");
 		let now = SystemTime::now();
 		now.duration_since(SystemTime::UNIX_EPOCH)
 			.map_err(|_| {

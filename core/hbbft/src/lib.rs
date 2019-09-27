@@ -98,12 +98,9 @@ use consensus_common::block_import::BlockImport;
 use parity_codec::{Decode, Encode};
 
 use consensus_common::import_queue::{
-  BasicQueue, BoxBlockImport, BoxFinalityProofImport, BoxJustificationImport, Verifier,
+  BasicQueue, BoxBlockImport, BoxFinalityProofImport, BoxJustificationImport, CacheKeyId, Verifier,
 };
-use consensus_common::{
-  self, well_known_cache_keys::Id as CacheKeyId, BlockImportParams, BlockOrigin,
-  ForkChoiceStrategy, SelectChain,
-}; //Environment, Proposer,Error as ConsensusError,self,
+use consensus_common::{self, BlockImportParams, BlockOrigin, ForkChoiceStrategy, SelectChain}; //Environment, Proposer,Error as ConsensusError,self,
 
 use client::{
   //error::Result as CResult,
@@ -228,11 +225,22 @@ where
 
 /// Register the aura inherent data provider, if not registered already.
 fn register_badger_inherent_data_provider(
-  _inherent_data_providers: &InherentDataProviders,
+  inherent_data_providers: &InherentDataProviders,
   _slot_duration: u64,
 ) -> Result<(), consensus_common::Error>
 {
-  Ok(())
+  if !inherent_data_providers.has_provider(&srml_timestamp::INHERENT_IDENTIFIER)
+  {
+    inherent_data_providers
+      .register_provider(srml_timestamp::InherentDataProvider)
+      .map_err(Into::into)
+      .map_err(consensus_common::Error::InherentData)
+  }
+  else
+  {
+    Ok(())
+  }
+  //Ok(())
   /*	if !inherent_data_providers.has_provider(&hbbft::INHERENT_IDENTIFIER) {
       inherent_data_providers
           .register_provider(srml_aura::InherentDataProvider::new(slot_duration))
@@ -953,6 +961,7 @@ where
   let cblock_import = block_import.clone();
   let ping_sel = selch.clone();
   let receiver = blk_out.for_each(move |mut batch| {
+	  info!("[[[[[[[");
     let inherent_digests = generic::Digest { logs: vec![] };
     info!(
       "Processing batch with epoch {:?} of {:?} transactions into blocks",
@@ -984,10 +993,8 @@ where
     // proceed with transactions
     let mut is_first = true;
     //let mut skipped = 0;
-    info!(
-      "Attempting to push transactions from the batch. {}",
-      batch.len()
-    );
+    info!("Attempting to push transactions from the batch. {}", batch.len());
+
     for pending in batch.iter()
     {
       let data: Result<<Block as BlockT>::Extrinsic, _> = Decode::decode(&mut pending.as_slice());
@@ -1003,6 +1010,7 @@ where
       };
       //a.data.encode()
       info!("[{:?}] Pushing to the block.", pending);
+	  info!("[{:?}] Data ", &data);
       match client::block_builder::BlockBuilder::push(&mut block_builder, data.clone())
       {
         Ok(()) =>
@@ -1206,6 +1214,7 @@ where
         }
       }
     }
+	  info!("[[[[[[[--]]]]]]]");
 
     future::ready(())
   });
@@ -1219,7 +1228,7 @@ where
   let with_start = network_startup.then(move |()| futures03::future::join(sender, receiver));
   let ping_client = client.clone();
   // Delay::new(Duration::from_secs(1)).then(|_| {
-  let ping = Interval::new(Duration::from_millis(500)).for_each(move |_| {
+  let ping = Interval::new(Duration::from_millis(11500)).for_each(move |_| {
     //put inherents here for now
     let mut chain_head = match ping_sel.best_chain()
     {
@@ -1255,6 +1264,7 @@ where
       info!("This many INHERS {:?}", res.len());
       for extrinsic in res
       {
+        info!("INHER {:?}", &extrinsic);
         match lock.send_out(vec![extrinsic.encode().into_iter().collect()])
         {
           Ok(_) =>
@@ -1271,6 +1281,7 @@ where
     {
       info!("Inherent panic {:?}", inh);
     }
+    info!("Ping done");
     future::ready(())
   });
 
@@ -1288,4 +1299,38 @@ where
     )
     .then(|_| future::ready(())),
   )
+  /*let ping_lesser = Interval::new(Duration::from_millis(1000)).for_each(move |_| {
+    info!("ping");
+        let mut chain_head = match ping_sel.best_chain()
+    {
+      Ok(x) => x,
+      Err(e) =>
+      {
+        warn!(target: "formation", "Unable to author block, no best block header: {:?}", e);
+        return future::ready(());
+      }
+    };
+  let mut parent_hash = chain_head.hash();
+    let mut pnumber = *chain_head.number();
+    let mut parent_id = BlockId::hash(parent_hash);
+
+    let inherent_data = match inherent_data_providers.create_inherent_data()
+    {
+      Ok(id) => id,
+      Err(err) => return future::ready(()), //future::err(err),
+    };
+  let inh = ping_client.runtime_api().inherent_extrinsics_with_context(
+      &parent_id,
+      ExecutionContext::BlockConstruction,
+      inherent_data,
+    );
+      info!("ping end");
+    future::ready(())
+    });
+
+  let ready_on_exit= on_exit.then(|_| {
+        info!("READY");
+        future::ready(())
+      });
+  Ok(  futures03::future::select( ping_lesser,ready_on_exit)  .then(|_| future::ready(())))*/
 }

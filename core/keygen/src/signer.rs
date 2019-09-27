@@ -347,7 +347,11 @@ where
 
 					let commits = state.commits.values().cloned().collect::<Vec<_>>();
 					let decommits = state.decommits.values().cloned().collect::<Vec<_>>();
+					let us:usize=params.share_count.into();
+                     if decommits.len()==us
+					 {
 
+					 
 					let (vss, secret_shares, index) = key
 						.phase1_verify_com_phase3_verify_correct_key_phase2_distribute(
 							&params,
@@ -372,9 +376,11 @@ where
 					for (i, &ss) in secret_shares.iter().enumerate() {
 						if i != index {
 							let ss_msg = KeyGenMessage::SecretShare(index as PeerIndex, ss);
+							info!("Index: {:?}",i);
 							let peer = validator.get_peer_id_by_index(i).unwrap();
 							self.global_out.push((Message::KeyGen(ss_msg), Some(peer)));
 						}
+					}
 					}
 				}
 			}

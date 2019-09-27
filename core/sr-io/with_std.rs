@@ -15,8 +15,11 @@
 // along with Substrate.  If not, see <http://www.gnu.org/licenses/>.
 
 use primitives::{
-	blake2_128, blake2_256, twox_128, twox_256, twox_64, ed25519, Blake2Hasher, sr25519, Pair,hbbft_thresh,
-	traits::Externalities, child_storage_key::ChildStorageKey,hexdisplay::HexDisplay, offchain,
+	//blake2_128, blake2_256, twox_128, twox_256, twox_64, ed25519, Blake2Hasher, sr25519, Pair,hbbft_thresh,
+	//traits::Externalities, child_storage_key::ChildStorageKey,hexdisplay::HexDisplay, offchain,
+	blake2_128, blake2_256, twox_128, twox_256, twox_64, ed25519, Blake2Hasher, sr25519, Pair, H256,
+	traits::Externalities, child_storage_key::ChildStorageKey, hexdisplay::HexDisplay, offchain,
+	Hasher,
 };
 // Switch to this after PoC-3
 // pub use primitives::BlakeHasher;

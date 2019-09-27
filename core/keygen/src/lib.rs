@@ -432,6 +432,7 @@ where
 	return Ok(key_gen_work);
 	//futures03::future::select(key_gen_work,streamer);
 	#[cfg(feature = "upgraded")]
+	//Ok(key_gen_work)
 	Ok(futures03::future::select(key_gen_work,streamer).then(|_| futures03::future::ready( Ok(())) ))//key_gen_work)
 }
 
