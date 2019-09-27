@@ -115,7 +115,7 @@ pub trait Network<Block: BlockT>: Clone + Send + 'static
   fn report(&self, who: network::PeerId, cost_benefit: i32);
 
   /// Inform peers that a block with given hash should be downloaded.
-  fn announce(&self, block: Block::Hash);
+  fn announce(&self, block: Block::Hash,associated_data: Vec<u8>);
 
   fn local_id(&self) -> PeerId;
 }
@@ -431,7 +431,7 @@ where
   /// Outgoing messages to other nodes.
   out_queue: VecDeque<SourcedMessage<D>>,
   /// The values this node has output so far, with timestamps.
-  outputs: Vec<D::Output>,
+  outputs: VecDeque<D::Output>,
   phantom: PhantomData<B>,
 }
 impl<B: BlockT> BadgerNode<B, QHB>
@@ -641,7 +641,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
     {
       let mut locked = self.inner.write();
       sid = locked.id.clone();
-      info!("BaDGER!! Flushing {} messages_net", &locked.out_queue.len());
+      debug!("BaDGER!! Flushing {} messages_net", &locked.out_queue.len());
       drain = locked.out_queue.drain(..).collect();
     }
 
@@ -659,7 +659,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
         {
           for msg in v.drain(..)
           {
-            info!("BaDGER!! RESending to {:?}", &k);
+            debug!("BaDGER!! RESending to {:?}", &k);
             self.send_message_either(k.0.clone(), msg, context_net, context_val);
           }
         }
@@ -668,7 +668,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
     for msg in drain
     {
       let uuid = OsRng::new().unwrap().gen::<u64>();
-      info!("Sending_ with uid: {} {}", &uuid, HexFmt(&msg.message));
+      debug!("Sending_ with uid: {} {}", &uuid, HexFmt(&msg.message));
       let vdata = GossipMessage::BadgerData(BadgeredMessage {
         uid: uuid,
         originator: PeerIdW { 0: sid.clone() },
@@ -684,7 +684,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
           let av_list = inner.peers.connected_peer_list();
           for to_id in node_set.iter()
           {
-            info!("BaDGER!! Id_net {}", &to_id.0);
+            debug!("BaDGER!! Id_net {}", &to_id.0);
 
             if (av_list.contains(&to_id.0))
             {
@@ -700,7 +700,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
         }
         LocalTarget::AllExcept(exclude) =>
         {
-          info!("BaDGER!! AllExcept  {}", exclude.len());
+          debug!("BaDGER!! AllExcept  {}", exclude.len());
           let mut locked = self.inner.write();
           let mut vallist: Vec<_> = locked
             .config
@@ -736,7 +736,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
         }
       }
     }
-    info!("BaDGER!! Exit flush");
+    debug!("BaDGER!! Exit flush");
   }
   /// Create a new gossip-validator.
   pub fn new(config: crate::Config, self_id: PeerId) -> BadgerGossipValidator<Block>
@@ -753,7 +753,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
   {
     let mut locked = self.inner.write();
     info!("OUTPUTS: {:?}",locked.outputs.len());
-    locked.outputs.pop()
+    locked.outputs.pop_front()
   }
 
   pub fn is_validator(&self) -> bool
@@ -878,7 +878,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
           let mut locked = self.inner.write();
           if locked.is_authority(&badger_msg.originator.0)
           {
-            info!("BadGER: am authority");
+            debug!("BadGER: am authority");
             if let Ok(msg) =
               bincode::deserialize::<<QHB as ConsensusProtocol>::Message>(&badger_msg.data)
             {
@@ -887,7 +887,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
                 Ok(_) =>
                 {
                   //send is handled separately. trigger propose? or leave it for stream
-                  info!("BadGER: decoded gossip message");
+                  debug!("BadGER: decoded gossip message");
                   Action::ProcessAndDiscard()
                 }
                 Err(e) =>
@@ -1110,7 +1110,7 @@ where
 
   fn report(&self, who: network::PeerId, cost_benefit: i32) {}
 
-  fn announce(&self, block: B::Hash) {}
+  fn announce(&self, block: B::Hash,data:Vec<u8>) {}
 }
 
 impl<B, S, H> Network<B> for Arc<NetworkService<B, S, H>>
@@ -1186,9 +1186,10 @@ where
     self.report_peer(who, cost_benefit)
   }
 
-  fn announce(&self, block: B::Hash)
+  fn announce(&self, block: B::Hash,associated_data: Vec<u8>)
   {
-    self.announce_block(block)
+    info!("Announcing block!");
+    self.announce_block(block,associated_data)
   }
 }
 
