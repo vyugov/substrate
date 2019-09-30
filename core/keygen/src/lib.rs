@@ -76,6 +76,7 @@ impl NodeConfig {
 
 #[derive(Debug)]
 pub struct KeyGenState {
+	pub rebuild: bool,
 	pub complete: bool,
 	pub local_key: Option<Keys>,
 	pub commits: BTreeMap<PeerIndex, KeyGenCommit>,
@@ -99,6 +100,7 @@ impl KeyGenState {
 impl Default for KeyGenState {
 	fn default() -> Self {
 		Self {
+			rebuild: false,
 			complete: false,
 			local_key: None,
 			commits: BTreeMap::new(),
@@ -141,6 +143,7 @@ pub(crate) struct Environment<B, E, Block: BlockT, N: Network<Block>, RA> {
 struct KeyGenWork<B, E, Block: BlockT, N: Network<Block>, RA> {
 	key_gen: Box<dyn Future<Item = (), Error = Error> + Send + 'static>,
 	env: Arc<Environment<B, E, Block, N, RA>>,
+	check_pending: Interval,
 }
 
 impl<B, E, Block, N, RA> KeyGenWork<B, E, Block, N, RA>
@@ -166,23 +169,37 @@ where
 			bridge,
 			state: Arc::new(RwLock::new(state)),
 		});
+
+		let now = Instant::now();
+		let dur = Duration::from_secs(15);
+		let check_pending = Interval::new(now + dur, dur);
+
 		let mut work = Self {
 			key_gen: Box::new(futures::empty()) as Box<_>,
 			env,
+			check_pending,
 		};
 		work.rebuild();
 		work
 	}
 
 	fn rebuild(&mut self) {
-		let should_rebuild = true;
-		if should_rebuild {
-			let (incoming, outgoing) = global_comm(&self.env.bridge);
-			let signer = Signer::new(self.env.clone(), incoming, outgoing);
-			self.key_gen = Box::new(signer);
-		} else {
-			self.key_gen = Box::new(futures::empty());
-		}
+		// no need to rebuild when complete or canceled
+		let (incoming, outgoing) = global_comm(&self.env.bridge);
+		let signer = Signer::new(self.env.clone(), incoming, outgoing);
+		self.key_gen = Box::new(signer);
+	}
+
+	fn possible_stuck(&self) -> bool {
+		let state = self.env.state.read();
+		let (commits_len, decom_len, vss_len, ss_len, proof_len) = (
+			state.commits.len(),
+			state.decommits.len(),
+			state.vsss.len(),
+			state.secret_shares.len(),
+			state.proofs.len(),
+		);
+		false
 	}
 }
 
@@ -200,16 +217,20 @@ where
 	type Error = Error;
 
 	fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-		// println!("validator {:?}",  )
+		let mut is_ready = false;
+		while let Async::Ready(Some(_)) = self.check_pending.poll().map_err(|_| Error::Periodic)? {
+			is_ready = true;
+		}
+
 		println!("POLLLLLLLLLLLLLLLLLLLL");
 		match self.key_gen.poll() {
 			Ok(Async::NotReady) => {
-				let (is_generating, commits_len) = {
+				let (is_complete, is_canceled, commits_len, need_rebuild) = {
 					let state = self.env.state.read();
 					let validator = self.env.bridge.validator.inner.read();
 
 					println!(
-						"INDEX {:?} state: commits {:?} decommits {:?} vss {:?} ss {:?}  proof {:?} has key {:?} complete {:?}",
+						"INDEX {:?} state: commits {:?} decommits {:?} vss {:?} ss {:?}  proof {:?} has key {:?} complete {:?} need rebuild {:?}",
 						validator.get_local_index(),
 						state.commits.len(),
 						state.decommits.len(),
@@ -217,13 +238,17 @@ where
 						state.secret_shares.len(),
 						state.proofs.len(),
 						state.local_key.is_some(),
-						state.complete
+						state.complete,
+						state.rebuild
 					);
-					(validator.is_local_generating(), state.commits.len())
+					(
+						validator.is_local_complete(),
+						validator.is_local_canceled(),
+						state.commits.len(),
+						state.rebuild,
+					)
 				};
-				let mut rng = rand::thread_rng();
-				let b = rng.gen_bool(0.1);
-				if b && is_generating && commits_len != 5 {
+				if !is_complete && !is_canceled && (need_rebuild || is_ready) {
 					println!("rebuilt");
 					self.rebuild();
 					futures::task::current().notify();
@@ -274,7 +299,7 @@ where
 	let config = NodeConfig {
 		name: None,
 		threshold: 1,
-		players: 5,
+		players: 3,
 		keystore: Some(keystore),
 	};
 

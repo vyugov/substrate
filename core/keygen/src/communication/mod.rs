@@ -166,7 +166,7 @@ where
 	fn broadcast(&self, msg: GossipMessage) {
 		let raw_msg = msg.encode();
 		let inner = self.validator.inner.read();
-		let peers = inner.get_peers();
+		let peers = inner.get_other_peers();
 		self.network.send_message(peers, raw_msg.clone());
 	}
 
@@ -233,8 +233,10 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 				let decoded = GossipMessage::decode(&mut &notification.message[..]);
 				if let Err(e) = decoded {
 					trace!("notification error {:?}", e);
+					println!("NOTIFICATION ERROR");
 					return None;
 				}
+				println!("sender in global {:?}", notification.sender);
 				Some((decoded.unwrap(), notification.sender))
 			})
 			.filter_map(move |(msg, sender)| Some((msg, sender)))

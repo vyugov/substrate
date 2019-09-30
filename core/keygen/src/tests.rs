@@ -90,8 +90,8 @@ fn test_1_of_3_key_gen() {
 		Ed25519Keyring::Alice,
 		Ed25519Keyring::Bob,
 		Ed25519Keyring::Charlie,
-		Ed25519Keyring::Dave,
-		Ed25519Keyring::Eve,
+		// Ed25519Keyring::Dave,
+		// Ed25519Keyring::Eve,
 	];
 
 	let peers_len = peers.len();
@@ -133,7 +133,7 @@ fn test_1_of_3_key_gen() {
 	let sync = futures::future::poll_fn(|| {
 		// make sure all peers are connected first
 		net.lock().poll();
-		if net.lock().peer(0).num_peers() != peers_len - 1 {
+		if net.lock().peer(0).num_peers() < peers_len - 1 {
 			Ok(Async::NotReady)
 		} else {
 			Ok(Async::Ready(()))

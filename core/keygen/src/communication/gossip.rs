@@ -50,6 +50,7 @@ impl Inner {
 			next_rebroadcast: Instant::now() + REBROADCAST_AFTER,
 		}
 	}
+
 	fn add_peer(&mut self, who: PeerId) {
 		self.peers.add(who);
 	}
@@ -58,7 +59,11 @@ impl Inner {
 		self.peers.del(who);
 	}
 
-	pub fn get_peers(&self) -> Vec<PeerId> {
+	pub fn get_peers_len(&self) -> usize {
+		self.peers.len()
+	}
+
+	pub fn get_other_peers(&self) -> Vec<PeerId> {
 		let local_id = &self.local_peer_id;
 		self.peers
 			.keys()
@@ -151,6 +156,10 @@ impl Inner {
 	pub fn set_peer_state(&mut self, who: &PeerId, state: PeerState) {
 		self.peers.set_state(who, state);
 	}
+
+	pub fn get_peer_state(&self, who: &PeerId) -> Option<PeerState> {
+		self.peers.get_state(who)
+	}
 }
 
 pub struct GossipValidator<Block: BlockT> {
@@ -168,11 +177,9 @@ impl<Block: BlockT> GossipValidator<Block> {
 
 	pub fn broadcast(&self, context: &mut dyn ValidatorContext<Block>, msg: Vec<u8>) {
 		let inner = self.inner.read();
-		let local_peer_id = &inner.local_peer_id;
-		for (peer_id, _) in inner.peers.iter() {
-			if peer_id != local_peer_id {
-				context.send_message(peer_id, msg.clone())
-			}
+
+		for peer_id in inner.get_other_peers() {
+			context.send_message(&peer_id, msg.clone())
 		}
 	}
 }
@@ -183,26 +190,29 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 			return;
 		}
 
-		let (players, all_peers, from_index, all_peers_hash) = {
-			let mut inner = self.inner.write();
-			inner.add_peer(who.clone());
-			inner.set_local_awaiting_peers();
-			(
-				inner.config.players as usize,
-				inner.peers.len(),
-				inner.peers.get_position(&inner.local_peer_id).unwrap() as u16,
-				inner.get_peers_hash(),
-			)
-		};
+		let mut inner = self.inner.write();
 
-		if players == all_peers {
+		let players = inner.config.players as usize;
+		let all_peers_len = inner.get_peers_len();
+
+		if all_peers_len >= players {
+			// don't take > n peers
+			return;
+		}
+
+		inner.add_peer(who.clone());
+		inner.set_local_awaiting_peers();
+
+		let our_index = inner.get_local_index() as u16;
+		let all_peers_hash = inner.get_peers_hash();
+		drop(inner);
+
+		if all_peers_len == players - 1 {
 			// broadcast message to check all peers are the same
-			// may need to handle ">" case
-
-			println!("new peer from {:?} hash {:?}", from_index, all_peers_hash);
+			println!("new peer of {:?} hash {:?}", our_index, all_peers_hash);
 
 			let msg = GossipMessage::ConfirmPeers(
-				ConfirmPeersMessage::Confirming(from_index),
+				ConfirmPeersMessage::Confirming(our_index),
 				all_peers_hash,
 			);
 			self.broadcast(context, msg.encode());
@@ -214,7 +224,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 		inner.del_peer(who);
 
 		let players = inner.config.players as usize;
-		if inner.peers.len() < players {
+		if inner.get_peers_len() < players {
 			inner.set_local_canceled();
 		}
 	}
@@ -286,22 +296,22 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 			if let Ok(gossip_msg) = gossip_msg {
 				println!("In `message_expired` of {:?}", inner.get_local_index());
 				// println!("msg: {:?}", gossip_msg);
-				// let gmsg = gossip_msg.clone();
-				// match gmsg {
-				// 	GossipMessage::ConfirmPeers(cpm, all_peers_hash) => match cpm {
-				// 		ConfirmPeersMessage::Confirming(from) => {
-				// 			println!("confirming from {:?}", from);
-				// 		}
-				// 		_ => {}
-				// 	},
-				// 	GossipMessage::KeyGen(kgm, all_peers_hash) => match kgm {
-				// 		KeyGenMessage::CommitAndDecommit(from, _, _) => {
-				// 			println!("com decom from {:?}", from);
-				// 		}
-				// 		_ => {}
-				// 	},
-				// 	_ => {}
-				// }
+				let gmsg = gossip_msg.clone();
+				match gmsg {
+					GossipMessage::ConfirmPeers(cpm, all_peers_hash) => match cpm {
+						ConfirmPeersMessage::Confirming(from) => {
+							println!("confirming from {:?}", from);
+						}
+						_ => {}
+					},
+					GossipMessage::KeyGen(kgm, all_peers_hash) => match kgm {
+						KeyGenMessage::CommitAndDecommit(from, _, _) => {
+							println!("com decom from {:?}", from);
+						}
+						_ => {}
+					},
+					_ => {}
+				}
 				let our_hash = inner.get_peers_hash();
 				let is_complete = inner.is_local_complete();
 				let is_canceled = inner.is_local_canceled();
@@ -310,7 +320,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 				match gossip_msg {
 					GossipMessage::ConfirmPeers(_, all_peers_hash) => {
 						let is_awaiting_peers = inner.is_local_awaiting_peers();
-						return !is_awaiting_peers || our_hash != all_peers_hash;
+						return !is_awaiting_peers || is_canceled || our_hash != all_peers_hash;
 					}
 					GossipMessage::KeyGen(_, all_peers_hash) => {
 						return is_complete || is_canceled || our_hash != all_peers_hash;

@@ -13,7 +13,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use network::{config::Roles, PeerId};
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum PeerState {
 	AwaitingPeers,
 	Generating,
@@ -77,6 +77,11 @@ impl Peers {
 
 	pub fn keys(&self) -> impl Iterator<Item = &PeerId> {
 		self.map.keys()
+	}
+
+	pub fn get_state(&self, who: &PeerId) -> Option<PeerState> {
+		let peer = self.map.get(who);
+		peer.map(|p| p.state)
 	}
 
 	pub fn set_state(&mut self, who: &PeerId, state: PeerState) {
