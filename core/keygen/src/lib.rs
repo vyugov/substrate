@@ -64,6 +64,7 @@ use shared_state::{load_persistent, set_signers, SharedState};
 use signer::Signer;
 
 use mpe_primitives::MP_ECDSA_ENGINE_ID;
+use mpe_primitives::ConsensusLog;
 
 
 type Count = u16;
@@ -371,8 +372,26 @@ where
 
 //use futures::{Future, Stream};
 
+fn transform_u64_to_array_of_u8(x:u64) -> [u8;8] {
+	let o1 : u8 = ((x >> 56) & 0xff) as u8;
+    let o2 : u8 = ((x >> 48) & 0xff) as u8;
+    let o3 : u8 = ((x >> 40) & 0xff) as u8;
+    let o4 : u8 = ((x >> 32) & 0xff) as u8;
+    
+	let b1 : u8 = ((x >> 24) & 0xff) as u8;
+    let b2 : u8 = ((x >> 16) & 0xff) as u8;
+    let b3 : u8 = ((x >> 8) & 0xff) as u8;
+    let b4 : u8 = (x & 0xff) as u8;
+    return [o1,o2,o3,o4,b1, b2, b3, b4]
+}
+
+
 use futures::stream::Stream as OldStream;
 use futures03::{StreamExt as _, TryStreamExt as _};
+ use primitives::traits::BareCryptoStore;
+use mpe_primitives::ConsensusLog::RequestForKeygen;
+use primitives::crypto::key_types::ECDSA_SHARED;
+
 
 pub fn run_key_gen<B, E, Block, N, RA>(
 	local_peer_id: PeerId,
@@ -395,7 +414,7 @@ where
 		players: 4,
 	};
 
-	let keystore = keystore.read();
+	//let keystore = keystore.read();
 
 	// let persistent_data: SharedState = load_persistent(&**client.backend()).unwrap();
 	// println!("{:?}", persistent_data);
@@ -411,17 +430,41 @@ where
 	let bridge = NetworkBridge::new(network, config.clone(), local_peer_id);
     let streamer=client.clone().import_notification_stream().for_each(move |n| {
 		info!(target: "keygen", "HEADER {:?}, looking for consensus message", &n.header);
+		// spawn any futures that were created in the previous setup steps
+    /*	for task in tasks_to_spawn.drain(..) {
+      service.spawn_task(
+        task.select(service.on_exit())
+          .map(|_| ())
+          .map_err(|_| ())
+      );
+    }*/
+
         for log in n.header.digest().logs() 
 		{
 		 info!(target: "keygen", "Checking log {:?}, looking for consensus message", log);
 		 match log.try_as_raw(OpaqueDigestItemId::Consensus(&MP_ECDSA_ENGINE_ID))
 		 {
-			Some(data) => info!("Got log id! {:?}",data),
+			Some(data) => { 
+				info!("Got log id! {:?}",data);
+		       let log_inner = log.try_to::<ConsensusLog>(OpaqueDigestItemId::Consensus(&MP_ECDSA_ENGINE_ID));
+                info!("Got log inner! {:?}",log_inner);
+				if let Some(log_in)=log_inner 
+				{
+		       match log_in
+			   {
+				   RequestForKeygen((id,data)) =>
+				   { 
+					   keystore.read().initiate_request(&id.to_be_bytes(),ECDSA_SHARED);
+				   },
+				   _ =>{}
+			   }
+				}
+			 },
 			None => {}
 	     }
-		
+		//..ECDSA_SHARED KeyTypeId
 	    }
-		info!(target: "substrate", "Imported #{} ({})", n.header.number(), n.hash);
+		info!(target: "substrate-log", "Imported with log called  #{} ({})", n.header.number(), n.hash);
 		futures03::future::ready( ())
 //		Ok(())
 	});
@@ -432,7 +475,6 @@ where
 	return Ok(key_gen_work);
 	//futures03::future::select(key_gen_work,streamer);
 	#[cfg(feature = "upgraded")]
-	//Ok(key_gen_work)
 	Ok(futures03::future::select(key_gen_work,streamer).then(|_| futures03::future::ready( Ok(())) ))//key_gen_work)
 }
 

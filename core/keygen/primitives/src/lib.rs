@@ -27,15 +27,15 @@ pub enum ConsensusLog {
 
 	///  Request for a new key to be generated, with provided requestid
 	#[codec(index = "1")]
-	RequestForKeygen(Vec<u8>),
+	RequestForKeygen( (u64,Vec<u8>)),
 
 }
 
 impl ConsensusLog  {
 	/// Try to cast the log entry as a contained signal.
-	pub fn try_into_vec(self) -> Option<Vec<u8>> {
+	pub fn try_into_vec(self) -> Option< (u64,Vec<u8>) > {
 		match self {
-			ConsensusLog::RequestForKeygen(change) => Some(change),
+			ConsensusLog::RequestForKeygen( ( id,change) ) => Some((id,change)),
 			_ => None,
 		}
 	}

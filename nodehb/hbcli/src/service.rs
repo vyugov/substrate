@@ -22,18 +22,18 @@ use badger::{self};
 use badger::{badger_import_queue, run_honey_badger,  Config as BadgerConfig};
 use badger_primitives::SignatureWrap;
 use badger_primitives::{
-  PublicKeySetWrap, PublicKeyShareWrap, PublicKeyWrap, SecretKeyShareWrap, SecretKeyWrap,
+  PublicKeyWrap,//PublicKeySetWrap, PublicKeyShareWrap, , SecretKeyShareWrap, SecretKeyWrap,
 };
-use client::{self, LongestChain};
-use futures::prelude::*;
-use futures03::compat;
+use client::{self, };//LongestChain};
+//use futures::prelude::*;
+//use futures03::compat;
 use futures03::compat::Future01CompatExt;
 use futures03::future::FutureExt;
 use futures03::future::TryFutureExt;
 use hb_node_executor;
 use hb_node_primitives::Block;
-use hb_node_runtime::{GenesisConfig, RuntimeApi};
-use primitives::Pair;
+use hb_node_runtime::{GenesisConfig, };//RuntimeApi};
+//use primitives::Pair;
 use std::path::PathBuf;
 use keygen::{self};
 use std::sync::Arc;
@@ -98,7 +98,7 @@ macro_rules! new_full_start {
         transaction_pool::ChainApi::new(client),
       ))
     })?
-    .with_import_queue(|_config, client,  select_chain, _transaction_pool| {
+    .with_import_queue(|_config, client,  _select_chain, _transaction_pool| {
       #[allow(deprecated)]
      // let fprb = Box::new(DummyFinalityProofRequestBuilder::default()) as Box<_>;
       let block_import = client.clone();

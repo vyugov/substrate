@@ -9,7 +9,7 @@ use client::{
 	backend::Backend, blockchain::HeaderBackend, error::Error as ClientError, error::Result,
 	BlockchainEvents, CallExecutor, Client,
 };
-use codec::{Decode, Encode};
+//use codec::{Decode, Encode};
 use consensus_common::SelectChain;
 
 #[cfg(feature = "upgraded")]

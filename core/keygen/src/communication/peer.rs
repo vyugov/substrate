@@ -5,7 +5,7 @@ use std::hash::{Hash, Hasher};
 use std::iter::Iterator;
 use std::str::FromStr;
 
-use codec::{Decode, Encode, Error as CodecError, Input};
+//use codec::{Decode, Encode, Error as CodecError, Input};
 use log::{debug, error, trace, warn};
 use multihash::Multihash as PkHash;
 use serde::ser::SerializeStruct;

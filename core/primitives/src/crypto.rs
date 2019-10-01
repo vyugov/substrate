@@ -794,6 +794,8 @@ pub mod key_types {
 	pub const HB_NODE: KeyTypeId = KeyTypeId(*b"hbnd");
 	/// Key type for Honey Badger partial key (validator), public key share from the set+private share. Have to save set+node index? 
 	pub const HB_SHARED: KeyTypeId = KeyTypeId(*b"hbvl");
+	/// Key type for Shared ECDSA
+	pub const ECDSA_SHARED: KeyTypeId = KeyTypeId(*b"ecsh");
 
 	/// A key type ID useful for tests.
 	#[cfg(feature = "std")]

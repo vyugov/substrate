@@ -264,7 +264,8 @@ impl Peers
     };
     //	self.inner.remove(who);
     info!(
-      "Peer disconnected! now {:?} peers known about",
+      "Peer disconnected {:?} ! now {:?} peers known about",
+      who,
       self.inner.len()
     );
   }

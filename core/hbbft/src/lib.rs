@@ -781,7 +781,7 @@ where
 /// Parameters used to run Honeyed Badger.
 pub struct BadgerStartParams<Block: BlockT<Hash = H256>, N: Network<Block>, X>
 {
-  /// Configuration for the GRANDPA service.
+  /// Configuration for the Badger service.
   pub config: Config,
   /// A link to the block import worker.
   //pub link: LinkHalf<B, E, Block, RA, SC>,

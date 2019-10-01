@@ -21,7 +21,7 @@ use hb_node_primitives::{AccountId,  Balance};
 use substrate_service;
 use hex_literal::hex;
 use substrate_telemetry::TelemetryEndpoints;
-use badger_primitives::AuthorityId as BadgerId;
+//use badger_primitives::AuthorityId as BadgerId;
 
 use hb_node_runtime::{
 	GenesisConfig,  BalancesConfig,

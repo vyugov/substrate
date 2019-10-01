@@ -84,8 +84,9 @@ decl_storage! {
   trait Store for Module<T: Trait> as BadgerFinality {
     /// The current authority set.
     ReqIds get(requests): Vec<u64>;
-
+    RequestResults: map u64 => Option<Option<[u8;32]>>;
     //CurrentSetId get(current_set_id) build(|_| 0): u64;
+  
   }
   add_extra_genesis {
   //  config(requests): Vec<u64>;
@@ -104,10 +105,16 @@ decl_module! {
         }
 
     //	Self::deposit_log(ConsensusLog::Resume(delay));
-	fn send_log(origin) ->Result
+	fn send_log(origin,req_id:u64) ->Result
 	{
 	let who =	ensure_signed(origin)?;
-    Self::deposit_log(ConsensusLog::RequestForKeygen([0;32].to_vec()));
+    if <Self as Store>::RequestResults::exists(req_id)
+    {
+      return Err("Duplicate request ID");
+    }
+    let a:Option<[u8;32]>=None;
+    <Self as Store>::RequestResults::insert(req_id,&a);
+    Self::deposit_log(ConsensusLog::RequestForKeygen((req_id, [2;32].to_vec())));
 	Ok(())
 	}
 		
