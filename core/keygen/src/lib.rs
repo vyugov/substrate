@@ -76,7 +76,6 @@ impl NodeConfig {
 
 #[derive(Debug)]
 pub struct KeyGenState {
-	pub rebuild: bool,
 	pub complete: bool,
 	pub local_key: Option<Keys>,
 	pub commits: BTreeMap<PeerIndex, KeyGenCommit>,
@@ -85,6 +84,8 @@ pub struct KeyGenState {
 	pub secret_shares: BTreeMap<PeerIndex, FE>,
 	pub proofs: BTreeMap<PeerIndex, DLogProof>,
 	pub shared_keys: Option<SharedKeys>,
+	pub last_message_ok: bool,
+	pub should_rebuild: bool,
 }
 
 impl KeyGenState {
@@ -100,7 +101,6 @@ impl KeyGenState {
 impl Default for KeyGenState {
 	fn default() -> Self {
 		Self {
-			rebuild: false,
 			complete: false,
 			local_key: None,
 			commits: BTreeMap::new(),
@@ -109,6 +109,8 @@ impl Default for KeyGenState {
 			secret_shares: BTreeMap::new(),
 			proofs: BTreeMap::new(),
 			shared_keys: None,
+			last_message_ok: true,
+			should_rebuild: false,
 		}
 	}
 }
@@ -171,7 +173,7 @@ where
 		});
 
 		let now = Instant::now();
-		let dur = Duration::from_secs(15);
+		let dur = Duration::from_secs(20);
 		let check_pending = Interval::new(now + dur, dur);
 
 		let mut work = Self {
@@ -188,18 +190,6 @@ where
 		let (incoming, outgoing) = global_comm(&self.env.bridge);
 		let signer = Signer::new(self.env.clone(), incoming, outgoing);
 		self.key_gen = Box::new(signer);
-	}
-
-	fn possible_stuck(&self) -> bool {
-		let state = self.env.state.read();
-		let (commits_len, decom_len, vss_len, ss_len, proof_len) = (
-			state.commits.len(),
-			state.decommits.len(),
-			state.vsss.len(),
-			state.secret_shares.len(),
-			state.proofs.len(),
-		);
-		false
 	}
 }
 
@@ -239,13 +229,13 @@ where
 						state.proofs.len(),
 						state.local_key.is_some(),
 						state.complete,
-						state.rebuild
+						state.should_rebuild
 					);
 					(
 						validator.is_local_complete(),
 						validator.is_local_canceled(),
 						state.commits.len(),
-						state.rebuild,
+						state.should_rebuild,
 					)
 				};
 				if !is_complete && !is_canceled && (need_rebuild || is_ready) {
@@ -253,7 +243,6 @@ where
 					self.rebuild();
 					futures::task::current().notify();
 				};
-				// self.rebuild();
 				return Ok(Async::NotReady);
 			}
 			Ok(Async::Ready(())) => {
@@ -299,7 +288,7 @@ where
 	let config = NodeConfig {
 		name: None,
 		threshold: 1,
-		players: 3,
+		players: 6,
 		keystore: Some(keystore),
 	};
 

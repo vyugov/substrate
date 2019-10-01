@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, sync::Arc};
+use std::sync::Arc;
 
 use codec::{Decode, Encode};
 use futures::prelude::*;
@@ -167,7 +167,7 @@ where
 		let raw_msg = msg.encode();
 		let inner = self.validator.inner.read();
 		let peers = inner.get_other_peers();
-		self.network.send_message(peers, raw_msg.clone());
+		self.network.send_message(peers, raw_msg);
 	}
 
 	fn send_message(&self, target: PeerId, msg: GossipMessage) {

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::{
 	collections::VecDeque,
 	marker::PhantomData,
+	str::FromStr,
 	time::{Duration, Instant},
 };
 
@@ -32,7 +33,7 @@ pub type MessageWithReceiver = (GossipMessage, Option<PeerId>);
 pub struct Inner {
 	local_peer_id: PeerId,
 	local_peer_info: PeerInfo,
-	pub peers: Peers,
+	peers: Peers,
 	config: crate::NodeConfig,
 	next_rebroadcast: Instant,
 }
@@ -308,6 +309,9 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 						KeyGenMessage::CommitAndDecommit(from, _, _) => {
 							println!("com decom from {:?}", from);
 						}
+						KeyGenMessage::Proof(from, _) => {
+							println!("proof from {:?}", from);
+						}
 						_ => {}
 					},
 					_ => {}
@@ -315,15 +319,39 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 				let our_hash = inner.get_peers_hash();
 				let is_complete = inner.is_local_complete();
 				let is_canceled = inner.is_local_canceled();
+
 				println!("exit `message_expired` of {:?}", inner.get_local_index());
 
 				match gossip_msg {
-					GossipMessage::ConfirmPeers(_, all_peers_hash) => {
+					GossipMessage::ConfirmPeers(cpm, all_peers_hash) => {
+						match cpm {
+							ConfirmPeersMessage::Confirming(from_index) => {
+								let sender_id = inner.get_peer_id_by_index(from_index as usize);
+								if sender_id.is_none() {
+									return true;
+								}
+							}
+							ConfirmPeersMessage::Confirmed(sender_string_id) => {
+								let sender = PeerId::from_str(&sender_string_id);
+								if sender.is_err() {
+									return true;
+								}
+								if !inner.peers.contains_peer_id(&sender.unwrap()) {
+									return true;
+								}
+							}
+						}
 						let is_awaiting_peers = inner.is_local_awaiting_peers();
+
 						return !is_awaiting_peers || is_canceled || our_hash != all_peers_hash;
 					}
-					GossipMessage::KeyGen(_, all_peers_hash) => {
-						return is_complete || is_canceled || our_hash != all_peers_hash;
+					GossipMessage::KeyGen(kgm, all_peers_hash) => {
+						let from_index = kgm.get_index() as usize;
+						let sender_id = inner.get_peer_id_by_index(from_index);
+
+						return is_complete
+							|| is_canceled || our_hash != all_peers_hash
+							|| sender_id.is_none();
 					}
 					_ => return true,
 				}

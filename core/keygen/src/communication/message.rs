@@ -10,8 +10,6 @@ use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{
 use serde::{Deserialize, Serialize};
 use serde_json;
 
-use network::PeerId;
-
 pub type PeerIndex = u16;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -20,6 +18,16 @@ pub enum KeyGenMessage {
 	VSS(PeerIndex, VerifiableSS),
 	SecretShare(PeerIndex, FE),
 	Proof(PeerIndex, DLogProof),
+}
+impl KeyGenMessage {
+	pub fn get_index(&self) -> PeerIndex {
+		match *self {
+			Self::CommitAndDecommit(index, _, _) => index,
+			Self::VSS(index, _) => index,
+			Self::SecretShare(index, _) => index,
+			Self::Proof(index, _) => index,
+		}
+	}
 }
 
 impl PartialEq for KeyGenMessage {
@@ -84,18 +92,9 @@ pub enum ConfirmPeersMessage {
 	Confirmed(String),
 }
 
-// #[derive(Clone, Debug, Serialize, Deserialize, Encode, Decode)]
-// pub enum Message {
-// 	ConfirmPeers(ConfirmPeersMessage, u64), // hash of all peers
-// 	KeyGen(KeyGenMessage, u64),
-// 	Sign(SignMessage),
-// }
-
 #[cfg(test)]
 mod tests {
 	use super::*;
-
-	use std::collections::BTreeMap;
 
 	use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::Keys;
 
