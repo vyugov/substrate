@@ -8,7 +8,7 @@ use std::{
 	time::{Duration, Instant},
 };
 use client::backend::OffchainStorage;
-
+use primitives::offchain::StorageKind;
 
 use codec::{Decode, Encode};
 use curv::cryptographic_primitives::proofs::sigma_dlog::DLogProof;
@@ -21,7 +21,8 @@ use futures::{prelude::*, stream::Fuse, sync::mpsc};
 #[cfg(feature = "upgraded")]
 use futures03::{prelude::*, stream::Fuse, channel::mpsc,Poll,core_reexport::pin::Pin,task::Context,Future};
 
-
+pub const LOCAL_DB: &str = "LOCAL (fork-aware) DB";
+pub const STORAGE_PREFIX: &[u8] = b"storage";
 
 use sr_primitives::traits::Header;
 
@@ -156,7 +157,7 @@ pub(crate) struct Environment<B, E, Block: BlockT, N: Network<Block>, RA,Storage
 	pub config: NodeConfig,
 	pub bridge: NetworkBridge<Block, N>,
 	pub state: Arc<RwLock<KeyGenState>>,
-	pub offchain:Storage,
+	pub offchain:ARc<RwLock<Storage>>,
 }
 
 #[cfg(not(feature = "upgraded"))]
@@ -271,6 +272,12 @@ where
 			self.key_gen = new_signer(signer);
 		} else {
 			self.key_gen=get_empty();
+		}
+	}
+	pub fn local_storage_set(&mut self, kind: StorageKind, key: &[u8], value: &[u8]) {
+		match kind {
+			StorageKind::PERSISTENT => self.env.offchain.write().set(STORAGE_PREFIX, key, value),
+			StorageKind::LOCAL => {},
 		}
 	}
 }
