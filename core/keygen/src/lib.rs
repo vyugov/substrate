@@ -55,6 +55,7 @@ pub enum Error {
 	Network(String),
 	Periodic,
 	Client(ClientError),
+	Rebuild,
 }
 
 #[derive(Clone)]
@@ -173,7 +174,7 @@ where
 		});
 
 		let now = Instant::now();
-		let dur = Duration::from_secs(20);
+		let dur = Duration::from_secs(5);
 		let check_pending = Interval::new(now + dur, dur);
 
 		let mut work = Self {
@@ -209,6 +210,7 @@ where
 	fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
 		let mut is_ready = false;
 		while let Async::Ready(Some(_)) = self.check_pending.poll().map_err(|_| Error::Periodic)? {
+			println!("PERIODIC READY");
 			is_ready = true;
 		}
 
@@ -238,8 +240,8 @@ where
 						state.should_rebuild,
 					)
 				};
-				if !is_complete && !is_canceled && (need_rebuild || is_ready) {
-					println!("rebuilt");
+				if !is_complete && !is_canceled && (is_ready) {
+					println!("periodic rebuilt");
 					self.rebuild();
 					futures::task::current().notify();
 				};
@@ -250,8 +252,15 @@ where
 				return Ok(Async::Ready(()));
 			}
 			Err(e) => {
-				// return inner observer error
-				println!("error from poll {:?}", e);
+				match e {
+					Error::Rebuild => {
+						println!("inner keygen rebuilt");
+						self.rebuild();
+						futures::task::current().notify();
+						return Ok(Async::NotReady);
+					}
+					_ => {}
+				}
 				return Err(e);
 			}
 		}

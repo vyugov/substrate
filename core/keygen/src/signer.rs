@@ -89,6 +89,8 @@ where
 	env: Arc<Environment<B, E, Block, N, RA>>,
 	global_in: In,
 	global_out: Buffered<Out>,
+	should_rebuild: bool,
+	last_message_ok: bool,
 }
 
 impl<B, E, Block, N, RA, In, Out> Signer<B, E, Block, N, RA, In, Out>
@@ -108,6 +110,8 @@ where
 			env,
 			global_in,
 			global_out: Buffered::new(global_out),
+			should_rebuild: false,
+			last_message_ok: true,
 		}
 	}
 
@@ -256,6 +260,10 @@ where
 					return false;
 				}
 
+				if state.commits.contains_key(&from_index) {
+					return true;
+				}
+
 				state.commits.insert(from_index, commit);
 				state.decommits.insert(from_index, decommit);
 
@@ -383,28 +391,27 @@ where
 				let our_hash = validator.get_peers_hash();
 
 				println!("cpm msg local state {:?}", validator.local_state());
-				if !validator.is_local_awaiting_peers() || our_hash != all_peers_hash {
+				if !validator.is_local_awaiting_peers() {
 					return false;
 				}
 				drop(validator);
 				return self.handle_cpm(cpm, all_peers_hash);
 			}
-
 			GossipMessage::KeyGen(kgm, all_peers_hash) => {
-				// let mut rng = rand::thread_rng();
-				// let b = rng.gen_bool(0.5);
-				// if b {
-				// 	println!("RANDOM FAILURE");
-				// 	return false;
-				// }
+				let mut rng = rand::thread_rng();
+				let b = rng.gen_bool(0.5);
+				if b {
+					println!("RANDOM FAILURE");
+					return false;
+				}
 				println!("recv key gen msg");
 				let validator = self.env.bridge.validator.inner.read();
 				println!("kgm local state {:?}", validator.local_state());
 
-				let our_hash = validator.get_peers_hash();
-				if our_hash != all_peers_hash {
-					return false;
-				}
+				// let our_hash = validator.get_peers_hash();
+				// if our_hash != all_peers_hash {
+				// 	return false;
+				// }
 
 				if validator.is_local_complete() || validator.is_local_canceled() {
 					return true;
@@ -441,11 +448,10 @@ where
 			let is_ok = self.handle_incoming(msg, sender);
 
 			if !rebuild_state_changed {
-				let mut state = self.env.state.write();
-				let should_rebuild = state.last_message_ok ^ is_ok; // TF or FT makes it rebuild
-				state.last_message_ok = is_ok;
-				if state.should_rebuild != should_rebuild {
-					state.should_rebuild = should_rebuild;
+				let should_rebuild = self.last_message_ok ^ is_ok; // TF or FT makes it rebuild
+				self.last_message_ok = is_ok;
+				if self.should_rebuild != should_rebuild {
+					self.should_rebuild = should_rebuild;
 					rebuild_state_changed = true;
 				}
 			}
@@ -455,6 +461,9 @@ where
 
 		// send all messages generated above
 		self.global_out.poll()?;
+		if self.should_rebuild {
+			return Err(Error::Rebuild);
+		}
 		Ok(Async::NotReady)
 	}
 }
