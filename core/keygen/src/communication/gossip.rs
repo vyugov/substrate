@@ -237,7 +237,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 		mut data: &[u8],
 	) -> network_gossip::ValidationResult<Block::Hash> {
 		let gossip_msg = GossipMessage::decode(&mut data);
-		if let Ok(_) = gossip_msg {
+		if let Ok(gossip_msg) = gossip_msg {
 			let topic = super::string_topic::<Block>("hash");
 			return network_gossip::ValidationResult::ProcessAndKeep(topic);
 		}
@@ -270,17 +270,24 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 				return do_rebroadcast;
 			}
 
+			let players = inner.config.players as usize;
+			if inner.peers.len() < players {
+				return true;
+			}
+
 			let gossip_msg = GossipMessage::decode(&mut data);
 			if let Ok(gossip_msg) = gossip_msg {
 				let our_hash = inner.get_peers_hash();
 
+				let is_awaiting_peers = inner.is_local_awaiting_peers();
+				let is_generating = inner.is_local_generating();
+
 				match gossip_msg {
 					GossipMessage::ConfirmPeers(_, all_peers_hash) => {
-						let is_valid = inner.is_local_awaiting_peers();
-						return is_valid && our_hash == all_peers_hash;
+						return is_awaiting_peers && our_hash == all_peers_hash;
 					}
 					GossipMessage::KeyGen(_, all_peers_hash) => {
-						let is_valid = inner.is_local_generating();
+						let is_valid = is_awaiting_peers || is_generating;
 						return is_valid && our_hash == all_peers_hash;
 					}
 					_ => return false,
@@ -291,8 +298,20 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 	}
 
 	fn message_expired<'a>(&'a self) -> Box<dyn FnMut(Block::Hash, &[u8]) -> bool + 'a> {
-		let inner = self.inner.read();
 		Box::new(move |topic, mut data| {
+			let inner = self.inner.read();
+			let is_complete = inner.is_local_complete();
+			let is_canceled = inner.is_local_canceled();
+
+			if is_complete || is_canceled {
+				return true;
+			}
+
+			let players = inner.config.players as usize;
+			if inner.peers.len() < players {
+				return false;
+			}
+
 			let gossip_msg = GossipMessage::decode(&mut data);
 			if let Ok(gossip_msg) = gossip_msg {
 				println!("In `message_expired` of {:?}", inner.get_local_index());
@@ -309,6 +328,12 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 						KeyGenMessage::CommitAndDecommit(from, _, _) => {
 							println!("com decom from {:?}", from);
 						}
+						KeyGenMessage::VSS(from, _) => {
+							println!("VSS from {:?}", from);
+						}
+						KeyGenMessage::SecretShare(from, _) => {
+							println!("Secret share from {:?}", from);
+						}
 						KeyGenMessage::Proof(from, _) => {
 							println!("proof from {:?}", from);
 						}
@@ -317,8 +342,6 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 					_ => {}
 				}
 				let our_hash = inner.get_peers_hash();
-				let is_complete = inner.is_local_complete();
-				let is_canceled = inner.is_local_canceled();
 
 				println!("exit `message_expired` of {:?}", inner.get_local_index());
 
@@ -349,9 +372,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 						let from_index = kgm.get_index() as usize;
 						let sender_id = inner.get_peer_id_by_index(from_index);
 
-						return is_complete
-							|| is_canceled || our_hash != all_peers_hash
-							|| sender_id.is_none();
+						return our_hash != all_peers_hash || sender_id.is_none();
 					}
 					_ => return true,
 				}

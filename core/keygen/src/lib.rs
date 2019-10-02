@@ -50,6 +50,8 @@ use signer::Signer;
 
 type Count = u16;
 
+const REBUILD_COOLDOWN: Duration = Duration::from_secs(10);
+
 #[derive(Debug)]
 pub enum Error {
 	Network(String),
@@ -85,8 +87,6 @@ pub struct KeyGenState {
 	pub secret_shares: BTreeMap<PeerIndex, FE>,
 	pub proofs: BTreeMap<PeerIndex, DLogProof>,
 	pub shared_keys: Option<SharedKeys>,
-	pub last_message_ok: bool,
-	pub should_rebuild: bool,
 }
 
 impl KeyGenState {
@@ -110,8 +110,6 @@ impl Default for KeyGenState {
 			secret_shares: BTreeMap::new(),
 			proofs: BTreeMap::new(),
 			shared_keys: None,
-			last_message_ok: true,
-			should_rebuild: false,
 		}
 	}
 }
@@ -174,22 +172,20 @@ where
 		});
 
 		let now = Instant::now();
-		let dur = Duration::from_secs(5);
-		let check_pending = Interval::new(now + dur, dur);
+		let check_pending = Interval::new(now + REBUILD_COOLDOWN, REBUILD_COOLDOWN);
 
 		let mut work = Self {
 			key_gen: Box::new(futures::empty()) as Box<_>,
 			env,
 			check_pending,
 		};
-		work.rebuild();
+		work.rebuild(true); // init should be okay
 		work
 	}
 
-	fn rebuild(&mut self) {
-		// no need to rebuild when complete or canceled
+	fn rebuild(&mut self, last_message_ok: bool) {
 		let (incoming, outgoing) = global_comm(&self.env.bridge);
-		let signer = Signer::new(self.env.clone(), incoming, outgoing);
+		let signer = Signer::new(self.env.clone(), incoming, outgoing, last_message_ok);
 		self.key_gen = Box::new(signer);
 	}
 }
@@ -210,19 +206,18 @@ where
 	fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
 		let mut is_ready = false;
 		while let Async::Ready(Some(_)) = self.check_pending.poll().map_err(|_| Error::Periodic)? {
-			println!("PERIODIC READY");
 			is_ready = true;
 		}
 
 		println!("POLLLLLLLLLLLLLLLLLLLL");
 		match self.key_gen.poll() {
 			Ok(Async::NotReady) => {
-				let (is_complete, is_canceled, commits_len, need_rebuild) = {
+				let (is_complete, is_canceled, commits_len) = {
 					let state = self.env.state.read();
 					let validator = self.env.bridge.validator.inner.read();
 
 					println!(
-						"INDEX {:?} state: commits {:?} decommits {:?} vss {:?} ss {:?}  proof {:?} has key {:?} complete {:?} need rebuild {:?}",
+						"INDEX {:?} state: commits {:?} decommits {:?} vss {:?} ss {:?}  proof {:?} has key {:?} complete {:?} periodic ready {:?}",
 						validator.get_local_index(),
 						state.commits.len(),
 						state.decommits.len(),
@@ -231,31 +226,24 @@ where
 						state.proofs.len(),
 						state.local_key.is_some(),
 						state.complete,
-						state.should_rebuild
+						is_ready
 					);
 					(
 						validator.is_local_complete(),
 						validator.is_local_canceled(),
 						state.commits.len(),
-						state.should_rebuild,
 					)
-				};
-				if !is_complete && !is_canceled && (is_ready) {
-					println!("periodic rebuilt");
-					self.rebuild();
-					futures::task::current().notify();
 				};
 				return Ok(Async::NotReady);
 			}
 			Ok(Async::Ready(())) => {
-				println!("FUCKING FINISHED");
 				return Ok(Async::Ready(()));
 			}
 			Err(e) => {
 				match e {
 					Error::Rebuild => {
 						println!("inner keygen rebuilt");
-						self.rebuild();
+						self.rebuild(false);
 						futures::task::current().notify();
 						return Ok(Async::NotReady);
 					}

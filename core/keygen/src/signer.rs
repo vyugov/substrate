@@ -105,13 +105,18 @@ where
 	In: Stream<Item = MessageWithSender, Error = Error>,
 	Out: Sink<SinkItem = MessageWithSender, SinkError = Error>,
 {
-	pub fn new(env: Arc<Environment<B, E, Block, N, RA>>, global_in: In, global_out: Out) -> Self {
+	pub fn new(
+		env: Arc<Environment<B, E, Block, N, RA>>,
+		global_in: In,
+		global_out: Out,
+		last_message_ok: bool,
+	) -> Self {
 		Self {
 			env,
 			global_in,
 			global_out: Buffered::new(global_out),
 			should_rebuild: false,
-			last_message_ok: true,
+			last_message_ok,
 		}
 	}
 
@@ -379,12 +384,6 @@ where
 	}
 
 	fn handle_incoming(&mut self, msg: GossipMessage, sender: Option<PeerId>) -> bool {
-		// let mut rng = rand::thread_rng();
-		// let b = rng.gen_bool(0.5);
-		// if b {
-		// 	println!("RANDOM FAILURE");
-		// 	return false;
-		// }
 		match msg {
 			GossipMessage::ConfirmPeers(cpm, all_peers_hash) => {
 				let validator = self.env.bridge.validator.inner.read();
@@ -408,14 +407,10 @@ where
 				let validator = self.env.bridge.validator.inner.read();
 				println!("kgm local state {:?}", validator.local_state());
 
-				// let our_hash = validator.get_peers_hash();
-				// if our_hash != all_peers_hash {
-				// 	return false;
-				// }
-
 				if validator.is_local_complete() || validator.is_local_canceled() {
 					return true;
 				}
+
 				drop(validator);
 				return self.handle_kgm(kgm, all_peers_hash);
 			}
@@ -448,7 +443,8 @@ where
 			let is_ok = self.handle_incoming(msg, sender);
 
 			if !rebuild_state_changed {
-				let should_rebuild = self.last_message_ok ^ is_ok; // TF or FT makes it rebuild
+				let should_rebuild = self.last_message_ok ^ is_ok;
+				// TF or FT makes it rebuild, i.e. "edge triggering"
 				self.last_message_ok = is_ok;
 				if self.should_rebuild != should_rebuild {
 					self.should_rebuild = should_rebuild;
