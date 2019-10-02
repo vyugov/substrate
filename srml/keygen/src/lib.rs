@@ -41,7 +41,7 @@ use srml_support::{
   decl_event, decl_module, decl_storage, dispatch::Result, storage::StorageMap,
   storage::StorageValue,
 };
-use substrate_mpecdsa_primitives::{MP_ECDSA_ENGINE_ID,ConsensusLog};
+use substrate_mpecdsa_primitives::{MP_ECDSA_ENGINE_ID,ConsensusLog,MAIN_DB_PREFIX};
 
 
 #[cfg(feature = "std")]
@@ -108,6 +108,11 @@ decl_module! {
 	fn send_log(origin,req_id:u64) ->Result
 	{
 	let who =	ensure_signed(origin)?;
+  let mut a:Vec<u8>=MAIN_DB_PREFIX.to_vec();
+  let mut b=req_id.encode();
+  a.append(&mut b);
+  	let kind = primitives::offchain::StorageKind::PERSISTENT;
+  runtime_io::local_storage_set(kind,&a,b"new");
     if <Self as Store>::RequestResults::exists(req_id)
     {
       return Err("Duplicate request ID");

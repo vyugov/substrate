@@ -16,6 +16,10 @@ use sr_primitives::{
 
 pub const MP_ECDSA_ENGINE_ID: ConsensusEngineId = *b"MPEC";
 
+pub const MAIN_DB_PREFIX: &[u8] = b"srml/keygen/request_";
+
+
+
 pub type AuthorityWeight = u64;
 
 pub type AuthorityIndex = u64;

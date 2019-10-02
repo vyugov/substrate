@@ -7,6 +7,8 @@ use std::{
 	sync::Arc,
 	time::{Duration, Instant},
 };
+use client::backend::OffchainStorage;
+
 
 use codec::{Decode, Encode};
 use curv::cryptographic_primitives::proofs::sigma_dlog::DLogProof;
@@ -149,11 +151,12 @@ where
 	(global_in, global_out)
 }
 
-pub(crate) struct Environment<B, E, Block: BlockT, N: Network<Block>, RA> {
+pub(crate) struct Environment<B, E, Block: BlockT, N: Network<Block>, RA,Storage> {
 	pub client: Arc<Client<B, E, Block, RA>>,
 	pub config: NodeConfig,
 	pub bridge: NetworkBridge<Block, N>,
 	pub state: Arc<RwLock<KeyGenState>>,
+	pub offchain:Storage,
 }
 
 #[cfg(not(feature = "upgraded"))]
@@ -219,12 +222,14 @@ pub fn get_empty()->  KeyBox
 	 Box::pin(Box::new(EmptyWrapper{}))
  }
 
-struct KeyGenWork<B, E, Block: BlockT, N: Network<Block>, RA> {
+struct KeyGenWork<B, E, Block: BlockT, N: Network<Block>, RA,Storage> 
+where Storage:OffchainStorage
+{
 	key_gen: KeyBox,
-	env: Arc<Environment<B, E, Block, N, RA>>,
+	env: Arc<Environment<B, E, Block, N, RA,Storage>>,
 }
 //client::import_notification_stream 
-impl<B, E, Block, N, RA> KeyGenWork<B, E, Block, N, RA>
+impl<B, E, Block, N, RA,Storage> KeyGenWork<B, E, Block, N, RA,Storage>
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
 	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
@@ -233,11 +238,13 @@ where
 	N: Network<Block> + Sync+Unpin,
 	N::In: Send + 'static+Unpin,
 	RA: Send + Sync + 'static,
+	Storage:OffchainStorage+'static,
 {
 	fn new(
 		client: Arc<Client<B, E, Block, RA>>,
 		config: NodeConfig,
 		bridge: NetworkBridge<Block, N>,
+	   db:Storage,
 	) -> Self {
 		let state = KeyGenState::default();
 
@@ -246,6 +253,7 @@ where
 			config,
 			bridge,
 			state: Arc::new(RwLock::new(state)),
+			offchain:db,
 		});
 		let mut work = Self {
 			key_gen: get_empty(),
@@ -271,7 +279,7 @@ where
 
 
 #[cfg(not(feature = "upgraded"))]
-fn new_signer<B,E,Block:BlockT,N: Network<Block>, RA, In, Out>(s:Signer<B,E,Block,N,RA,In,Out>) ->Box<Signer<B,E,Block,N,RA,In,Out>>
+fn new_signer<B,E,Block:BlockT,N: Network<Block>, RA, In, Out,Storage>(s:Signer<B,E,Block,N,RA,In,Out,Storage>) ->Box<Signer<B,E,Block,N,RA,In,Out,Storage>>
 where 	B: Backend<Block, Blake2Hasher> + 'static,
 	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
 	Block: BlockT<Hash = H256>,
@@ -286,7 +294,7 @@ where 	B: Backend<Block, Blake2Hasher> + 'static,
 }
 
 #[cfg(feature = "upgraded")]
-fn new_signer<B,E,Block:BlockT,N: Network<Block>, RA, In, Out>(s:Signer<B,E,Block,N,RA,In,Out>) ->Pin<Box<Signer<B,E,Block,N,RA,In,Out>>>
+fn new_signer<B,E,Block:BlockT,N: Network<Block>, RA, In, Out,Storage>(s:Signer<B,E,Block,N,RA,In,Out,Storage>) ->Pin<Box<Signer<B,E,Block,N,RA,In,Out,Storage>>>
 where	B: Backend<Block, Blake2Hasher> + 'static,
 	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
 	Block: BlockT<Hash = H256>,
@@ -296,6 +304,7 @@ where	B: Backend<Block, Blake2Hasher> + 'static,
 	RA: Send + Sync + 'static,
 	In: MWSStream,
 	Out: MWSSink,
+	Storage:OffchainStorage,
 {
 	Box::pin(s)
 }
@@ -303,7 +312,7 @@ where	B: Backend<Block, Blake2Hasher> + 'static,
 
 
 #[cfg(not(feature = "upgraded"))]
-impl<B, E, Block, N, RA> Future for KeyGenWork<B, E, Block, N, RA>
+impl<B, E, Block, N, RA,Storage> Future for KeyGenWork<B, E, Block, N, RA,Storage>
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
 	E: CallExecutor<Block, Blake2Hasher> + 'static + Send + Sync,
@@ -312,6 +321,7 @@ where
 	N: Network<Block> + Send + Sync + 'static,
 	N::In: Send + 'static,
 	RA: Send + Sync + 'static,
+	Storage: OffchainStorage,
 {
 	type Item = ();
 	type Error = Error;
@@ -334,7 +344,7 @@ where
 }
 
 #[cfg(feature = "upgraded")]
-impl<B, E, Block, N, RA> futures03::Future for KeyGenWork<B, E, Block, N, RA>
+impl<B, E, Block, N, RA,Storage> futures03::Future for KeyGenWork<B, E, Block, N, RA,Storage>
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
 	E: CallExecutor<Block, Blake2Hasher> + 'static + Send + Sync,
@@ -343,6 +353,7 @@ where
 	N: Network<Block> + Send + Sync + 'static,
 	N::In: Send + 'static+Unpin,
 	RA: Send + Sync + 'static,
+	Storage: OffchainStorage,
 {
 	type Output = Result<(),Error>;
 	
@@ -398,6 +409,7 @@ pub fn run_key_gen<B, E, Block, N, RA>(
 	keystore: KeyStorePtr,
 	client: Arc<Client<B, E, Block, RA>>,
 	network: N,
+	backend:Arc<B>,
 ) -> ClientResult<impl EmptyFuture + Send + 'static>
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
@@ -407,6 +419,7 @@ where
 	N: Network<Block> + Send + Sync + 'static+Unpin,
 	N::In: Send + 'static+Unpin,
 	RA: Send + Sync + 'static,
+
 {
 	let config = NodeConfig {
 		name: None,
@@ -469,7 +482,7 @@ where
 //		Ok(())
 	});
 	
-	let key_gen_work = KeyGenWork::new(client, config, bridge).map_err(|e| error!("Error {:?}", e));
+	let key_gen_work = KeyGenWork::new(client, config, bridge,backend.offchain_storage().expect("Need offchain for keygen work")).map_err(|e| error!("Error {:?}", e));
 
     #[cfg(not(feature = "upgraded"))]
 	return Ok(key_gen_work);

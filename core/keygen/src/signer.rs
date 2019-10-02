@@ -2,6 +2,7 @@ use std::{collections::VecDeque, marker::PhantomData, sync::Arc};
 
 use codec::{Decode, Encode};
 use curv::GE;
+use client::backend::OffchainStorage;
 
 #[cfg(not(feature = "upgraded"))]
 use futures::prelude::*;
@@ -184,29 +185,29 @@ where S: futures03::sink::Sink<SinkItem, Error = Error>+Unpin,
 
 
 #[cfg(not(feature = "upgraded"))]
-pub(crate) struct Signer<B, E, Block: BlockT, N: Network<Block>, RA, In, Out>
+pub(crate) struct Signer<B, E, Block: BlockT, N: Network<Block>, RA, In, Out,Storage>
 where
 	In: Stream<Item = MessageWithSender, Error = Error>,
 	Out: Sink<SinkItem = MessageWithSender, SinkError = Error>,
 {
-	env: Arc<Environment<B, E, Block, N, RA>>,
+	env: Arc<Environment<B, E, Block, N, RA,Storage>>,
 	global_in: In,
 	global_out: Buffered<Out>,
 }
 
 #[cfg(feature = "upgraded")]
-pub(crate) struct Signer<B, E, Block: BlockT, N: Network<Block>, RA, In, Out>
+pub(crate) struct Signer<B, E, Block: BlockT, N: Network<Block>, RA, In, Out,Storage>
 where
 	In: Stream<Item = MessageWithSender>,
 	Out: Sink<MessageWithSender, Error = Error>+Unpin,
 {
-	env: Arc<Environment<B, E, Block, N, RA>>,
+	env: Arc<Environment<B, E, Block, N, RA,Storage>>,
 	global_in: In,
 	global_out: Buffered<MessageWithSender,Out>,
 }
 
 
-impl<B, E, Block, N, RA, In, Out> Signer<B, E, Block, N, RA, In, Out>
+impl<B, E, Block, N, RA, In, Out,Storage> Signer<B, E, Block, N, RA, In, Out,Storage>
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
 	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
@@ -217,8 +218,9 @@ where
 	RA: Send + Sync + 'static,
 	In: MWSStream,
 	Out: MWSSink,
+	Storage: OffchainStorage,
 {
-	pub fn new(env: Arc<Environment<B, E, Block, N, RA>>, global_in: In, global_out: Out) -> Self {
+	pub fn new(env: Arc<Environment<B, E, Block, N, RA,Storage>>, global_in: In, global_out: Out) -> Self {
 		Signer {
 			env,
 			global_in,
@@ -438,7 +440,7 @@ where
 	}
 }
 
-impl<B, E, Block, N, RA, In, Out> Future for Signer<B, E, Block, N, RA, In, Out>
+impl<B, E, Block, N, RA, In, Out,Storage> Future for Signer<B, E, Block, N, RA, In, Out,Storage>
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
 	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
@@ -449,6 +451,7 @@ where
 	RA: Send + Sync + 'static,
 	In: MWSStream,
 	Out: MWSSink,
+	Storage: OffchainStorage,
 {
     #[cfg(feature = "upgraded")]
 	type Output=Result<(),Error>;

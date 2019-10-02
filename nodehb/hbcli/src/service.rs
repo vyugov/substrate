@@ -129,7 +129,7 @@ macro_rules! new_full {
     let node_name = $config.name.clone();
 
     let (builder, inherent_data_providers) = new_full_start!($config);
-
+    let back=builder.backend().clone();
     let service = builder
       .with_network_protocol(|_| Ok(crate::service::NodeProtocol::new()))?
       .with_opt_finality_proof_provider(|_client, _| Ok(None))?
@@ -173,7 +173,8 @@ macro_rules! new_full {
 				service.network().local_peer_id(),
 				service.keystore(),
 				service.client(),
-				service.network()
+				service.network(),
+        back
 			)?;
       let svc=    futures03::future::select(service.on_exit().clone().compat(),key_gen);
 			service.spawn_task(Box::new(svc.unit_error().boxed().compat().map(|_|  () )) );
