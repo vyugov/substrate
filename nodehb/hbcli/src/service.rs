@@ -93,10 +93,8 @@ macro_rules! new_full_start {
       Ok(client::LongestChain::new(backend.clone()))
     })?
     .with_transaction_pool(|config, client| {
-      Ok(transaction_pool::txpool::Pool::new(
-        config,
-        transaction_pool::ChainApi::new(client),
-      ))
+		Ok(transaction_pool::txpool::Pool::new(config, transaction_pool::FullChainApi::new(client)))
+
     })?
     .with_import_queue(|_config, client,  _select_chain, _transaction_pool| {
       #[allow(deprecated)]

@@ -25,6 +25,8 @@ members = [
         "nodehb", 
         "nodehb/hbcli",
 	"core/application-crypto",
+	"core/chain-spec",
+	"core/chain-spec/derive",
 	"core/cli",
 	"core/client",
 	"core/client/db",

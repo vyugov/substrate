@@ -20,18 +20,18 @@ pub use client::ExecutionStrategies;
 pub use client_db::PruningMode;
 pub use network::config::{ExtTransport, NetworkConfiguration, Roles};
 
-use crate::chain_spec::ChainSpec;
+use chain_spec::{ChainSpec, RuntimeGenesis, Extension, NoExtension};
 use primitives::crypto::Protected;
 use serde::{de::DeserializeOwned, Serialize};
 use sr_primitives::BuildStorage;
-use std::{net::SocketAddr, path::PathBuf};
+use std::{path::PathBuf, net::SocketAddr};
+use transaction_pool;
 use target_info::Target;
 use tel::TelemetryEndpoints;
-use transaction_pool;
 
 /// Service configuration.
 #[derive(Clone)]
-pub struct Configuration<C, G> {
+pub struct Configuration<C, G, E = NoExtension> {
 	/// Implementation name
 	pub impl_name: &'static str,
 	/// Implementation version
@@ -57,7 +57,7 @@ pub struct Configuration<C, G> {
 	/// Pruning settings.
 	pub pruning: PruningMode,
 	/// Chain configuration.
-	pub chain_spec: ChainSpec<G>,
+	pub chain_spec: ChainSpec<G, E>,
 	/// Custom configuration.
 	pub custom: C,
 	/// Node name.
@@ -96,9 +96,13 @@ pub struct Configuration<C, G> {
 	pub n_conf_file: Option<String>
 }
 
-impl<C: Default, G: Serialize + DeserializeOwned + BuildStorage> Configuration<C, G> {
+impl<C, G, E> Configuration<C, G, E> where
+	C: Default,
+	G: RuntimeGenesis,
+	E: Extension,
+{
 	/// Create default config for given chain spec.
-	pub fn default_with_spec(chain_spec: ChainSpec<G>) -> Self {
+	pub fn default_with_spec(chain_spec: ChainSpec<G, E>) -> Self {
 		let mut configuration = Configuration {
 			impl_name: "parity-substrate",
 			impl_version: "0.0.0",

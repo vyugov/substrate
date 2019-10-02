@@ -150,6 +150,7 @@ impl contracts::Trait for Runtime {
 	type MaxDepth = contracts::DefaultMaxDepth;
 	type MaxValueSize = contracts::DefaultMaxValueSize;
 	type BlockGasLimit = contracts::DefaultBlockGasLimit;
+	type Time = Timestamp;
 }
 
 

@@ -192,7 +192,7 @@ impl<T: Trait> Module<T>
         Authorities::get().is_empty(),
         "Authorities are already initialized!"
       );
-      Authorities::put_ref(authorities);
+      Authorities::put(authorities);
     }
   }
 }
