@@ -179,10 +179,9 @@ impl<B: BlockImport<TestBlock>> BlockImport<TestBlock> for PanickingBlockImport<
 
 	fn check_block(
 		&mut self,
-		hash: Hash,
-		parent_hash: Hash,
+		block: BlockCheckParams<TestBlock>,
 	) -> Result<ImportResult, Self::Error> {
-		Ok(self.0.check_block(hash, parent_hash).expect("checking block failed"))
+		Ok(self.0.check_block(block).expect("checking block failed"))
 	}
 }
 
