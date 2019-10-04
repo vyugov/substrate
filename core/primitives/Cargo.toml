@@ -38,6 +38,10 @@ rand_chacha = { version =  "0.1.1", optional=true }
 pbkdf2 = { version = "0.3.0", default-features = false,optional=true  }
 badger = { package= "hbbft", path="../../../hbbft", optional=true }
 bincode = { version = "1.0.1", optional=true}
+curv = {git = "https://github.com/KZen-networks/curv", tag = "v0.2.2", features =  ["ec_secp256k1","rust-gmp"], optional=true }
+multi-party-ecdsa = { package = "multi-party-ecdsa", git = "https://github.com/kigawas/multi-party-ecdsa", branch = "keygen-clippy",optional=true}
+secp256k1 = {version="0.15.5",optional=true}
+
 
 hmac = { version = "0.7.1",optional=true}
 [dev-dependencies]
@@ -61,7 +65,10 @@ std = [
 	"pbkdf2", 
 	"bincode",
 	"hmac",
+	"curv",
+	"secp256k1",
 	"threshold_crypto",
+	"multi-party-ecdsa",
 	"badger",
 	"pairing",
 	"rand_chacha",
@@ -95,5 +102,5 @@ std = [
 	"schnorrkel",
 	"regex",
 	"num-traits/std",
-	"zeroize/std"
+	"zeroize/std",
 ]

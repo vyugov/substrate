@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, marker::PhantomData, sync::Arc};
+use std::{collections::VecDeque, sync::Arc};// marker::PhantomData,
 
 use codec::{Decode, Encode};
 use curv::GE;
@@ -19,19 +19,20 @@ use futures03::core_reexport::pin::Pin;
 
 use log::{debug, error, info, warn};
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{Keys, Parameters};
-use tokio_executor::DefaultExecutor;
-use tokio_timer::Interval;
+//use tokio_executor::DefaultExecutor;
+//use tokio_timer::Interval;
 
 use client::{
 	backend::Backend, error::Error as ClientError, error::Result as ClientResult, BlockchainEvents,
 	CallExecutor, Client,
 };
-use consensus_common::SelectChain;
-use inherents::InherentDataProviders;
+//use consensus_common::SelectChain;
+//use inherents::InherentDataProviders;
 use network::PeerId;
-use primitives::{Blake2Hasher, H256};
+use primitives::{Blake2Hasher, H256,ecdsa_keygen};
 use sr_primitives::generic::BlockId;
 use sr_primitives::traits::{Block as BlockT, NumberFor, ProvideRuntimeApi};
+
 
 use super::{
 	ConfirmPeersMessage, Environment, Error, GossipMessage, KeyGenMessage, Message,
@@ -427,6 +428,8 @@ where
 						.is_ok()
 					{
 						info!("Key generation complete");
+						let key:ecdsa_keygen::Public=state.local_key.clone().unwrap().y_i.into();
+						self.env.set_request_public_key(0,&key);
 						validator.set_local_complete();
 					} else {
 						// reset everything?

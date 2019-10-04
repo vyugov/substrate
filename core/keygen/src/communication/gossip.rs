@@ -1,6 +1,6 @@
 use codec::{Decode, Encode};
 use log::{error, info, trace, warn};
-use serde::{Deserialize, Serialize};
+//use serde::{Deserialize, Serialize};
 use std::{
 	collections::VecDeque,
 	marker::PhantomData,
@@ -9,7 +9,7 @@ use std::{
 
 use network::consensus_gossip::{self as network_gossip, MessageIntent, ValidatorContext};
 use network::{config::Roles, PeerId};
-use sr_primitives::traits::{Block as BlockT, Zero};
+use sr_primitives::traits::{Block as BlockT, };//Zero
 
 use super::{
 	message::{ConfirmPeersMessage, KeyGenMessage, Message, SignMessage},
@@ -168,8 +168,8 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 
 	fn validate(
 		&self,
-		context: &mut dyn ValidatorContext<Block>,
-		who: &PeerId,
+		_context: &mut dyn ValidatorContext<Block>,
+		_who: &PeerId,
 		mut data: &[u8],
 	) -> network_gossip::ValidationResult<Block::Hash> {
 		let gossip_msg = GossipMessage::decode(&mut data);
@@ -199,7 +199,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 			(RwLockWriteGuard::downgrade(inner), do_rebroadcast)
 		};
 
-		Box::new(move |who, intent, topic, mut data| {
+		Box::new(move |_who, intent, _topic, mut data| {
 			if let MessageIntent::PeriodicRebroadcast = intent {
 				println!("INTENT PERIODIC");
 				return do_rebroadcast;

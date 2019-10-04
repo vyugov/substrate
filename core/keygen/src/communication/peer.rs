@@ -1,17 +1,17 @@
-use std::cmp::{min, Ordering};
-use std::collections::{hash_map::DefaultHasher, BTreeSet, HashMap, VecDeque};
-use std::convert::From;
+use std::cmp::{ Ordering};//min,
+use std::collections::{hash_map::DefaultHasher, BTreeSet, HashMap, };//VecDeque
+//use std::convert::From;
 use std::hash::{Hash, Hasher};
 use std::iter::Iterator;
 use std::str::FromStr;
 
 //use codec::{Decode, Encode, Error as CodecError, Input};
-use log::{debug, error, trace, warn};
-use multihash::Multihash as PkHash;
-use serde::ser::SerializeStruct;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use log::{ error, trace, warn};//debug
+//use multihash::Multihash as PkHash;
+//use serde::ser::SerializeStruct;
+use serde::{ Deserializer, Serialize, Serializer};//Deserialize
 
-use network::{config::Roles, PeerId};
+use network::{ PeerId};//config::Roles
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum PeerState {

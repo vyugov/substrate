@@ -32,7 +32,7 @@ use hb_node_primitives::{
 //use substrate_badger_rapi::HbbftApi;
 pub use contracts;
 pub use contracts::Gas;
-
+pub use srml_keygen::sr25519::AuthorityId as KeygenId;
 
 pub type AuthorityId = ([u8; 32],[u8; 16]);
 use client::{
@@ -272,11 +272,17 @@ impl srml_badger::Trait for Runtime
 	type Event=Event;
 
 }
+use system::offchain::TransactionSubmitter;
 
+
+type SubmitTransaction = TransactionSubmitter<KeygenId, Runtime, UncheckedExtrinsic>;
 impl srml_keygen::Trait for Runtime 
 {
 	type Event=Event;
-
+    type AuthorityId=KeygenId;
+	type Call = Call;
+	type SubmitTransaction = SubmitTransaction;
+	
 }
 
 

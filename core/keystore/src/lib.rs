@@ -355,11 +355,11 @@ impl BareCryptoStore for Store {
 		};
 		match serde_json::to_writer(&file, &request_data)
 		{
-			Ok(fl) => {},
+			Ok(_fl) => {},
 			Err(_) => return Err(())
 		};;
 		match file.flush(){
-			Ok(fl) => {},
+			Ok(_fl) => {},
 			Err(_) => return Err(())
 		};
 		Ok(())

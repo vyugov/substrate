@@ -23,6 +23,31 @@ pub const MAIN_DB_PREFIX: &[u8] = b"srml/keygen/request_";
 pub type AuthorityWeight = u64;
 
 pub type AuthorityIndex = u64;
+pub type RequestId=u64;
+
+pub fn get_data_prefix(request_id:RequestId) ->Vec<u8>
+{
+		let mut key:Vec<u8>=MAIN_DB_PREFIX.to_vec();
+		key.append(&mut b"_data".to_vec());
+        key.append(&mut request_id.encode());
+		key
+}
+
+pub fn get_key_prefix(request_id:RequestId) ->Vec<u8>
+{
+		let mut key:Vec<u8>=MAIN_DB_PREFIX.to_vec();
+		key.append(&mut b"_key".to_vec());
+        key.append(&mut request_id.encode());
+		key
+}
+
+pub fn get_complete_list_prefix() ->Vec<u8>
+{
+		let mut key:Vec<u8>=MAIN_DB_PREFIX.to_vec();
+		key.append(&mut b"_crequests".to_vec());
+       key
+}
+
 
 
 #[cfg_attr(feature = "std", derive(Serialize, Debug))]

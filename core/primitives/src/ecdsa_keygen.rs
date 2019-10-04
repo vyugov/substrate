@@ -1,29 +1,26 @@
-// Copyright 2017-2019 Parity Technologies (UK) Ltd.
-// This file is part of Substrate.
+#[cfg(feature = "std")]
+use curv::elliptic::curves::*;
 
-// Substrate is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
 
-// Substrate is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
+#[cfg(feature = "std")]
+use curv::arithmetic::big_gmp::BigInt;
 
-// You should have received a copy of the GNU General Public License
-// along with Substrate.  If not, see <http://www.gnu.org/licenses/>.
 
-// tag::description[]
-//! Simple pairing API.
-//!
-//! Note: `CHAIN_CODE_LENGTH` must be equal to `crate::crypto::JUNCTION_ID_LEN`
-//! for this to work.
-// end::description[]
-//#![cfg_attr(not(feature = "std"), no_std)]
+#[cfg(feature = "std")]
+use curv::elliptic::curves::traits::*;
 
 #[cfg(not(feature = "std"))]
 extern crate alloc;
+
+#[cfg(feature = "std")]
+use bincode;
+
+//#[cfg(feature = "std")]
+//use digest::digest::Digest;
+
+#[cfg(feature = "std")]
+use crate::Public as PTrait;
+
 
 #[cfg(feature = "std")]
 use rand::SeedableRng;
@@ -33,7 +30,9 @@ use sha2::Sha512;
 
 
 #[cfg(feature = "std")]
-use bincode;
+use sha2::{Sha256,Digest};
+
+
 
 #[cfg(feature = "std")]
 use pbkdf2::pbkdf2;
@@ -42,22 +41,18 @@ use pbkdf2::pbkdf2;
 #[cfg(feature = "std")]
 use hmac::Hmac;
 
-#[cfg(feature = "std")]
-use threshold_crypto::serde_impl::SerdeSecret;
 
-#[cfg(feature = "std")]
-use badger::crypto::{ PublicKey,  SecretKey,Signature as B_Signature,};
-//PublicKeySet PublicKeyShare SecretKeyShare
 
-#[cfg(feature = "std")]
-use rand::distributions::Distribution;
+
+//#[cfg(feature = "std")]
+//use rand::distributions::Distribution;
 
 
 #[cfg(feature = "std")]
 use rand_chacha::ChaChaRng;
 
-#[cfg(feature = "std")]
-use rand::distributions::Standard;
+//#[cfg(feature = "std")]
+//use rand::distributions::Standard;
 
 
 
@@ -74,34 +69,116 @@ use crate::crypto::{
 use rstd::cmp::Ordering;
 
 
-use crate::{crypto::{Public as TraitPublic, UncheckedFrom, CryptoType, Derive}};
+#[cfg(feature = "std")]
+use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{
+	Signature as ECSig, verify as sig_verify,
+};
+
+
+use crate::{crypto::{Public as TraitPublic,  CryptoType, Derive}};
+//UncheckedFrom
 //use crate::hash::{H256, H512};
 use codec::{Encode, Decode};
 
 #[cfg(feature = "std")]
 use serde::{ Deserialize, Deserializer, Serialize, Serializer,de::Visitor,de::SeqAccess,ser::SerializeSeq,de::Error};
 
- use rstd::marker::PhantomData;
+// use rstd::marker::PhantomData;
 
+#[cfg(feature = "std")]
+use rand::RngCore;
 
 
 /// Public key size
-pub const PK_SIZE: usize = 48;
+pub const PK_SIZE: usize = 33;
 /// Secret key size
 pub const SK_SIZE: usize = 32;
 /// Signature size
-pub const SIG_SIZE: usize = 96;
+pub const SIG_SIZE: usize = 65;
 
 
-/// A Badger  public key.
+
+
+
 #[derive(   Clone, Encode, Decode)]
-pub struct Public(pub [u8; PK_SIZE]);
+#[cfg_attr(feature = "std", derive(Serialize, Hash,Deserialize))]
+pub struct Public(pub Vec<u8>);
+
 
 impl Default for Public {
 	fn default() -> Self {
-		Public([0u8; PK_SIZE])
+		Public(Vec::new())
 	}
 }
+
+
+
+impl From<Public> for Vec<u8> {
+	fn from(x: Public) -> Vec<u8> {
+		x.0
+	}
+}
+
+impl AsRef<[u8]> for Public {
+	fn as_ref(&self) -> &[u8] {
+		&self.0[..]
+	}
+}
+
+impl AsMut<[u8]> for Public {
+	fn as_mut(&mut self) -> &mut [u8] {
+		&mut self.0[..]
+	}
+}
+
+
+#[cfg(feature = "std")]
+impl From<secp256_k1::Secp256k1Point> for Public {
+	fn from(x: secp256_k1::Secp256k1Point) -> Public {
+		Public(bincode::serialize(&x).expect("Public serialize error"))
+	}
+}
+
+#[cfg(feature = "std")]
+impl From<Public> for secp256_k1::Secp256k1Point {
+	fn from(x: Public) -> secp256_k1::Secp256k1Point {
+		bincode::deserialize(&x.0).unwrap_or(secp256_k1::Secp256k1Point::random_point())
+	}
+}
+
+
+#[cfg(feature = "std")]
+impl std::fmt::Display for Public {
+	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+		write!(f, "PublicKey:{}", self.to_ss58check())
+	}
+}
+
+
+impl rstd::convert::TryFrom<&[u8]> for Public {
+	type Error = ();
+
+	fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
+		if data.len() == PK_SIZE {
+			let mut inner = Vec::new();
+			inner.copy_from_slice(data);
+			Ok(Public(inner))
+		} else {
+			Err(())
+		}
+	}
+}
+#[cfg(feature = "std")]
+impl std::fmt::Debug for Public {
+	fn fmt(&self, f: &mut std::fmt::Formatter) -> ::std::fmt::Result {
+		let s = self.to_ss58check();
+		write!(f, "PublicKey:{} ({}...)", crate::hexdisplay::HexDisplay::from(&self.0), &s[0..8])
+	}
+}
+
+
+
+
 
 
 impl PartialOrd for Public {
@@ -123,9 +200,11 @@ impl PartialEq for Public {
 	}
 impl Eq for Public {}
 
-/// A Badger keypair
+
+
+/// A esdsa (pure) keypair
 #[cfg(feature = "std")]
-pub struct Pair(pub Public, pub SecretKey);
+pub struct Pair(pub Public, pub secp256_k1::Secp256k1Scalar);
 
 #[cfg(feature = "std")]
 impl Clone for Pair {
@@ -137,155 +216,61 @@ impl Clone for Pair {
 	}
 }
 
-impl AsRef<[u8; PK_SIZE]> for Public {
-	fn as_ref(&self) -> &[u8; PK_SIZE] {
-		&self.0
+
+
+
+
+
+
+impl Derive for Public {
+	/// Derive a child key from a series of given junctions.
+	///
+	/// `None` if there are any hard junctions in there.
+    /// Faked out for now, since we don't derive in keygen
+	#[cfg(feature = "std")]
+	fn derive<Iter: Iterator<Item=DeriveJunction>>(&self, _path: Iter) -> Option<Public> {
+		/*let mut acc = PublicKey::from_bytes(self.as_ref()).ok()?;
+		for j in path {
+			match j {
+				DeriveJunction::Soft(cc) => acc = acc.derived_key_simple(ChainCode(cc), &[]).0,
+				DeriveJunction::Hard(_cc) => return None,
+			}
+		}
+		Some(Self(acc.to_bytes()))*/
+		//no derivation...
+
+		Some(self.clone())
 	}
 }
 
-impl AsRef<[u8]> for Public {
-	fn as_ref(&self) -> &[u8] {
-		&self.0[..]
-	}
-}
+#[derive(Encode, Decode)]
+pub struct Signature(pub [u8; SIG_SIZE]);
 
-impl AsMut<[u8]> for Public {
-	fn as_mut(&mut self) -> &mut [u8] {
-		&mut self.0[..]
-	}
-}
 
-impl From<Public> for [u8; PK_SIZE] {
-	fn from(x: Public) -> [u8; PK_SIZE] {
-		x.0
-	}
-}
+
 
 #[cfg(feature = "std")]
-impl From<PublicKey> for Public {
-	fn from(x: PublicKey) -> Public {
-		let mut ret=[0; PK_SIZE];
-		let ser=bincode::serialize(&x).expect("Public key not serialized");
-		ret.copy_from_slice(&ser[..PK_SIZE]);
-		Public(ret)
-	}
-}
-
-#[cfg(feature = "std")]
-impl From<Signature> for B_Signature {
-	fn from(x: Signature) -> B_Signature {
+impl From<Signature> for ECSig {
+	fn from(x: Signature) -> ECSig {
 		bincode::deserialize(&x.0).expect("Signature is incorrect")
 	}
 }
 
-
-
-impl rstd::convert::TryFrom<&[u8]> for Public {
-	type Error = ();
-
-	fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
-		if data.len() == PK_SIZE {
-			let mut inner = [0u8; PK_SIZE];
-			inner.copy_from_slice(data);
-			Ok(Public(inner))
-		} else {
-			Err(())
-		}
+/*
+#[cfg(feature = "std")]
+impl From<&Signature> for &ECSig {
+	fn from(x: &Signature) -> &ECSig {
+		&bincode::deserialize(&x.0).expect("Signature is incorrect")
 	}
-}
+}*/
+
+
+
+
 
 use rstd::convert::TryFrom;
+use rstd::vec::Vec;
 
-
-impl UncheckedFrom<[u8; PK_SIZE]> for Public {
-	fn unchecked_from(x: [u8; PK_SIZE]) -> Self {
-		Public::from_raw(x)
-	}
-}
-
-
-#[cfg(feature = "std")]
-impl std::fmt::Display for Public {
-	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-		write!(f, "{}", self.to_ss58check())
-	}
-}
-
-#[cfg(feature = "std")]
-impl std::fmt::Debug for Public {
-	fn fmt(&self, f: &mut std::fmt::Formatter) -> ::std::fmt::Result {
-		let s = self.to_ss58check();
-		write!(f, "{} ({}...)", crate::hexdisplay::HexDisplay::from(&self.0), &s[0..8])
-	}
-}
-
-#[cfg(feature = "std")]
-impl Serialize for Public {
-	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
-		let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
-        for e in self.0.iter() {
-            seq.serialize_element(e)?;
-        }
-        seq.end()
-		//serializer.serialize_str(&self.to_ss58check())
-	}
-}
-
-#[cfg(feature = "std")]
-struct PkVisitor<T> {
-                        element: PhantomData<T>,
-                    }
-
-#[cfg(feature = "std")]
-impl<'de, T> Visitor<'de> for PkVisitor<T>
-                        where T: Default + Copy + Deserialize<'de>
-                    {
-                        type Value = [T; PK_SIZE];
-
-                        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                            formatter.write_str(concat!("an array of length ", 32))
-                        }
-
-                        fn visit_seq<A>(self, mut seq: A) -> Result<[T; PK_SIZE], A::Error>
-                            where A: SeqAccess<'de>
-                        {
-                            let mut arr = [T::default(); PK_SIZE];
-                            for i in 0..PK_SIZE {
-                                arr[i] = seq.next_element()?
-                                    .ok_or_else(|| A::Error::invalid_length(i, &self))?;
-                            }
-                            Ok(arr)
-                        }
-                    }
-
-#[cfg(feature = "std")]
-impl<'de> Deserialize<'de> for Public {
-
-
-
-	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
-        let visitor = PkVisitor { element: PhantomData };
-		match deserializer.deserialize_seq( visitor)
-		{
-			Ok(res) =>Ok(Public(res)),
-			Err(e) =>Err(e)
-		}
-		 
-	}
-}
-
-#[cfg(feature = "std")]
-impl std::hash::Hash for Public {
-	fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-		self.0.hash(state);
-	}
-}
-
-/// An Schnorrkel/Ristretto x25519 ("sr25519") signature.
-///
-/// Instead of importing it for the local module, alias it to be available as a public type
-#[derive(Encode, Decode)]
-pub struct Signature(pub [u8; SIG_SIZE]);
 
 impl rstd::convert::TryFrom<&[u8]> for Signature {
 	type Error = ();
@@ -353,9 +338,12 @@ impl AsMut<[u8]> for Signature {
 }
 
 #[cfg(feature = "std")]
-impl From<B_Signature> for Signature {
-	fn from(s: B_Signature) -> Signature {
-		Signature(s.to_bytes())
+impl From<ECSig> for Signature {
+	fn from(s: ECSig) -> Signature {
+        let bts=bincode::serialize(&s).expect("Could not serialize");
+        let mut arr=[0u8;SIG_SIZE];
+        arr.copy_from_slice(&bts);
+		Signature(arr)
 	}
 }
 
@@ -364,7 +352,8 @@ impl From<B_Signature> for Signature {
 #[cfg(feature = "std")]
 impl std::fmt::Debug for Signature {
 	fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
-		write!(f, "{}", crate::hexdisplay::HexDisplay::from(&self.0))
+      
+		write!(f, "Signature:{}", crate::hexdisplay::HexDisplay::from(&self.0))
 	}
 }
 
@@ -410,39 +399,21 @@ impl Signature {
 
 }
 
-impl Derive for Public {
-	/// Derive a child key from a series of given junctions.
-	///
-	/// `None` if there are any hard junctions in there.
-	#[cfg(feature = "std")]
-	fn derive<Iter: Iterator<Item=DeriveJunction>>(&self, _path: Iter) -> Option<Public> {
-		/*let mut acc = PublicKey::from_bytes(self.as_ref()).ok()?;
-		for j in path {
-			match j {
-				DeriveJunction::Soft(cc) => acc = acc.derived_key_simple(ChainCode(cc), &[]).0,
-				DeriveJunction::Hard(_cc) => return None,
-			}
-		}
-		Some(Self(acc.to_bytes()))*/
-		//no derivation...
 
-		Some(self.clone())
-	}
-}
 
 impl Public {
 	/// A new instance from the given 32-byte `data`.
 	///
 	/// NOTE: No checking goes on to ensure this is a real public key. Only use it if
 	/// you are certain that the array actually is a pubkey. GIGO!
-	pub fn from_raw(data: [u8; PK_SIZE]) -> Self {
+	pub fn from_raw(data: Vec<u8>) -> Self {
 		Public(data)
 	}
 
 
 	/// Return a slice filled with raw data.
-	pub fn as_array_ref(&self) -> &[u8; PK_SIZE] {
-		self.as_ref()
+	pub fn as_array_ref(&self) -> &Vec<u8> {
+		&self.0
 	}
 }
 
@@ -452,24 +423,27 @@ impl TraitPublic for Public {
 	/// NOTE: No checking goes on to ensure this is a real public key. Only use it if
 	/// you are certain that the array actually is a pubkey. GIGO!
 	fn from_slice(data: &[u8]) -> Self {
-		let mut r = [0u8; PK_SIZE];
+		let mut r = Vec::<u8>::new();
 		r.copy_from_slice(data);
 		Public(r)
 	}
 }
 
 
+
 #[cfg(feature = "std")]
-impl From<SecretKey> for Pair {
-	fn from(sec: SecretKey) -> Pair {
-		Pair(sec.public_key().into(),sec)
+impl From<secp256_k1::Secp256k1Scalar> for Pair {
+	fn from(sec: secp256_k1::Secp256k1Scalar) -> Pair {
+        let gen=secp256_k1::Secp256k1Point::generator();
+        let pk = gen.scalar_mul(&sec.get_element());
+		Pair(pk.into(),sec)
 	}
 }
 
 
 #[cfg(feature = "std")]
-impl From<Pair> for SecretKey {
-	fn from(p: Pair) -> SecretKey {
+impl From<Pair> for secp256_k1::Secp256k1Scalar {
+	fn from(p: Pair) -> secp256_k1::Secp256k1Scalar {
 		p.1
 	}
 }
@@ -478,6 +452,9 @@ impl From<Pair> for SecretKey {
 /// The raw secret key, which can be used to recreate the `Pair`.
 #[cfg(feature = "std")]
 type Seed = [u8; SK_SIZE];
+
+#[cfg(feature = "std")]
+use secp256k1::{Secp256k1, Message};
 
 #[cfg(feature = "std")]
 impl TraitPair for Pair {
@@ -498,7 +475,7 @@ impl TraitPair for Pair {
 
 	/// Get the public key.
 	fn public(&self) -> Public {
-		let mut pk = [0u8; PK_SIZE];
+		let mut pk = Vec::new();
 		pk.copy_from_slice(self.0.as_ref());
 		Public(pk)
 	}
@@ -510,7 +487,7 @@ impl TraitPair for Pair {
 	fn from_seed_slice(seed: &[u8]) -> Result<Pair, SecretStringError> {
 		match seed.len() {
 			SK_SIZE => {
-				let secr:SecretKey=bincode::deserialize(seed)
+				let secr:secp256_k1::Secp256k1Scalar=bincode::deserialize(seed)
 						.map_err(|_| SecretStringError::InvalidSeed)?;
 				Ok(secr.into())
 			}
@@ -559,15 +536,28 @@ impl TraitPair for Pair {
 
 	fn sign(&self, message: &[u8]) -> Signature {
 		//let context = signing_context(SIGNING_CTX);
-		self.1.sign(message).into()
+        //don't actually use it!
+        let mut hasher=Sha256::new();
+        hasher.input(message);
+        let result = hasher.result();
+        let message = Message::from_slice(&result[..32]).expect("32 bytes");
+        let secp = Secp256k1::new();
+        let sig = secp.sign(&message, &self.1.get_element());
+        Signature::default()
+		//self.1.sign(message).into()
 	}
 
 	/// Verify a signature on a message. Returns true if the signature is good.
 	fn verify<M: AsRef<[u8]>>(sig: &Self::Signature, message: M, pubkey: &Self::Public) -> bool {
 
-		match PublicKey::from_bytes(pubkey.0)
+        let mut hasher=Sha256::new();
+        hasher.input(message.as_ref());
+        let result = hasher.result();
+        let sg_tr=sig.clone();
+
+		match secp256_k1::Secp256k1Point::from_bytes(&pubkey.0)
 		{
-			Ok(pk) => pk.verify(&sig.clone().into(), message),
+			Ok(pk) =>  match  sig_verify(&sg_tr.into(),&pk,&BigInt::from(&result[..]))  {Ok(_)=>true,Err(_)=>false},//pk.verify(&sig.clone().into(), message),
 			Err(_) => return false 
 		}
 		
@@ -575,17 +565,21 @@ impl TraitPair for Pair {
 
 	/// Verify a signature on a message. Returns true if the signature is good.
 	fn verify_weak<P: AsRef<[u8]>, M: AsRef<[u8]>>(sig: &[u8], message: M, pubkey: P) -> bool {
-        let mut ser:[u8; PK_SIZE ]=[0;PK_SIZE];
+        let mut ser=Vec::<u8>::new();
+         let mut hasher=Sha256::new();
+        hasher.input(message.as_ref());
+         let result = hasher.result();
         ser.copy_from_slice(pubkey.as_ref());
-		match PublicKey::from_bytes(ser)
+		match secp256_k1::Secp256k1Point::from_bytes(&ser)
 		{
-			Ok(pk) => pk.verify(& Signature::try_from(sig).expect("Length error").into(), message),
+			Ok(pk) => match sig_verify(& Signature::try_from(sig).expect("Length error").into(),&pk,&BigInt::from(&result[..]))
+              {Ok(_)=>true,Err(_)=>false},// pk.verify(& Signature::try_from(sig).expect("Length error").into(), message),
 			Err(_) => return false 
 		}
 	}
 	/// Return a vec filled with raw data.
 	fn to_raw_vec(&self) -> Vec<u8> {
-		 bincode::serialize(&SerdeSecret(&self.1)).expect("Failed serialize")
+		 bincode::serialize(&self.1).expect("Failed serialize")
 	}
 }
 
@@ -602,8 +596,14 @@ impl Pair {
         pbkdf2::<Hmac<Sha512>>(entropy, salt.as_bytes(), 2048, &mut seed);
 		let mut seed_half = [0u8; SK_SIZE];
 		seed_half.copy_from_slice(&seed[..SK_SIZE]);
-		let sk:SecretKey=Standard.sample(&mut ChaChaRng::from_seed(seed_half));
-		let ser=bincode::serialize(&SerdeSecret(&sk)).expect("Failed serialize qed");
+        let mut arr = [0u8; 32];
+        ChaChaRng::from_seed(seed_half).fill_bytes(&mut arr[..]);
+
+        //let big:BigInt= BigInt::from(&arr);
+        
+        let mut sk:secp256_k1::Secp256k1Scalar=ECScalar::zero();
+        sk.set_element(secp256_k1::SK::from_slice(&arr[0..arr.len()]).unwrap());
+		let ser=bincode::serialize(&sk).expect("Failed serialize qed");
 		seed_half.copy_from_slice(&ser[..SK_SIZE]);
         ( sk.into(),seed_half )
 

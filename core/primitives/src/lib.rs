@@ -58,6 +58,7 @@ pub mod child_storage_key;
 pub mod ed25519;
 pub mod sr25519;
 pub mod hbbft_thresh;
+pub mod ecdsa_keygen;
 pub mod hash;
 mod hasher;
 pub mod offchain;

@@ -10,7 +10,7 @@ pub mod chain_spec;
 mod service;
 mod factory_impl;
 
-use inherents::InherentDataProviders;
+//use inherents::InherentDataProviders;
 
 use tokio::prelude::Future;
 use tokio::runtime::{Builder as RuntimeBuilder, Runtime};
@@ -34,7 +34,7 @@ pub enum ChainSpec {
 	LocalTestnet,
 
 }
-use network::{config::DummyFinalityProofRequestBuilder};
+//use network::{config::DummyFinalityProofRequestBuilder};
 /// Custom subcommands.
 #[derive(Clone, Debug, StructOpt)]
 pub enum CustomSubcommands {

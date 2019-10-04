@@ -251,7 +251,7 @@ impl<Block: BlockT, N: Network<Block>> Sink<MessageWithReceiver> for MessageSend
 {
   type Error = Error;
 
-  fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>>
+  fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>>
   {
     Poll::Ready(Ok(()))
   }

@@ -57,7 +57,7 @@ fn staging_testnet_config_genesis() -> GenesisConfig {
 	];
 
 	const ENDOWMENT: Balance = 10_000_000 * DOLLARS;
-	const STASH: Balance = 100 * DOLLARS;
+	//const STASH: Balance = 100 * DOLLARS;
 
 	GenesisConfig {
 		system: Some(SystemConfig {

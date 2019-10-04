@@ -157,7 +157,92 @@ pub(crate) struct Environment<B, E, Block: BlockT, N: Network<Block>, RA,Storage
 	pub config: NodeConfig,
 	pub bridge: NetworkBridge<Block, N>,
 	pub state: Arc<RwLock<KeyGenState>>,
-	pub offchain:ARc<RwLock<Storage>>,
+	pub offchain:Arc<RwLock<Storage>>,
+}
+use mpe_primitives::MAIN_DB_PREFIX;
+use primitives::crypto::Public;
+use mpe_primitives::{get_data_prefix,get_key_prefix,get_complete_list_prefix,RequestId};
+impl<B, E, Block: BlockT, N: Network<Block>, RA,Storage> Environment<B, E, Block, N, RA,Storage> 
+where Storage:OffchainStorage
+{
+	pub fn set_request_data(&self,request_id:RequestId,request_data:&[u8])
+	{
+		let mut key:Vec<u8>=get_data_prefix(request_id);
+		self.local_storage_set(StorageKind::PERSISTENT, &key, request_data)   
+	}
+    pub fn set_request_complete(&self,request_id:RequestId) ->Result<(),&'static str>
+	{
+		let mut key:Vec<u8>=get_complete_list_prefix();
+		let mut reqs=Vec::<RequestId>::new();
+        if let Some(data)=self.local_storage_get(&key)
+		{
+			reqs=match Decode::decode(&mut data.as_ref())
+			{
+				Ok(res) => res,
+				Err(_) => return Err("Invalid data stored")
+			}
+		}
+		reqs.push(request_id);
+		reqs.sort();
+		reqs.dedup();
+        self.local_storage_set(StorageKind::PERSISTENT,&key,&reqs.encode());
+		Ok(())
+	}
+	pub fn set_request_public_key<PK>(&self,request_id:RequestId,public_key:&PK) ->Result<(),&'static str>
+	where PK:  Public
+	{
+		let mut key:Vec<u8>=get_key_prefix(request_id);
+		if let Some(_)=self.local_storage_get(&key)
+		{
+			return Err("Can only set key once per request")
+		}
+		self.local_storage_set(StorageKind::PERSISTENT, &key, public_key.as_slice())  ;
+		self.set_request_complete(request_id)?;
+
+		Ok(())
+
+	}
+	pub fn set_request_failure(&self,request_id:RequestId) ->Result<(),&'static str>
+	{
+		let mut key:Vec<u8>=get_key_prefix(request_id);
+		if let Some(_)=self.local_storage_get(&key)
+		{
+			return Err("Can only set key/fail once per request")
+		}
+		let fail=[255u8;1];
+		
+		self.local_storage_set(StorageKind::PERSISTENT, &key, &fail) ;
+		self.set_request_complete(request_id)?;
+
+		Ok(())
+
+	}
+
+	pub fn local_storage_set(&self, kind: StorageKind, key: &[u8], value: &[u8]) {
+		match kind {
+			StorageKind::PERSISTENT => self.offchain.write().set(STORAGE_PREFIX, key, value),
+			StorageKind::LOCAL => {},
+		}
+	}
+	pub fn local_storage_get(&self,  key: &[u8]) -> Option<Vec<u8>> 
+	{
+			self.offchain.read().get(STORAGE_PREFIX, key)
+	}
+	pub fn local_storage_compare_and_set(
+		&self,
+		kind: StorageKind,
+		key: &[u8],
+		old_value: Option<&[u8]>,
+		new_value: &[u8],
+	) -> bool {
+		match kind {
+			StorageKind::PERSISTENT => {
+				self.offchain.write().compare_and_set(STORAGE_PREFIX, key, old_value, new_value)
+			},
+			StorageKind::LOCAL => false ,
+		}
+	}
+
 }
 
 #[cfg(not(feature = "upgraded"))]
@@ -254,7 +339,7 @@ where
 			config,
 			bridge,
 			state: Arc::new(RwLock::new(state)),
-			offchain:db,
+			offchain:Arc::new(RwLock::new(db)),
 		});
 		let mut work = Self {
 			key_gen: get_empty(),
@@ -274,12 +359,9 @@ where
 			self.key_gen=get_empty();
 		}
 	}
-	pub fn local_storage_set(&mut self, kind: StorageKind, key: &[u8], value: &[u8]) {
-		match kind {
-			StorageKind::PERSISTENT => self.env.offchain.write().set(STORAGE_PREFIX, key, value),
-			StorageKind::LOCAL => {},
-		}
-	}
+
+
+
 }
 
 

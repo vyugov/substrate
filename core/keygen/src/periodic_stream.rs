@@ -5,22 +5,22 @@ use std::{
 	time::{Duration, Instant},
 };
 
-use client::{
-	backend::Backend, blockchain::HeaderBackend, error::Error as ClientError, error::Result,
-	BlockchainEvents, CallExecutor, Client,
-};
+//use client::{
+//	backend::Backend, blockchain::HeaderBackend, error::Error as ClientError, error::Result,
+//	BlockchainEvents, CallExecutor, Client,
+//};
 //use codec::{Decode, Encode};
-use consensus_common::SelectChain;
+//use consensus_common::SelectChain;
 
 #[cfg(feature = "upgraded")]
-use futures03::{ prelude::*, stream::Fuse, channel::mpsc};
+use futures03::{ prelude::*, stream::Fuse, };//channel::mpsc};
 
 
 #[cfg(not(feature = "upgraded"))]
 use futures::{ prelude::*, stream::Fuse, sync::mpsc};
 
 
-use inherents::InherentDataProviders;
+//use inherents::InherentDataProviders;
 use log::{debug, info, warn};
 use sr_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
 use tokio_timer::Interval;
@@ -150,10 +150,10 @@ where
 			}
 		}
 
-		while let futures::Async::Ready(Some(p)) = match self
+		while let futures::Async::Ready(Some(_p)) = match self
 			.check_pending
 			.poll()
-			.map_err(|e| Error::Network("pending err".to_string()))
+			.map_err(|_e| Error::Network("pending err".to_string()))
 			 {
 				 Ok(dat) => dat,
 				 Err(_) => return 	 futures03::Poll::Pending,
