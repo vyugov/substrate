@@ -197,6 +197,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 		let all_peers_len = inner.get_peers_len();
 
 		if all_peers_len >= players {
+			panic!("peers enough");
 			// don't take > n peers
 			return;
 		}
@@ -239,6 +240,12 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 		let gossip_msg = GossipMessage::decode(&mut data);
 		if let Ok(gossip_msg) = gossip_msg {
 			let topic = super::string_topic::<Block>("hash");
+			match gossip_msg {
+				// GossipMessage::ConfirmPeers(_, _) => {
+				// 	return network_gossip::ValidationResult::ProcessAndDiscard(topic);
+				// }
+				_ => {}
+			}
 			return network_gossip::ValidationResult::ProcessAndKeep(topic);
 		}
 		network_gossip::ValidationResult::Discard

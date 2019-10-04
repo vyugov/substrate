@@ -64,16 +64,15 @@ pub enum Error {
 pub struct NodeConfig {
 	pub threshold: Count,
 	pub players: Count,
-	pub name: Option<String>,
 	pub keystore: Option<KeyStorePtr>,
 }
 
 impl NodeConfig {
-	pub fn name(&self) -> &str {
-		self.name
-			.as_ref()
-			.map(|s| s.as_str())
-			.unwrap_or("<unknown>")
+	pub fn get_params(&self) -> Parameters {
+		Parameters {
+			threshold: self.threshold,
+			share_count: self.players,
+		}
 	}
 }
 
@@ -217,7 +216,7 @@ where
 					let validator = self.env.bridge.validator.inner.read();
 
 					println!(
-						"INDEX {:?} state: commits {:?} decommits {:?} vss {:?} ss {:?}  proof {:?} has key {:?} complete {:?} periodic ready {:?}",
+						"INDEX {:?} state: commits {:?} decommits {:?} vss {:?} ss {:?}  proof {:?} has key {:?} complete {:?} periodic ready {:?} peers hash {:?}",
 						validator.get_local_index(),
 						state.commits.len(),
 						state.decommits.len(),
@@ -226,7 +225,8 @@ where
 						state.proofs.len(),
 						state.local_key.is_some(),
 						state.complete,
-						is_ready
+						is_ready,
+						validator.get_peers_hash()
 					);
 					(
 						validator.is_local_complete(),
@@ -269,6 +269,7 @@ where
 
 pub fn run_key_gen<B, E, Block, N, RA>(
 	local_peer_id: PeerId,
+	(threshold, players): (PeerIndex, PeerIndex),
 	keystore: KeyStorePtr,
 	client: Arc<Client<B, E, Block, RA>>,
 	network: N,
@@ -283,9 +284,8 @@ where
 	RA: Send + Sync + 'static,
 {
 	let config = NodeConfig {
-		name: None,
-		threshold: 1,
-		players: 6,
+		threshold,
+		players,
 		keystore: Some(keystore),
 	};
 

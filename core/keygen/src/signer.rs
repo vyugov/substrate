@@ -174,7 +174,12 @@ where
 			.push((GossipMessage::KeyGen(proof_msg, hash), None));
 	}
 
-	fn handle_cpm(&mut self, cpm: ConfirmPeersMessage, all_peers_hash: u64) -> bool {
+	fn handle_cpm(
+		&mut self,
+		cpm: ConfirmPeersMessage,
+		sender: PeerId,
+		all_peers_hash: u64,
+	) -> bool {
 		let players = self.env.config.players;
 
 		match cpm {
@@ -205,16 +210,15 @@ where
 			ConfirmPeersMessage::Confirmed(sender_string_id) => {
 				println!("recv confirmed msg");
 
-				// let sender = sender.clone().unwrap();
-				// println!("sender id {:?} {:?}", sender.to_base58(), *sender_string_id);
-				// if sender.to_base58() != *sender_string_id {
-				// 	return;
-				// }
-
-				let sender = PeerId::from_str(&sender_string_id);
-				if sender.is_err() {
+				println!("sender id {:?} {:?}", sender.to_base58(), sender_string_id);
+				if sender.to_base58() != sender_string_id {
 					return false;
 				}
+
+				// let sender = PeerId::from_str(&sender_string_id);
+				// if sender.is_err() {
+				// 	return false;
+				// }
 
 				{
 					let state = self.env.state.read();
@@ -224,7 +228,7 @@ where
 				}
 
 				let mut validator = self.env.bridge.validator.inner.write();
-				validator.set_peer_generating(&sender.unwrap());
+				validator.set_peer_generating(&sender);
 
 				if validator.get_peers_len() == players as usize {
 					let local_index = validator.get_local_index();
@@ -282,10 +286,7 @@ where
 				}
 
 				if state.commits.len() == players as usize {
-					let params = Parameters {
-						threshold: self.env.config.threshold,
-						share_count: self.env.config.players,
-					};
+					let params = self.env.config.get_params();
 
 					let commits = state.commits.values().cloned().collect::<Vec<_>>();
 					let decommits = state.decommits.values().cloned().collect::<Vec<_>>();
@@ -390,19 +391,14 @@ where
 				let our_hash = validator.get_peers_hash();
 
 				println!("cpm msg local state {:?}", validator.local_state());
-				if !validator.is_local_awaiting_peers() {
+
+				if sender.is_none() {
 					return false;
 				}
 				drop(validator);
-				return self.handle_cpm(cpm, all_peers_hash);
+				return self.handle_cpm(cpm, sender.unwrap(), all_peers_hash);
 			}
 			GossipMessage::KeyGen(kgm, all_peers_hash) => {
-				let mut rng = rand::thread_rng();
-				let b = rng.gen_bool(0.5);
-				if b {
-					println!("RANDOM FAILURE");
-					return false;
-				}
 				println!("recv key gen msg");
 				let validator = self.env.bridge.validator.inner.read();
 				println!("kgm local state {:?}", validator.local_state());
@@ -440,7 +436,10 @@ where
 
 		while let Async::Ready(Some(item)) = self.global_in.poll()? {
 			let (msg, sender) = item;
-			let is_ok = self.handle_incoming(msg, sender);
+			let is_ok = self.handle_incoming(msg.clone(), sender);
+			if !is_ok {
+				// println!("NOT OK MSG {:?}", msg);
+			}
 
 			if !rebuild_state_changed {
 				let should_rebuild = self.last_message_ok ^ is_ok;

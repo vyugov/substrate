@@ -119,7 +119,6 @@ fn make_test_network() -> impl Future<Item = Tester, Error = ()> {
 	let config = NodeConfig {
 		threshold: 1,
 		players: 3,
-		name: None,
 		keystore: None,
 	};
 

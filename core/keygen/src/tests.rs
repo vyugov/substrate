@@ -127,7 +127,14 @@ fn test_1_of_3_key_gen() {
 		// }
 
 		let full_client = client.as_full().unwrap();
-		let node = run_key_gen(local_peer_id, keystore, full_client, network).unwrap();
+		let node = run_key_gen(
+			local_peer_id,
+			(1, peers_len as u16),
+			keystore,
+			full_client,
+			network,
+		)
+		.unwrap();
 		runtime.spawn(node);
 	}
 
