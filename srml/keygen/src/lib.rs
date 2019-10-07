@@ -19,32 +19,32 @@
 // re-export since this is necessary for `impl_apis` in runtime.
 //pub use substrate_badger_primitives as fg_primitives;
 use app_crypto::RuntimeAppPublic;
-use codec::{self as codec, Codec, Decode, Encode, Error};
+use codec::{self as codec,  Decode, Encode}; //Codec,, Error
 use primitives::offchain::StorageKind;
 use rstd::prelude::*;
 use sr_primitives::traits::Member;
 use sr_primitives::traits::Printable;
 use sr_primitives::{
   generic::{DigestItem, OpaqueDigestItemId},
-  traits::Zero,
-  Perbill,
+ // traits::Zero,
+ // Perbill,
 };
 use srml_support::{
   decl_event, decl_module, decl_storage, dispatch::Result as dresult, ensure, print,
-  storage::StorageMap, storage::StorageValue, Parameter,
+   storage::StorageValue, Parameter, //storage::StorageMap,
 };
 use substrate_mpecdsa_primitives::{
-  get_complete_list_prefix, get_data_prefix, get_key_prefix, ConsensusLog, RequestId,
+  get_complete_list_prefix, get_key_prefix, ConsensusLog, RequestId, //get_data_prefix, 
   MAIN_DB_PREFIX, MP_ECDSA_ENGINE_ID,
 };
 
 use system::ensure_none;
 use system::offchain::SubmitUnsignedTransaction;
 
-#[cfg(feature = "std")]
-use serde::{Deserialize, Serialize};
+//#[cfg(feature = "std")]
+//use serde::{Deserialize, Serialize};
 
-use sr_primitives::ConsensusEngineId;
+//use sr_primitives::ConsensusEngineId;
 
 //use fg_primitives::HBBFT_ENGINE_ID;
 //pub use fg_primitives::{AuthorityId, ConsensusLog};
@@ -187,7 +187,7 @@ decl_module! {
     }
 
 
-    fn on_finalize(block_number: T::BlockNumber) {
+    fn on_finalize(_block_number: T::BlockNumber) {
 
           //TODO: check if I need to add anything.
 
@@ -198,7 +198,7 @@ decl_module! {
   {
   let _who =	ensure_signed(origin)?;
   let mut a:Vec<u8>=MAIN_DB_PREFIX.to_vec();
-  let mut b=req_id.encode();
+  let mut b=req_id.encode(); 
   a.append(&mut b);
     let kind = primitives::offchain::StorageKind::PERSISTENT;
   runtime_io::local_storage_set(kind,&a,b"new");
@@ -284,7 +284,7 @@ impl<T: Trait> Module<T>
         return;
       }
 
-      requests.iter().filter(|req_id| {
+      let _:Vec<RequestId>=requests.iter().filter(|req_id| {
         let key: Vec<u8> = get_key_prefix(**req_id);
         let result = runtime_io::local_storage_get(StorageKind::PERSISTENT, &key);
         if let Some(r) = result
@@ -298,7 +298,7 @@ impl<T: Trait> Module<T>
           return false;
         }
         return true;
-      });
+      }).cloned().collect();
     }
   }
   /// Attempt to extract a Keygen log from a generic digest.

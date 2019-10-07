@@ -1326,4 +1326,3 @@ fn explicit_sync_request<B: BlockT>(
 	}
 	None
 }
-

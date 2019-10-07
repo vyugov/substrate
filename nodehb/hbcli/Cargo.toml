@@ -43,7 +43,7 @@ rand = "0.6"
 finality_tracker = { package = "srml-finality-tracker", path = "../../srml/finality-tracker", default-features = false }
 system = { package = "srml-system", path = "../../srml/system" }
 balances = { package = "srml-balances", path = "../../srml/balances", default-features = false }
-futures03 = { package = "futures-preview", version = "=0.3.0-alpha.18", features = ["compat"] }
+futures03 = { package = "futures-preview", version = "=0.3.0-alpha.19", features = ["compat"] }
 parking_lot = "0.8.0"
 keygen = { package="substrate-keygen", path = "../../core/keygen", features = ["upgraded"] }
 

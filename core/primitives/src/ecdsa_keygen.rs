@@ -23,7 +23,7 @@ use bincode;
 
 
 #[cfg(feature = "std")]
-use rand::SeedableRng;
+use rand_old::SeedableRng;
 
 #[cfg(feature = "std")]
 use sha2::Sha512;
@@ -51,8 +51,8 @@ use hmac::Hmac;
 #[cfg(feature = "std")]
 use rand_chacha::ChaChaRng;
 
-//#[cfg(feature = "std")]
-//use rand::distributions::Standard;
+#[cfg(feature = "std")]
+use rand_old::RngCore;
 
 
 
@@ -85,8 +85,7 @@ use serde::{ Deserialize, Serialize,};// Serializer,de::Visitor,de::SeqAccess,se
 
 // use rstd::marker::PhantomData;
 
-#[cfg(feature = "std")]
-use rand::RngCore;
+
 
 
 /// Public key size

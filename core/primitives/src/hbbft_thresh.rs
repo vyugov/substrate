@@ -26,8 +26,10 @@
 extern crate alloc;
 
 #[cfg(feature = "std")]
-use rand::SeedableRng;
+use rand_old::SeedableRng;
 
+//#[cfg(feature = "std")]
+//use rand::SeedableRng;
 #[cfg(feature = "std")]
 use sha2::Sha512;
 
@@ -50,14 +52,14 @@ use badger::crypto::{ PublicKey,  SecretKey,Signature as B_Signature,};
 //PublicKeySet PublicKeyShare SecretKeyShare
 
 #[cfg(feature = "std")]
-use rand::distributions::Distribution;
+use rand_old::distributions::Distribution;
 
 
 #[cfg(feature = "std")]
 use rand_chacha::ChaChaRng;
 
 #[cfg(feature = "std")]
-use rand::distributions::Standard;
+use rand_old::distributions::Standard;
 
 
 

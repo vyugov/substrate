@@ -27,7 +27,7 @@ use wasmi::{
 	Module, ModuleInstance, MemoryInstance, MemoryRef, TableRef, ImportsBuilder, ModuleRef,
 	memory_units::Pages, RuntimeValue::{I32, I64, self},
 };
-use crate::error::{Error, Result};
+use super::{sandbox, allocator, error::{Error, Result}};
 use codec::{Encode, Decode};
 use primitives::{
 	blake2_128, blake2_256, twox_64, twox_128, twox_256, ed25519, sr25519,hbbft_thresh, Pair, crypto::KeyTypeId,
@@ -35,8 +35,7 @@ use primitives::{
 	traits::Externalities, //child_storage_key::ChildStorageKey,
 };
 use trie::{TrieConfiguration, trie_types::Layout};
-use crate::sandbox;
-use crate::allocator;
+
 use log::{trace,info};
 use wasm_interface::{
 	FunctionContext, HostFunctions, Pointer, WordSize, Sandbox, MemoryId, PointerType,
