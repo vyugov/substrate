@@ -21,8 +21,8 @@ use futures::{ prelude::*, stream::Fuse, sync::mpsc};
 
 
 //use inherents::InherentDataProviders;
-use log::{debug, info, warn};
-use sr_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
+//use log::{debug, info, warn};
+use sr_primitives::traits::{Block as BlockT,  NumberFor, ProvideRuntimeApi};//DigestFor,
 use tokio_timer::Interval;
 
 use crate::Error;

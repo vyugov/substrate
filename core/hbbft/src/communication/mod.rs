@@ -337,7 +337,7 @@ impl rand::distributions::Distribution<PeerIdW> for rand::distributions::Standar
     }
   }
 }
-use bytes::Bytes;
+
 use std::convert::TryInto;
 impl rand::distributions::Distribution<PeerIdW> for PeerIdW
 {
@@ -680,13 +680,13 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
       {
         LocalTarget::Nodes(node_set) =>
         {
-          let mut inner = self.inner.write();
+          let  inner = self.inner.write();
           let av_list = inner.peers.connected_peer_list();
           for to_id in node_set.iter()
           {
             debug!("BaDGER!! Id_net {}", &to_id.0);
 
-            if (av_list.contains(&to_id.0))
+            if av_list.contains(&to_id.0)
             {
               self.send_message_either(to_id.0.clone(), vdata.clone(), context_net, context_val);
             }

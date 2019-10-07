@@ -18,9 +18,9 @@
 
 // re-export since this is necessary for `impl_apis` in runtime.
 //pub use substrate_badger_primitives as fg_primitives;
-use primitives::offchain::{ StorageKind};
 use app_crypto::RuntimeAppPublic;
 use codec::{self as codec, Codec, Decode, Encode, Error};
+use primitives::offchain::StorageKind;
 use rstd::prelude::*;
 use sr_primitives::traits::Member;
 use sr_primitives::traits::Printable;
@@ -30,10 +30,13 @@ use sr_primitives::{
   Perbill,
 };
 use srml_support::{
-  decl_event, decl_module, decl_storage, dispatch::Result as dresult, ensure, print, storage::StorageMap,
-  storage::StorageValue, Parameter,
+  decl_event, decl_module, decl_storage, dispatch::Result as dresult, ensure, print,
+  storage::StorageMap, storage::StorageValue, Parameter,
 };
-use substrate_mpecdsa_primitives::{ConsensusLog, MAIN_DB_PREFIX, MP_ECDSA_ENGINE_ID,get_data_prefix,get_key_prefix,get_complete_list_prefix,RequestId};
+use substrate_mpecdsa_primitives::{
+  get_complete_list_prefix, get_data_prefix, get_key_prefix, ConsensusLog, RequestId,
+  MAIN_DB_PREFIX, MP_ECDSA_ENGINE_ID,
+};
 
 use system::ensure_none;
 use system::offchain::SubmitUnsignedTransaction;
@@ -47,29 +50,32 @@ use sr_primitives::ConsensusEngineId;
 //pub use fg_primitives::{AuthorityId, ConsensusLog};
 use system::{ensure_signed, DigestOf};
 
-pub mod sr25519 {
-	mod app_sr25519 {
-		use app_crypto::{app_crypto, key_types::IM_ONLINE, sr25519};
-		app_crypto!(sr25519, IM_ONLINE);
+pub mod sr25519
+{
+  mod app_sr25519
+  {
+    use app_crypto::{app_crypto, key_types::IM_ONLINE, sr25519};
+    app_crypto!(sr25519, IM_ONLINE);
 
-		impl From<Signature> for sr_primitives::AnySignature {
-			fn from(sig: Signature) -> Self {
-				sr25519::Signature::from(sig).into()
-			}
-		}
-	}
+    impl From<Signature> for sr_primitives::AnySignature
+    {
+      fn from(sig: Signature) -> Self
+      {
+        sr25519::Signature::from(sig).into()
+      }
+    }
+  }
 
-	/// An i'm online keypair using sr25519 as its crypto.
-	#[cfg(feature = "std")]
-	pub type AuthorityPair = app_sr25519::Pair;
+  /// An i'm online keypair using sr25519 as its crypto.
+  #[cfg(feature = "std")]
+  pub type AuthorityPair = app_sr25519::Pair;
 
-	/// An i'm online signature using sr25519 as its crypto.
-	pub type AuthoritySignature = app_sr25519::Signature;
+  /// An i'm online signature using sr25519 as its crypto.
+  pub type AuthoritySignature = app_sr25519::Signature;
 
-	/// An i'm online identifier using sr25519 as its crypto.
-	pub type AuthorityId = app_sr25519::Public;
+  /// An i'm online identifier using sr25519 as its crypto.
+  pub type AuthorityId = app_sr25519::Public;
 }
-
 
 //#[derive(Decode, Encode, PartialEq, Eq, Clone,Hash)]
 pub type AuthorityId = ([u8; 32], [u8; 16]);
@@ -81,10 +87,9 @@ pub trait Trait: system::Trait
   /// The event type of this module.
   type Event: From<Event> + Into<<Self as system::Trait>::Event>;
   type AuthorityId: Member + Parameter + RuntimeAppPublic + Default + Ord;
-  	/// A dispatchable call type.
-	type Call: From<Call<Self>>;
+  /// A dispatchable call type.
+  type Call: From<Call<Self>>;
   type SubmitTransaction: SubmitUnsignedTransaction<Self, <Self as Trait>::Call>;
-
 }
 
 decl_event!(
@@ -92,7 +97,7 @@ decl_event!(
   pub enum Event
   {
     /// New authority set has been applied.
-    NewAuthorities(Vec<AuthorityId>),
+    NewResult(RequestId),
   }
 );
 
@@ -102,7 +107,9 @@ decl_storage! {
     pub Keys get(keys): Vec<T::AuthorityId>;
    // pub ReqIds get(requests): Vec<u64>;
     pub RequestResults: map u64 => Option<Option<[u8;32]>>;
-    //RequestResultVotes: double_map u64; u64  => Option<Option<[u8;32]>>;
+
+
+    //RequestResultVotes: maps authority/requestid to request vote
     pub RequestResultVotes: double_map T::AuthorityId, blake2_256(u64) => Option<Option<Vec<u8>>>;
      }
   add_extra_genesis {
@@ -145,7 +152,6 @@ pub struct KeygenResult
   pub our_auth_index: AuthIndex,
 }
 
-
 decl_module! {
   pub struct Module<T: Trait> for enum Call where origin: T::Origin {
     fn deposit_event() = default;
@@ -163,7 +169,7 @@ decl_module! {
       {
         Err("Non existent public key.")?
       }
-      
+
       let public_un = public.unwrap();
 
       let exists = <RequestResultVotes<T>>::exists(
@@ -190,7 +196,7 @@ decl_module! {
     //	Self::deposit_log(ConsensusLog::Resume(delay));
   fn send_log(origin,req_id:u64) ->dresult
   {
-  let who =	ensure_signed(origin)?;
+  let _who =	ensure_signed(origin)?;
   let mut a:Vec<u8>=MAIN_DB_PREFIX.to_vec();
   let mut b=req_id.encode();
   a.append(&mut b);
@@ -234,10 +240,10 @@ impl<T: Trait> Module<T>
     let mut local_keys = T::AuthorityId::all();
     local_keys.sort();
     let data = match r.len()
-      {
-        1 => None,
-        _ => Some(r),
-      };
+    {
+      1 => None,
+      _ => Some(r),
+    };
 
     for (authority_index, key) in
       authorities
@@ -250,7 +256,6 @@ impl<T: Trait> Module<T>
             .map(|location| (index as u32, &local_keys[location]))
         })
     {
-      
       let res = KeygenResult {
         req_id: id,
         result_data: data.clone(),
@@ -259,33 +264,28 @@ impl<T: Trait> Module<T>
       let signature = key.sign(&res.encode()).ok_or(OffchainErr::FailedSigning)?;
       let call = Call::report_result(res, signature);
       T::SubmitTransaction::submit_unsigned(call).map_err(|_| OffchainErr::SubmitTransaction)?;
-   
     }
-      Ok(())
+    Ok(())
   }
 
-
-  pub fn offchain() 
+  pub fn offchain()
   {
-    let cl_key=get_complete_list_prefix();
+    let cl_key = get_complete_list_prefix();
     let result = runtime_io::local_storage_get(StorageKind::PERSISTENT, &cl_key);
     if let Some(dat) = result
     {
-     let requests:Vec<RequestId>=match Decode::decode(&mut dat.as_ref())
-			{
-				Ok(res) => res,
-				Err(_) => return 
-			};
-        if requests.len() == 0
-    {
-      return
-    }
-    
+      let requests: Vec<RequestId> = match Decode::decode(&mut dat.as_ref())
+      {
+        Ok(res) => res,
+        Err(_) => return,
+      };
+      if requests.len() == 0
+      {
+        return;
+      }
 
-    requests
-      .iter()
-      .filter(|req_id| {
-        let mut key: Vec<u8> = get_key_prefix(**req_id);
+      requests.iter().filter(|req_id| {
+        let key: Vec<u8> = get_key_prefix(**req_id);
         let result = runtime_io::local_storage_get(StorageKind::PERSISTENT, &key);
         if let Some(r) = result
         {

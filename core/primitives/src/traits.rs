@@ -87,8 +87,10 @@ pub trait BareCryptoStore: Send + Sync {
     /// Initiates a (key) request with a given id, returns error if request exists or could not be created
 	fn initiate_request(&self, request_id: &[u8],key_type: KeyTypeId) -> Result<(), ()>;
 
-	/// returns key data or 
+	/// gets data of the request details
     fn get_request_data(&self, request_id: &[u8],key_type: KeyTypeId) -> Option<Vec<u8>>;
+
+	/// sets request data (binary blob) 
 	fn set_request_data(&self, request_id: &[u8],key_type: KeyTypeId,request_data: &[u8]) ->Result<(),()>;
 
 

@@ -267,6 +267,8 @@ impl Store {
 		buf.push("rq_".to_owned()+&key_type + request.as_str());
 		buf
 	}
+
+	
 	fn request_exists(&self,request_id: &[u8],key_type: KeyTypeId) -> bool
 	{
 		self.key_request_file_path(request_id,key_type).exists()
@@ -357,7 +359,7 @@ impl BareCryptoStore for Store {
 		{
 			Ok(_fl) => {},
 			Err(_) => return Err(())
-		};;
+		};
 		match file.flush(){
 			Ok(_fl) => {},
 			Err(_) => return Err(())

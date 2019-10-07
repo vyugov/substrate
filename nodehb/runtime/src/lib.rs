@@ -24,7 +24,7 @@ use rstd::prelude::*;
 use support::{
 	construct_runtime, parameter_types, traits::{Currency, }
 };
-use primitives::u32_trait::{_1, _2, _3, _4};
+//use primitives::u32_trait::{_1, _2, _3, _4};
 use hb_node_primitives::{
 	AccountId, AccountIndex, Balance, BlockNumber, Hash, Index,
 	Moment, Signature,ContractExecResult,

@@ -22,7 +22,7 @@ use gossip::{GossipMessage, GossipValidator};
 use network::{consensus_gossip as network_gossip, NetworkService, PeerId};
 use network_gossip::ConsensusMessage;
 use sr_primitives::traits::{
-	Block as BlockT, DigestFor, Hash as HashT, Header as HeaderT, NumberFor, ProvideRuntimeApi,
+	Block as BlockT,  Hash as HashT, Header as HeaderT, //DigestFor, NumberFor, ProvideRuntimeApi, 
 };
 
 use mpe_primitives::MP_ECDSA_ENGINE_ID;
@@ -392,6 +392,7 @@ where <N as Network<B>>::In: Unpin
 					match msg 
 			       {
 				   GossipMessage::Message(message) => return future::ready(Some((message, sender))),
+				   _ =>{}
 			        }
 				  
 				  return future::ready(None)

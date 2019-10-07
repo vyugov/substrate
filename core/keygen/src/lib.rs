@@ -167,12 +167,12 @@ where Storage:OffchainStorage
 {
 	pub fn set_request_data(&self,request_id:RequestId,request_data:&[u8])
 	{
-		let mut key:Vec<u8>=get_data_prefix(request_id);
+		let  key:Vec<u8>=get_data_prefix(request_id);
 		self.local_storage_set(StorageKind::PERSISTENT, &key, request_data)   
 	}
     pub fn set_request_complete(&self,request_id:RequestId) ->Result<(),&'static str>
 	{
-		let mut key:Vec<u8>=get_complete_list_prefix();
+		let  key:Vec<u8>=get_complete_list_prefix();
 		let mut reqs=Vec::<RequestId>::new();
         if let Some(data)=self.local_storage_get(&key)
 		{
@@ -191,7 +191,7 @@ where Storage:OffchainStorage
 	pub fn set_request_public_key<PK>(&self,request_id:RequestId,public_key:&PK) ->Result<(),&'static str>
 	where PK:  Public
 	{
-		let mut key:Vec<u8>=get_key_prefix(request_id);
+		let  key:Vec<u8>=get_key_prefix(request_id);
 		if let Some(_)=self.local_storage_get(&key)
 		{
 			return Err("Can only set key once per request")
@@ -529,6 +529,9 @@ where
 	// 	signers.push(current_id);
 	// 	set_signers(&**client.backend(), signers);
 	// }
+    let (sink,stream)=mpsc::unbounded::<(RequestId,Vec<u8>)>();
+
+	//
 	let bridge = NetworkBridge::new(network, config.clone(), local_peer_id);
     let streamer=client.clone().import_notification_stream().for_each(move |n| {
 		info!(target: "keygen", "HEADER {:?}, looking for consensus message", &n.header);
@@ -570,6 +573,7 @@ where
 		futures03::future::ready( ())
 //		Ok(())
 	});
+	
 	
 	let key_gen_work = KeyGenWork::new(client, config, bridge,backend.offchain_storage().expect("Need offchain for keygen work")).map_err(|e| error!("Error {:?}", e));
 

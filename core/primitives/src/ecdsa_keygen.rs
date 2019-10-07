@@ -18,8 +18,8 @@ use bincode;
 //#[cfg(feature = "std")]
 //use digest::digest::Digest;
 
-#[cfg(feature = "std")]
-use crate::Public as PTrait;
+//#[cfg(feature = "std")]
+//use crate::Public as PTrait;
 
 
 #[cfg(feature = "std")]
@@ -81,7 +81,7 @@ use crate::{crypto::{Public as TraitPublic,  CryptoType, Derive}};
 use codec::{Encode, Decode};
 
 #[cfg(feature = "std")]
-use serde::{ Deserialize, Deserializer, Serialize, Serializer,de::Visitor,de::SeqAccess,ser::SerializeSeq,de::Error};
+use serde::{ Deserialize, Serialize,};// Serializer,de::Visitor,de::SeqAccess,ser::SerializeSeq,de::Error}; //
 
 // use rstd::marker::PhantomData;
 
@@ -99,7 +99,7 @@ pub const SIG_SIZE: usize = 65;
 
 
 
-
+/// Public key for ecdsa
 #[derive(   Clone, Encode, Decode)]
 #[cfg_attr(feature = "std", derive(Serialize, Hash,Deserialize))]
 pub struct Public(pub Vec<u8>);
@@ -243,6 +243,7 @@ impl Derive for Public {
 	}
 }
 
+/// signature for ecdsa
 #[derive(Encode, Decode)]
 pub struct Signature(pub [u8; SIG_SIZE]);
 
@@ -543,7 +544,12 @@ impl TraitPair for Pair {
         let message = Message::from_slice(&result[..32]).expect("32 bytes");
         let secp = Secp256k1::new();
         let sig = secp.sign(&message, &self.1.get_element());
-        Signature::default()
+		let mut buf=[0u8;SIG_SIZE];
+		buf.copy_from_slice( &bincode::serialize(&sig).unwrap()[..]);
+        Signature
+		 {
+			0:buf
+			 }
 		//self.1.sign(message).into()
 	}
 

@@ -16,7 +16,7 @@
 
 //! Substrate chain configurations.
 
-use primitives::{ed25519, sr25519, Pair,Public, crypto::UncheckedInto};
+use primitives::{sr25519, Pair,Public, crypto::UncheckedInto};// ed25519, 
 use hb_node_primitives::{AccountId,  Balance};
 use substrate_service;
 use hex_literal::hex;

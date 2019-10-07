@@ -1,4 +1,4 @@
-use std::cmp::{ Ordering};//min,
+//use std::cmp::{ Ordering};//min,
 use std::collections::{hash_map::DefaultHasher, BTreeSet, HashMap, };//VecDeque
 //use std::convert::From;
 use std::hash::{Hash, Hasher};
@@ -6,10 +6,10 @@ use std::iter::Iterator;
 use std::str::FromStr;
 
 //use codec::{Decode, Encode, Error as CodecError, Input};
-use log::{ error, trace, warn};//debug
+use log::{ trace, warn};//debug error,
 //use multihash::Multihash as PkHash;
 //use serde::ser::SerializeStruct;
-use serde::{ Deserializer, Serialize, Serializer};//Deserialize
+use serde::{  Serialize, Serializer};//Deserialize Deserializer,
 
 use network::{ PeerId};//config::Roles
 
