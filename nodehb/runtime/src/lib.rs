@@ -61,7 +61,7 @@ pub use support::StorageValue;
 
 /// Implementations of some helper traits passed into runtime modules as associated types.
 pub mod impls;
-use impls::{CurrencyToVoteHandler, WeightMultiplierUpdateHandler, Author, WeightToFee};
+use impls::{WeightMultiplierUpdateHandler, Author, WeightToFee}; //CurrencyToVoteHandler 
 
 /// Constant values used within the runtime.
 pub mod constants;

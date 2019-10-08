@@ -1201,7 +1201,8 @@ pub struct NetworkStream
     futures03::channel::mpsc::UnboundedReceiver<network_gossip::TopicNotification>,
   >,
 }
-use std::{pin::Pin, task::Context, task::Poll};
+use std::pin::Pin;
+use futures03::{ task::Context, task::Poll};
 
 impl Stream for NetworkStream
 {

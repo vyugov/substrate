@@ -82,7 +82,7 @@
 //!
 //! We only send polite messages to peers,
 
-use runtime_primitives::traits::Block as BlockT;
+//use runtime_primitives::traits::Block as BlockT;
 //use network::consensus_gossip::{self as network_gossip, MessageIntent, ValidatorContext};
 use fg_primitives::{AuthorityId, AuthoritySignature};
 use network::PeerId; //config::Roles,

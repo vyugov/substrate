@@ -181,13 +181,13 @@ impl Alternative {
 		})
 	}
 
-	pub(crate) fn from(s: &str) -> Option<Self> {
+	/*pub(crate) fn from(s: &str) -> Option<Self> {
 		match s {
 			"dev" => Some(Alternative::Development),
 			"" | "local" => Some(Alternative::LocalTestnet),
 			_ => None,
 		}
-	}
+	}*/
 }
 
 fn development_config_genesis() -> GenesisConfig {
