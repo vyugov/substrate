@@ -1,23 +1,18 @@
-//use std::cmp::{ Ordering};//min,
-use std::collections::{hash_map::DefaultHasher, BTreeSet, HashMap, };//VecDeque
-//use std::convert::From;
+use std::cmp::{min, Ordering};
+use std::collections::{hash_map::DefaultHasher, BTreeSet, HashMap};
+use std::convert::From;
 use std::hash::{Hash, Hasher};
 use std::iter::Iterator;
 use std::str::FromStr;
 
-//use codec::{Decode, Encode, Error as CodecError, Input};
-use log::{ trace, warn};//debug error,
-//use multihash::Multihash as PkHash;
-//use serde::ser::SerializeStruct;
-use serde::{  Serialize, Serializer};//Deserialize Deserializer,
+use network::{config::Roles, PeerId};
 
-use network::{ PeerId};//config::Roles
-
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum PeerState {
 	AwaitingPeers,
 	Generating,
 	Complete,
+	Canceled,
 }
 
 impl Default for PeerState {
@@ -40,7 +35,7 @@ impl Default for PeerInfo {
 }
 
 #[derive(Debug)]
-pub(crate) struct Peers {
+pub struct Peers {
 	map: HashMap<PeerId, PeerInfo>,
 	set: BTreeSet<String>,
 }
@@ -74,11 +69,20 @@ impl Peers {
 		self.map.iter()
 	}
 
+	pub fn contains_peer_id(&self, who: &PeerId) -> bool {
+		self.map.contains_key(who)
+	}
+
 	pub fn keys(&self) -> impl Iterator<Item = &PeerId> {
 		self.map.keys()
 	}
 
-	fn set_state(&mut self, who: &PeerId, state: PeerState) {
+	pub fn get_state(&self, who: &PeerId) -> Option<PeerState> {
+		let peer = self.map.get(who);
+		peer.map(|p| p.state)
+	}
+
+	pub fn set_state(&mut self, who: &PeerId, state: PeerState) {
 		let peer = self.map.get_mut(who).expect("Peer not found!");
 		peer.state = state;
 	}
@@ -87,14 +91,6 @@ impl Peers {
 		let mut hasher = DefaultHasher::new();
 		self.set.hash(&mut hasher);
 		hasher.finish()
-	}
-
-	pub fn set_generating(&mut self, who: &PeerId) {
-		self.set_state(who, PeerState::Generating);
-	}
-
-	pub fn set_complete(&mut self, who: &PeerId) {
-		self.set_state(who, PeerState::Complete);
 	}
 
 	pub fn get_position(&self, who: &PeerId) -> Option<usize> {

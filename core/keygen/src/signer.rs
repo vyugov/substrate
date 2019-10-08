@@ -1,103 +1,37 @@
-use std::{collections::VecDeque, sync::Arc};// marker::PhantomData,
+use std::{collections::VecDeque, marker::PhantomData, str::FromStr, sync::Arc};
 
 use codec::{Decode, Encode};
 use curv::GE;
-use client::backend::OffchainStorage;
-
-#[cfg(not(feature = "upgraded"))]
-use futures::prelude::*;
-
-#[cfg(feature = "upgraded")]
-use futures03::prelude::*;
-
-#[cfg(feature = "upgraded")]
+use futures03::{prelude::*, channel::mpsc};
 use futures03::Poll;
-
-#[cfg(feature = "upgraded")]
 use futures03::core_reexport::pin::Pin;
 
-
-use log::{ error, info,}; //debug, warn
+use log::{debug, error, info, warn};
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{Keys, Parameters};
-//use tokio_executor::DefaultExecutor;
-//use tokio_timer::Interval;
+use rand::prelude::Rng;
+use tokio_executor::DefaultExecutor;
+use tokio_timer::Interval;
+use client::backend::OffchainStorage;
+use crate::communication::MWSStream;
+use crate::communication::MWSSink;
+
 
 use client::{
 	backend::Backend, error::Error as ClientError, error::Result as ClientResult, BlockchainEvents,
 	CallExecutor, Client,
 };
-//use consensus_common::SelectChain;
-//use inherents::InherentDataProviders;
+use consensus_common::SelectChain;
+use inherents::InherentDataProviders;
 use network::PeerId;
-use primitives::{Blake2Hasher, H256,ecdsa_keygen};
+use primitives::{Blake2Hasher, H256};
 use sr_primitives::generic::BlockId;
 use sr_primitives::traits::{Block as BlockT, NumberFor, ProvideRuntimeApi};
 
-
 use super::{
-	ConfirmPeersMessage, Environment, Error, GossipMessage, KeyGenMessage, Message,
-	MessageWithSender, Network, PeerIndex, SignMessage,
+	ConfirmPeersMessage, Environment, Error, GossipMessage, KeyGenMessage, MessageWithSender,
+	Network, PeerIndex, SignMessage,
 };
-use crate::communication::MWSStream;
-use crate::communication::MWSSink;
 
-#[cfg(not(feature = "upgraded"))]
-struct Buffered<S: Sink> {
-	inner: S,
-	buffer: VecDeque<S::SinkItem>,
-}
-
-
-#[cfg(not(feature = "upgraded"))]
-impl<S: Sink> Buffered<S> {
-	fn new(inner: S) -> Buffered<S> {
-		Buffered {
-			buffer: VecDeque::new(),
-			inner,
-		}
-	}
-
-	// push an item into the buffered sink.
-	// the sink _must_ be driven to completion with `poll` afterwards.
-	fn push(&mut self, item: S::SinkItem) {
-		self.buffer.push_back(item);
-	}
-
-	// returns ready when the sink and the buffer are completely flushed.
-	fn poll(&mut self) -> Poll<(), S::SinkError> {
-		let polled = self.schedule_all()?;
-
-		match polled {
-			Async::Ready(()) => self.inner.poll_complete(),
-			Async::NotReady => {
-				self.inner.poll_complete()?;
-				Ok(Async::NotReady)
-			}
-		}
-	}
-
-	fn schedule_all(&mut self) -> Poll<(), S::SinkError> {
-		while let Some(front) = self.buffer.pop_front() {
-			match self.inner.start_send(front) {
-				Ok(AsyncSink::Ready) => continue,
-				Ok(AsyncSink::NotReady(front)) => {
-					self.buffer.push_front(front);
-					break;
-				}
-				Err(e) => return Err(e),
-			}
-		}
-
-		if self.buffer.is_empty() {
-			Ok(Async::Ready(()))
-		} else {
-			Ok(Async::NotReady)
-		}
-	}
-}
-
-
-#[cfg(feature = "upgraded")]
 struct Buffered<A,S>
 where S: futures03::sink::Sink<A, Error = Error>+Unpin
  {
@@ -105,12 +39,11 @@ where S: futures03::sink::Sink<A, Error = Error>+Unpin
 	buffer: VecDeque<A>,
 }
 
-#[cfg(feature = "upgraded")]
 impl<A,S>  Unpin for  Buffered<A,S>
 where S: futures03::sink::Sink<A, Error = Error>+Unpin
 {}
 
-#[cfg(feature = "upgraded")]
+
 impl<SinkItem,S> Buffered<SinkItem,S> 
 where S: futures03::sink::Sink<SinkItem, Error = Error>+Unpin,
 {
@@ -121,7 +54,9 @@ where S: futures03::sink::Sink<SinkItem, Error = Error>+Unpin,
 			inner,
 		}
 	}
-
+    fn is_empty(&self) -> bool {
+		self.buffer.is_empty()
+	}
 	// push an item into the buffered sink.
 	// the sink _must_ be driven to completion with `poll` afterwards.
 	fn push(&mut self, item: SinkItem) {
@@ -183,20 +118,6 @@ where S: futures03::sink::Sink<SinkItem, Error = Error>+Unpin,
 
 
 
-
-
-#[cfg(not(feature = "upgraded"))]
-pub(crate) struct Signer<B, E, Block: BlockT, N: Network<Block>, RA, In, Out,Storage>
-where
-	In: Stream<Item = MessageWithSender, Error = Error>,
-	Out: Sink<SinkItem = MessageWithSender, SinkError = Error>,
-{
-	env: Arc<Environment<B, E, Block, N, RA,Storage>>,
-	global_in: In,
-	global_out: Buffered<Out>,
-}
-
-#[cfg(feature = "upgraded")]
 pub(crate) struct Signer<B, E, Block: BlockT, N: Network<Block>, RA, In, Out,Storage>
 where
 	In: Stream<Item = MessageWithSender>,
@@ -205,7 +126,10 @@ where
 	env: Arc<Environment<B, E, Block, N, RA,Storage>>,
 	global_in: In,
 	global_out: Buffered<MessageWithSender,Out>,
+	should_rebuild: bool,
+	last_message_ok: bool,
 }
+
 
 
 impl<B, E, Block, N, RA, In, Out,Storage> Signer<B, E, Block, N, RA, In, Out,Storage>
@@ -219,23 +143,31 @@ where
 	RA: Send + Sync + 'static,
 	In: MWSStream,
 	Out: MWSSink,
-	Storage: OffchainStorage,
+	Storage:OffchainStorage,
 {
-	pub fn new(env: Arc<Environment<B, E, Block, N, RA,Storage>>, global_in: In, global_out: Out) -> Self {
-		Signer {
+	pub fn new(
+		env: Arc<Environment<B, E, Block, N, RA,Storage>>,
+		global_in: In,
+		global_out: Out,
+		last_message_ok: bool,
+	) -> Self {
+		Self {
 			env,
 			global_in,
 			global_out: Buffered::new(global_out),
+			should_rebuild: false,
+			last_message_ok,
 		}
 	}
 
 	fn generate_shared_keys(&mut self) {
-		info!("generate_shared_keys");
+		let players = self.env.config.players as usize;
 		let mut state = self.env.state.write();
-		if state.confirmations.vss != state.confirmations.secret_share
-			|| state.confirmations.vss != self.env.config.players - 1
-			|| state.confirmations.secret_share != self.env.config.players - 1
-			|| state.complete
+		if state.complete
+			|| state.shared_keys.is_some()
+			|| state.vsss.len() != players
+			|| state.secret_shares.len() != players
+			|| state.decommits.len() != players
 		{
 			return;
 		}
@@ -245,116 +177,160 @@ where
 			share_count: self.env.config.players,
 		};
 
-		let mut key: Keys;
-		if let Some(vk)= state.local_key.clone()
-		{
-			key=vk;
-		}
-		else
-       { 
-      return;
-       }
-
+		let key = state.local_key.clone().unwrap();
 
 		let vsss = state.vsss.values().cloned().collect::<Vec<_>>();
-
 		let secret_shares = state.secret_shares.values().cloned().collect::<Vec<_>>();
-
 		let points = state.decommits.values().map(|x| x.y_i).collect::<Vec<_>>();
 
-		let (shared_keys, proof) = key
-			.phase2_verify_vss_construct_keypair_phase3_pok_dlog(
-				&params,
-				points.as_slice(),
-				secret_shares.as_slice(),
-				vsss.as_slice(),
-				key.party_index + 1,
-			)
-			.unwrap();
+		let res = key.phase2_verify_vss_construct_keypair_phase3_pok_dlog(
+			&params,
+			points.as_slice(),
+			secret_shares.as_slice(),
+			vsss.as_slice(),
+			key.party_index + 1,
+		);
 
-		println!("shared keys: {:?} proof: {:?}", shared_keys, proof);
+		if res.is_err() {
+			println!("{:?} \n {:?} \n {:?}", secret_shares, vsss, res);
+			panic!("ss error of {:?}", key.party_index);
+			return;
+		}
+
+		let (shared_keys, proof) = res.unwrap();
 
 		let i = key.party_index as PeerIndex;
 		state.proofs.insert(i, proof.clone());
-		state.complete = true;
 		state.shared_keys = Some(shared_keys);
 
 		drop(state);
 
+		println!("{:?} CREATE PROOF OK", key.party_index);
+
 		let proof_msg = KeyGenMessage::Proof(i, proof);
-		self.global_out.push((Message::KeyGen(proof_msg), None));
+		let validator = self.env.bridge.validator.inner.read();
+		let hash = validator.get_peers_hash();
+		self.global_out
+			.push((GossipMessage::KeyGen(proof_msg, hash), None));
 	}
 
-	fn handle_incoming(&mut self, msg: &Message, sender: &Option<PeerId>) {
+	fn handle_cpm(
+		&mut self,
+		cpm: ConfirmPeersMessage,
+		sender: PeerId,
+		all_peers_hash: u64,
+	) -> bool {
 		let players = self.env.config.players;
-        info!("Incoming: MSG {:?}",&msg);
-		match msg {
-			Message::ConfirmPeers(ConfirmPeersMessage::Confirming(from_index, hash)) => {
-				let sender = sender.clone().unwrap();
+
+		match cpm {
+			ConfirmPeersMessage::Confirming(from_index) => {
+				println!("recv confirming msg");
+				// let sender = sender.clone().unwrap();
 
 				let validator = self.env.bridge.validator.inner.read();
-				let index = validator.get_peer_index(&sender) as PeerIndex;
-				let our_hash = validator.get_peers_hash();
-				if *from_index == index && *hash == our_hash {
-					self.global_out.push((
-						Message::ConfirmPeers(ConfirmPeersMessage::Confirmed(
-							validator.local_string_id(),
-						)),
-						Some(sender),
-					));
+				let receiver = validator.get_peer_id_by_index(from_index as usize);
+				if receiver.is_none() {
+					return false;
 				}
-			}
-			Message::ConfirmPeers(ConfirmPeersMessage::Confirmed(sender_string_id)) => {
-				let sender = sender.clone().unwrap();
+				// let index = validator.get_peer_index(&sender) as PeerIndex;
+				// let peer_len = validator.peers.len();
+				// println!("{:?}  {:?} {:?}", *all_peers_hash, our_hash, peer_len);
 
-				let mut state = self.env.state.write();
-				state.confirmations.peer += 1;
+				// if *from_index != index || *all_peers_hash != our_hash {
+				// 	return;
+				// }
+				self.global_out.push((
+					GossipMessage::ConfirmPeers(
+						ConfirmPeersMessage::Confirmed(validator.local_string_peer_id()),
+						all_peers_hash,
+					),
+					receiver,
+				));
+			}
+			ConfirmPeersMessage::Confirmed(sender_string_id) => {
+				println!("recv confirmed msg");
+
+				println!("sender id {:?} {:?}", sender.to_base58(), sender_string_id);
+				if sender.to_base58() != sender_string_id {
+					return false;
+				}
+
+				// let sender = PeerId::from_str(&sender_string_id);
+				// if sender.is_err() {
+				// 	return false;
+				// }
+
+				{
+					let state = self.env.state.read();
+					if state.local_key.is_some() {
+						return true;
+					}
+				}
 
 				let mut validator = self.env.bridge.validator.inner.write();
 				validator.set_peer_generating(&sender);
 
-				if state.confirmations.peer == players - 1 {
-					validator.set_local_generating();
+				if validator.get_peers_len() == players as usize {
 					let local_index = validator.get_local_index();
-					drop(validator);
 
 					let key = Keys::create(local_index);
 					let (commit, decommit) = key.phase1_broadcast_phase3_proof_of_correct_key();
-
 					let index = local_index as PeerIndex;
-					state.commits.insert(index, commit.clone());
-					state.decommits.insert(index, decommit.clone());
 
-					state.local_key = Some(key);
-					drop(state);
+					{
+						let mut state = self.env.state.write();
+						state.commits.insert(index, commit.clone());
+						state.decommits.insert(index, decommit.clone());
+						state.local_key = Some(key);
+						validator.set_local_generating();
+						println!("LOCAL KEY GEN OF {:?}", index);
+						drop(validator);
+					}
 
 					let cad_msg = KeyGenMessage::CommitAndDecommit(index, commit, decommit);
-
-					self.global_out.push((Message::KeyGen(cad_msg), None));
+					self.global_out.push(
+						// broadcast
+						(GossipMessage::KeyGen(cad_msg, all_peers_hash), None),
+					);
 				}
 			}
-			Message::KeyGen(KeyGenMessage::CommitAndDecommit(from_index, commit, decommit)) => {
+		}
+		true
+	}
+
+	fn handle_kgm(&mut self, kgm: KeyGenMessage, all_peers_hash: u64) -> bool {
+		let players = self.env.config.players;
+
+		match kgm {
+			KeyGenMessage::CommitAndDecommit(from_index, commit, decommit) => {
+				println!("CAD MSG from {:?}", from_index);
 				let mut state = self.env.state.write();
-				state.confirmations.com_decom += 1;
+				if state.local_key.is_none() {
+					return false;
+				}
 
-				state.commits.insert(*from_index, commit.clone());
-				state.decommits.insert(*from_index, decommit.clone());
+				if state.commits.contains_key(&from_index) {
+					return true;
+				}
 
-				if state.confirmations.com_decom == players - 1 {
-					let params = Parameters {
-						threshold: self.env.config.threshold,
-						share_count: self.env.config.players,
-					};
+				state.commits.insert(from_index, commit);
+				state.decommits.insert(from_index, decommit);
 
-					let key: Keys = state.local_key.clone().unwrap();
+				let key = state.local_key.clone().unwrap();
+
+				let index = key.party_index as PeerIndex;
+				if state.vsss.contains_key(&index) {
+					// we already created vss
+					assert!(state.secret_shares.contains_key(&index));
+					return true;
+				}
+
+				if state.commits.len() == players as usize {
+					let params = self.env.config.get_params();
 
 					let commits = state.commits.values().cloned().collect::<Vec<_>>();
 					let decommits = state.decommits.values().cloned().collect::<Vec<_>>();
-					let us:usize=params.share_count.into();
-                     if decommits.len()==us
-					 {
 
-					 
 					let (vss, secret_shares, index) = key
 						.phase1_verify_com_phase3_verify_correct_key_phase2_distribute(
 							&params,
@@ -362,15 +338,23 @@ where
 							commits.as_slice(),
 						)
 						.unwrap();
-
 					let share = secret_shares[index].clone();
+
+					println!(
+						"vss and share {:?} \n {:?}\n of {:?}",
+						vss, secret_shares, index
+					);
+
 					state.vsss.insert(index as PeerIndex, vss.clone());
 					state.secret_shares.insert(index as PeerIndex, share);
 
 					drop(state);
 
 					self.global_out.push((
-						Message::KeyGen(KeyGenMessage::VSS(index as PeerIndex, vss)),
+						GossipMessage::KeyGen(
+							KeyGenMessage::VSS(index as PeerIndex, vss),
+							all_peers_hash,
+						),
 						None,
 					));
 
@@ -379,39 +363,38 @@ where
 					for (i, &ss) in secret_shares.iter().enumerate() {
 						if i != index {
 							let ss_msg = KeyGenMessage::SecretShare(index as PeerIndex, ss);
-							info!("Index: {:?}",i);
-							let peer = validator.get_peer_id_by_index(i).unwrap();
-							self.global_out.push((Message::KeyGen(ss_msg), Some(peer)));
+							let peer = validator.get_peer_id_by_index(i);
+							self.global_out
+								.push((GossipMessage::KeyGen(ss_msg, all_peers_hash), peer));
 						}
-					}
 					}
 				}
 			}
-			Message::KeyGen(KeyGenMessage::VSS(from_index, vss)) => {
+			KeyGenMessage::VSS(from_index, vss) => {
 				let mut state = self.env.state.write();
-				state.confirmations.vss += 1;
+				if state.vsss.contains_key(&from_index) {
+					return true;
+				}
 
-				state.vsss.insert(*from_index, vss.clone());
+				state.vsss.insert(from_index, vss.clone());
 			}
-			Message::KeyGen(KeyGenMessage::SecretShare(from_index, ss)) => {
+			KeyGenMessage::SecretShare(from_index, ss) => {
 				let mut state = self.env.state.write();
-				state.confirmations.secret_share += 1;
+				if state.secret_shares.contains_key(&from_index) {
+					return true;
+				}
 
-				state.secret_shares.insert(*from_index, ss.clone());
+				state.secret_shares.insert(from_index, ss.clone());
 			}
-			Message::KeyGen(KeyGenMessage::Proof(from_index, proof)) => {
+			KeyGenMessage::Proof(from_index, proof) => {
 				let mut state = self.env.state.write();
-				state.confirmations.proof += 1;
+				println!("RECV PROOF from {:?}", from_index);
 
-				state.proofs.insert(*from_index, proof.clone());
+				state.proofs.insert(from_index, proof.clone());
 
-				let mut validator = self.env.bridge.validator.inner.write();
-				let sender = validator
-					.get_peer_id_by_index(*from_index as usize)
-					.unwrap();
-				validator.set_peer_complete(&sender);
-
-				if state.confirmations.proof == players - 1 {
+				if state.proofs.len() == players as usize
+					&& state.decommits.len() == players as usize
+				{
 					let params = Parameters {
 						threshold: self.env.config.threshold,
 						share_count: self.env.config.players,
@@ -420,26 +403,57 @@ where
 					let proofs = state.proofs.values().cloned().collect::<Vec<_>>();
 					let points = state.decommits.values().map(|x| x.y_i).collect::<Vec<_>>();
 
-					if proofs.len() != players as usize || points.len() != players as usize {
-						return;
-					}
+					let mut validator = self.env.bridge.validator.inner.write();
 
 					if Keys::verify_dlog_proofs(&params, proofs.as_slice(), points.as_slice())
 						.is_ok()
 					{
 						info!("Key generation complete");
-						let key:ecdsa_keygen::Public=state.local_key.clone().unwrap().y_i.into();
-						self.env.set_request_public_key(0,&key);
+						println!("key gen complete");
+						state.complete = true;
 						validator.set_local_complete();
 					} else {
 						// reset everything?
 						error!("Key generation failed");
+						state.reset();
+						validator.set_local_canceled();
 					}
 				}
 			}
-			Message::Sign(_) => {}
-			_ => {}
 		}
+		true
+	}
+
+	fn handle_incoming(&mut self, msg: GossipMessage, sender: Option<PeerId>) -> bool {
+		match msg {
+			GossipMessage::ConfirmPeers(cpm, all_peers_hash) => {
+				let validator = self.env.bridge.validator.inner.read();
+				let our_hash = validator.get_peers_hash();
+
+				println!("cpm msg local state {:?}", validator.local_state());
+
+				if sender.is_none() {
+					return false;
+				}
+				drop(validator);
+				return self.handle_cpm(cpm, sender.unwrap(), all_peers_hash);
+			}
+			GossipMessage::KeyGen(kgm, all_peers_hash) => {
+				println!("recv key gen msg");
+				let validator = self.env.bridge.validator.inner.read();
+				println!("kgm local state {:?}", validator.local_state());
+
+				if validator.is_local_complete() || validator.is_local_canceled() {
+					return true;
+				}
+
+				drop(validator);
+				return self.handle_kgm(kgm, all_peers_hash);
+			}
+			GossipMessage::Sign(_) => {}
+		}
+
+		true
 	}
 }
 
@@ -452,54 +466,49 @@ where
 	N: Network<Block> + Sync,
 	N::In: Send + 'static,
 	RA: Send + Sync + 'static,
-	In: MWSStream,
+	In:MWSStream,
 	Out: MWSSink,
 	Storage: OffchainStorage,
 {
-    #[cfg(feature = "upgraded")]
 	type Output=Result<(),Error>;
 
+fn poll(mut self: Pin<&mut Self>,cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
 
-    #[cfg(not(feature = "upgraded"))]
-	type Item = ();
-
-	#[cfg(not(feature = "upgraded"))]
-	type Error = Error;
+	let mut rebuild_state_changed = false;
 
 
-	#[cfg(not(feature = "upgraded"))]
-	fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-		while let Async::Ready(Some(item)) = self.global_in.poll()? {
-			let (msg, sender) = item;
-			self.handle_incoming(&msg, &sender);
-		}
-
-		// send messages generated by `handle_incoming`
-		self.global_out.poll()?;
-		{
-			let state = self.env.state.read();
-			println!("state: {:?}", state.confirmations);
-		}
-		self.generate_shared_keys();
-
-		Ok(Async::NotReady)
-	}
-
-    #[cfg(feature = "upgraded")]
-	fn poll(mut self: Pin<&mut Self>,cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
 		while let Poll::Ready(Some(item)) = Pin::new(&mut self.global_in).poll_next(cx) {
 			let (msg, sender) = item;
-			self.handle_incoming(&msg, &sender);
+			
+			let is_ok = self.handle_incoming(msg.clone(), sender);
+			if !is_ok {
+				info!("NOT OK MSG {:?}", msg);
+			}
+
+			if !rebuild_state_changed {
+				let should_rebuild = self.last_message_ok ^ is_ok;
+				// TF or FT makes it rebuild, i.e. "edge triggering"
+				self.last_message_ok = is_ok;
+				if self.should_rebuild != should_rebuild {
+					self.should_rebuild = should_rebuild;
+					rebuild_state_changed = true;
+				}
+			}
+
 		}
 
-		// send messages generated by `handle_incoming`
-		 Pin::new(&mut self.global_out).poll(cx);
-		{
-			let state = self.env.state.read();
-			println!("state: {:?}", state.confirmations);
-		}
+
+
+	
 		self.generate_shared_keys();
 
+			// send messages generated by `handle_incoming`
+		 Pin::new(&mut self.global_out).poll(cx);
+		
+
+        if self.should_rebuild {
+			return  Poll::Ready(Err(Error::Rebuild));
+		}
 		Poll::Pending
 	}
 

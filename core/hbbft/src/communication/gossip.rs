@@ -90,23 +90,23 @@ use parity_codec::{Decode, Encode};
 
 //use substrate_telemetry::{telemetry, CONSENSUS_DEBUG};
 //use log::{trace, debug, warn};
-use futures03::prelude::*;
+//use futures03::prelude::*;
 //use futures03::channel::mpsc;
 
 use log::info;
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::{ Instant};//Duration
 
-const REBROADCAST_AFTER: Duration = Duration::from_secs(60 * 5);
-const CATCH_UP_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
-const CATCH_UP_PROCESS_TIMEOUT: Duration = Duration::from_secs(15);
+//const REBROADCAST_AFTER: Duration = Duration::from_secs(60 * 5);
+//const CATCH_UP_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+//const CATCH_UP_PROCESS_TIMEOUT: Duration = Duration::from_secs(15);
 /// Maximum number of rounds we are behind a peer before issuing a
 /// catch up request.
-const CATCH_UP_THRESHOLD: u64 = 2;
+//const CATCH_UP_THRESHOLD: u64 = 2;
 
-const KEEP_RECENT_ROUNDS: usize = 3;
+//const KEEP_RECENT_ROUNDS: usize = 3;
 
-const BADGER_TOPIC: &str = "itsasnake";
+//const BADGER_TOPIC: &str = "itsasnake";
 
 use crate::communication::PeerIdW;
 /// HB gossip message type.
@@ -135,9 +135,9 @@ pub struct GreetingMessage
 {
   pub my_pubshare: Option<AuthorityId>,
   /// the badger ID of the peer
-  pub myId: AuthorityId,
+  pub my_id: AuthorityId,
   /// Signature to verify id
-  pub mySig: AuthoritySignature,
+  pub my_sig: AuthoritySignature,
 }
 
 impl From<GreetingMessage> for GossipMessage
@@ -270,18 +270,18 @@ impl Peers
     );
   }
 
-  pub fn update_id(&mut self, who: &PeerId, authId: AuthorityId)
+  pub fn update_id(&mut self, who: &PeerId, auth_id: AuthorityId)
   {
     let peer = match self.inner.get_mut(who)
     {
       None =>
       {
-        self.inner.insert(who.clone(), PeerInfo::new_id(authId));
+        self.inner.insert(who.clone(), PeerInfo::new_id(auth_id));
         return;
       }
       Some(p) => p,
     };
-    peer.id = Some(authId);
+    peer.id = Some(auth_id);
   }
 
   pub fn peer<'a>(&'a self, who: &PeerId) -> Option<&'a PeerInfo>

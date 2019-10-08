@@ -26,9 +26,6 @@ use tokio::runtime::current_thread;
 
 use super::*;
 
-type PeerData = Mutex<Option<(u8, u8)>>;
-type MecPeer = Peer<PeerData, DummySpecialization>;
-
 pub struct TestNet {
 	peers: Vec<Peer<(), DummySpecialization>>,
 }
@@ -57,7 +54,12 @@ impl TestNetFactory for TestNet {
 		TestNet { peers: Vec::new() }
 	}
 
-	fn make_verifier(&self, _client: PeersClient, _config: &ProtocolConfig) -> Self::Verifier {
+	fn make_verifier(
+		&self,
+		_client: PeersClient,
+		_config: &ProtocolConfig,
+		_peer_data: &Self::PeerData,
+	) -> Self::Verifier {
 		PassThroughVerifier(false)
 	}
 
@@ -83,22 +85,25 @@ fn create_keystore(authority: Ed25519Keyring) -> (KeyStorePtr, tempfile::TempDir
 #[test]
 fn test_1_of_3_key_gen() {
 	use super::*;
+
 	let peers = &[
 		Ed25519Keyring::Alice,
 		Ed25519Keyring::Bob,
 		Ed25519Keyring::Charlie,
+		Ed25519Keyring::Dave,
+		Ed25519Keyring::Eve,
+		Ed25519Keyring::Ferdie,
 	];
+
+	let peers_len = peers.len();
+	let blocks = 50;
 
 	let mut runtime = current_thread::Runtime::new().unwrap();
 
-	let mut net = TestNet::new(peers.len());
-	net.peer(0).push_blocks(10, false);
-	net.block_until_sync(&mut runtime);
-	assert_eq!(net.peer(0).client().info().chain.best_number, 10);
-
+	let net = TestNet::new(peers_len);
 	let net = Arc::new(Mutex::new(net));
 
-	let mut finality_notifications = Vec::new();
+	let mut notifications = Vec::new();
 
 	let all_peers = peers.iter().cloned();
 
@@ -110,28 +115,60 @@ fn test_1_of_3_key_gen() {
 
 		let (keystore, keystore_path) = create_keystore(local_key);
 
-		finality_notifications.push(
+		// if peer_id != 0 {
+		notifications.push(
 			client
-				.finality_notification_stream()
-				.map(|v| Ok::<_, ()>(v))
+				.import_notification_stream()
+				.map(move |n| Ok::<_, ()>(n))
 				.compat()
-				.take_while(|n| Ok(n.header.number() < &10))
+				.take_while(|n| Ok(n.header.number() < &blocks))
 				.for_each(move |_| Ok(())),
 		);
-		let node =
-			run_key_gen(local_peer_id, keystore, client.as_full().unwrap(), network).unwrap();
+		// }
+
+		let full_client = client.as_full().unwrap();
+		let node = run_key_gen(
+			local_peer_id,
+			(1, peers_len as u16),
+			keystore,
+			full_client,
+			network,
+		)
+		.unwrap();
 		runtime.spawn(node);
 	}
 
-	let wait_for = futures::future::join_all(finality_notifications)
+	let sync = futures::future::poll_fn(|| {
+		// make sure all peers are connected first
+		net.lock().poll();
+		if net.lock().peer(0).num_peers() < peers_len - 1 {
+			Ok(Async::NotReady)
+		} else {
+			Ok(Async::Ready(()))
+		}
+	});
+
+	runtime.block_on(sync.map_err(|_: ()| ())).unwrap();
+
+	{
+		// at this time, the blocks are not synced
+		// so only peer 0 has 2 blocks
+		// but peer 0 doesn't get import_notifications since "block origin" is File
+		let mut net = net.lock();
+		net.peer(0).push_blocks(blocks as usize, false);
+		assert_eq!(net.peer(0).client().info().chain.best_number, blocks);
+		assert_eq!(net.peer(1).client().info().chain.best_number, 0);
+	}
+
+	let wait_for = futures::future::join_all(notifications)
 		.map(|_| ())
 		.map_err(|_| ());
 
-	let drive_to_completion = futures::future::poll_fn(|| {
+	let poll_forever = futures::future::poll_fn(|| {
 		net.lock().poll();
 		Ok(Async::NotReady)
 	});
 	let _ = runtime
-		.block_on(wait_for.select(drive_to_completion).map_err(|_| ()))
+		.block_on(wait_for.select(poll_forever).map_err(|_| ()))
 		.unwrap();
 }

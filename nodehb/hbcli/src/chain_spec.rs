@@ -137,13 +137,13 @@ pub fn get_from_seed<TPublic: Public>(seed: &str) -> <TPublic::Pair as Pair>::Pu
 }
 
 
-fn account_key(s: &str) -> AccountId {
-	get_from_seed::<AccountId>(s)
-}
+//fn account_key(s: &str) -> AccountId {
+//	get_from_seed::<AccountId>(s)
+//}
 
-impl Alternative {
+//impl Alternative {
 	/// Get an actual chain config from one of the alternatives.
-	pub(crate) fn load(self) -> Result<ChainSpec, String> {
+	/*pub(crate) fn load(self) -> Result<ChainSpec, String> {
 		Ok(match self {
 			Alternative::Development => ChainSpec::from_genesis(
 				"Development",
@@ -179,7 +179,7 @@ impl Alternative {
 				None
 			),
 		})
-	}
+	}*/
 
 	/*pub(crate) fn from(s: &str) -> Option<Self> {
 		match s {
@@ -188,7 +188,7 @@ impl Alternative {
 			_ => None,
 		}
 	}*/
-}
+//}
 
 fn development_config_genesis() -> GenesisConfig {
 	testnet_genesis(

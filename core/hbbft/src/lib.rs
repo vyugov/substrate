@@ -202,12 +202,12 @@ where
     origin: BlockOrigin,
     header: B::Header,
     justification: Option<Justification>,
-    mut body: Option<Vec<B::Extrinsic>>,
+    body: Option<Vec<B::Extrinsic>>,
   ) -> Result<(BlockImportParams<B>, Option<Vec<(CacheKeyId, Vec<u8>)>>), String>
   {
     // dummy for the moment
-    let hash = header.hash();
-    let parent_hash = *header.parent_hash();
+    //let hash = header.hash();
+    //let parent_hash = *header.parent_hash();
     let import_block = BlockImportParams {
       origin,
       header: header,
@@ -287,16 +287,16 @@ where
 
 use std::collections::BTreeMap;
 
-const REBROADCAST_AFTER: Duration = Duration::from_secs(60 * 5);
-const CATCH_UP_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
-const CATCH_UP_PROCESS_TIMEOUT: Duration = Duration::from_secs(15);
+//const REBROADCAST_AFTER: Duration = Duration::from_secs(60 * 5);
+//const CATCH_UP_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+//const CATCH_UP_PROCESS_TIMEOUT: Duration = Duration::from_secs(15);
 /// Maximum number of rounds we are behind a peer before issuing a
 /// catch up request.
-const CATCH_UP_THRESHOLD: u64 = 2;
+//const CATCH_UP_THRESHOLD: u64 = 2;
 
-const KEEP_RECENT_ROUNDS: usize = 3;
+//const KEEP_RECENT_ROUNDS: usize = 3;
 
-const BADGER_TOPIC: &str = "itsasnake";
+//const BADGER_TOPIC: &str = "itsasnake";
 
 /// Configuration for the Badger service.
 #[derive(Clone)]

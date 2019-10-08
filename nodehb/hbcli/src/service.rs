@@ -45,7 +45,7 @@ use substrate_service::{
 use inherents::InherentDataProviders;
 //use network::config::DummyFinalityProofRequestBuilder;
 use network::construct_simple_protocol;
-use transaction_pool::{self, txpool::Pool as TransactionPool};
+use transaction_pool::{self, };//txpool::Pool as TransactionPool};
 
 //use substrate_service::construct_service_factory;
 use log::info;
@@ -171,6 +171,7 @@ macro_rules! new_full {
 
 			let key_gen = keygen::run_key_gen(
 				service.network().local_peer_id(),
+        (2,4),
 				service.keystore(),
 				service.client(),
 				service.network(),

@@ -28,12 +28,12 @@
 //! under certain conditions that are used to un-stick the protocol.
 use futures03::core_reexport::marker::PhantomData;
 use hex_fmt::HexFmt;
-use libp2p::swarm::{PollParameters, Swarm};
+//use libp2p::swarm::{PollParameters, Swarm};
 use network::consensus_gossip::MessageIntent;
 use network::consensus_gossip::ValidatorContext;
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, };//Instant
 //use runtime_primitives::traits::NumberFor;
 use ::unsigned_varint::encode;
 use badger::dynamic_honey_badger::DynamicHoneyBadger;
@@ -57,7 +57,7 @@ use substrate_telemetry::{telemetry, CONSENSUS_DEBUG};
 
 use libp2p::multihash;
 use libp2p::multihash::Multihash;
-#[macro_use]
+//#[macro_use]
 use ::serde::{Serialize, Deserialize};
 use ::serde::de::DeserializeOwned;
 use fg_primitives::AuthorityId;
@@ -71,7 +71,7 @@ pub mod gossip;
 
 use crate::Error;
 
-const REBROADCAST_AFTER: Duration = Duration::from_secs(60 * 5);
+//const REBROADCAST_AFTER: Duration = Duration::from_secs(60 * 5);
 
 use crate::communication::gossip::BadgeredMessage;
 
@@ -427,7 +427,7 @@ where
   config: crate::Config,
   //next_rebroadcast: Instant,
   /// Incoming messages from other nodes that this node has not yet handled.
-  in_queue: VecDeque<SourcedMessage<D>>,
+ // in_queue: VecDeque<SourcedMessage<D>>,
   /// Outgoing messages to other nodes.
   out_queue: VecDeque<SourcedMessage<D>>,
   /// The values this node has output so far, with timestamps.
@@ -557,7 +557,7 @@ where
         .map(|(_, val)| PublicKeyWrap { 0: *val })
         .collect(),
       config: config.clone(),
-      in_queue: VecDeque::new(),
+      //in_queue: VecDeque::new(),
       out_queue: out_queue,
       outputs: outputs,
       phantom: PhantomData,
@@ -635,9 +635,9 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
     &self, context_net: Option<&N>, context_val: &mut Option<&mut dyn ValidatorContext<Block>>,
   )
   {
-    let topic = badger_topic::<Block>();
-    let mut sid: PeerId;
-    let mut drain: Vec<_>;
+   // let topic = badger_topic::<Block>();
+    let  sid: PeerId;
+    let  drain: Vec<_>;
     {
       let mut locked = self.inner.write();
       sid = locked.id.clone();
@@ -701,7 +701,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
         LocalTarget::AllExcept(exclude) =>
         {
           debug!("BaDGER!! AllExcept  {}", exclude.len());
-          let mut locked = self.inner.write();
+          let  locked = self.inner.write();
           let mut vallist: Vec<_> = locked
             .config
             .initial_validators
@@ -763,7 +763,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
   }
   pub fn push_transaction<N: Network<Block>>(&self, tx: Vec<u8>, net: &N) -> Result<(), Error>
   {
-    let mut do_flush = false;
+    let  do_flush;
     {
       let mut locked = self.inner.write();
       do_flush = match locked.push_transaction(tx)
@@ -818,15 +818,15 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
         Ok(GossipMessage::Greeting(msg)) =>
         {
           if msg
-            .myId
+            .my_id
             .0
-            .verify(&msg.mySig.0, msg.myId.0.to_bytes().to_vec())
+            .verify(&msg.my_sig.0, msg.my_id.0.to_bytes().to_vec())
           {
             info!(
               "BadGER: got Greeting {:?} {:?} {:?}",
-              &who, &msg.myId, msg.my_pubshare
+              &who, &msg.my_id, msg.my_pubshare
             );
-            if let Some(share) = msg.my_pubshare
+            if let Some(_) = msg.my_pubshare
             {
               //self.inner.write().register_peer_public_key(who,share);
             }
@@ -854,10 +854,10 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
               Some(val) => Some(PublicKeyWrap { 0: val.clone() }),
               None => None,
             },
-            myId: PublicKeyWrap {
+            my_id: PublicKeyWrap {
               0: rd.config.node_id.0.clone(),
             },
-            mySig: SignatureWrap {
+            my_sig: SignatureWrap {
               0: rd
                 .config
                 .node_id
@@ -936,7 +936,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
         .update_peer_state(who, PeerConsensusState::Connected);
     };
     let packet = {
-      let mut inner = self.inner.write();
+      let  inner = self.inner.write();
       //inner.peers.new_peer(who.clone());
       GreetingMessage {
         my_pubshare: match inner.config.initial_validators.get(&PeerIdW {
@@ -946,10 +946,10 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
           Some(val) => Some(PublicKeyWrap { 0: val.clone() }),
           None => None,
         },
-        myId: PublicKeyWrap {
+        my_id: PublicKeyWrap {
           0: inner.config.node_id.0,
         },
-        mySig: SignatureWrap {
+        my_sig: SignatureWrap {
           0: inner
             .config
             .node_id
@@ -1026,7 +1026,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
       (RwLockWriteGuard::downgrade(inner), do_rebroadcast)
     };*/
     //info!("MessageAllowed 2");
-    Box::new(move |who, intent, topic, mut data| {
+    Box::new(move |_who, intent, topic, mut data| {
       if let MessageIntent::PeriodicRebroadcast = intent
       {
         return false; //rebroadcast not needed, I hope?
@@ -1090,9 +1090,9 @@ where
     PeerId::random()
   }
 
-  fn messages_for(&self, topic: B::Hash) -> Self::In
+  fn messages_for(&self, _topic: B::Hash) -> Self::In
   {
-    let (tx, rx) =
+    let (_tx, rx) =
       futures03::channel::oneshot::channel::<futures03::channel::mpsc::UnboundedReceiver<_>>();
     NetworkStream {
       outer: rx,
@@ -1100,17 +1100,17 @@ where
     }
   }
 
-  fn register_validator(&self, validator: Arc<dyn network_gossip::Validator<B>>) {}
+  fn register_validator(&self, _validator: Arc<dyn network_gossip::Validator<B>>) {}
 
-  fn gossip_message(&self, topic: B::Hash, data: Vec<u8>, force: bool) {}
+  fn gossip_message(&self, _topic: B::Hash, _data: Vec<u8>, _force: bool) {}
 
-  fn register_gossip_message(&self, topic: B::Hash, data: Vec<u8>) {}
+  fn register_gossip_message(&self, _topic: B::Hash, _data: Vec<u8>) {}
 
-  fn send_message(&self, who: Vec<network::PeerId>, data: Vec<u8>) {}
+  fn send_message(&self, _who: Vec<network::PeerId>, _data: Vec<u8>) {}
 
-  fn report(&self, who: network::PeerId, cost_benefit: i32) {}
+  fn report(&self, _who: network::PeerId, _cost_benefit: i32) {}
 
-  fn announce(&self, block: B::Hash,data:Vec<u8>) {}
+  fn announce(&self, _block: B::Hash,_data:Vec<u8>) {}
 }
 
 impl<B, S, H> Network<B> for Arc<NetworkService<B, S, H>>
@@ -1291,8 +1291,8 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N>
     impl SendOut,
   )
   {
-    let service = self.service.clone();
-    let topic = badger_topic::<B>();
+    //let service = self.service.clone();
+    //let topic = badger_topic::<B>();
     let incoming = incoming_global::<B, N>(self.node.clone());
 
     let outgoing = TransactionFeed::<B, N>::new(self.service.clone(), is_voter, self.node.clone());
@@ -1338,7 +1338,7 @@ impl<Block: BlockT> Stream for BadgerStream<Block>
 {
   type Item = <QHB as ConsensusProtocol>::Output;
 
-  fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>>
+  fn poll_next(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Option<Self::Item>>
   {
     match self.validator.pop_output()
     {
@@ -1449,7 +1449,7 @@ impl<Block: BlockT, N: Network<Block>> Sink<Vec<Vec<u8>>> for TransactionFeed<Bl
 {
   type Error = Error;
 
-  fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>>
+  fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>>
   {
     Poll::Ready(Ok(()))
   }
@@ -1468,11 +1468,11 @@ impl<Block: BlockT, N: Network<Block>> Sink<Vec<Vec<u8>>> for TransactionFeed<Bl
     }
     Ok(())
   }
-  fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>>
+  fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>>
   {
     Poll::Ready(Ok(()))
   }
-  fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>>
+  fn poll_close(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>>
   {
     Poll::Ready(Ok(()))
   }

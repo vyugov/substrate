@@ -20,14 +20,16 @@ pub use client::ExecutionStrategies;
 pub use client_db::PruningMode;
 pub use network::config::{ExtTransport, NetworkConfiguration, Roles};
 
-use chain_spec::{ChainSpec, RuntimeGenesis, Extension, NoExtension};
-use primitives::crypto::Protected;
-//use serde::{de::DeserializeOwned, Serialize};
-//use sr_primitives::BuildStorage;
 use std::{path::PathBuf, net::SocketAddr};
 use transaction_pool;
+use chain_spec::{ChainSpec, RuntimeGenesis, Extension, NoExtension};
+use primitives::crypto::Protected;
+
+
+
 use target_info::Target;
 use tel::TelemetryEndpoints;
+
 
 /// Service configuration.
 #[derive(Clone)]
@@ -162,11 +164,5 @@ pub fn platform() -> String {
 /// Returns full version string, using supplied version and commit.
 pub fn full_version_from_strs(impl_version: &str, impl_commit: &str) -> String {
 	let commit_dash = if impl_commit.is_empty() { "" } else { "-" };
-	format!(
-		"{}{}{}-{}",
-		impl_version,
-		commit_dash,
-		impl_commit,
-		platform()
-	)
+	format!("{}{}{}-{}", impl_version, commit_dash, impl_commit, platform())
 }

@@ -97,6 +97,7 @@ struct MessageEntry<B: BlockT> {
 	message_hash: B::Hash,
 	topic: B::Hash,
 	message: ConsensusMessage,
+	sender: Option<PeerId>,
 }
 
 /// Consensus message destination.
@@ -332,12 +333,14 @@ impl<B: BlockT> ConsensusGossip<B> {
 		message_hash: B::Hash,
 		topic: B::Hash,
 		message: ConsensusMessage,
+		sender: Option<PeerId>,
 	) {
 		if self.known_messages.insert(message_hash.clone(), ()).is_none() {
 			self.messages.push(MessageEntry {
 				message_hash,
 				topic,
 				message,
+				sender,
 			});
 		}
 	}
@@ -353,7 +356,7 @@ impl<B: BlockT> ConsensusGossip<B> {
 		message: ConsensusMessage,
 	) {
 		let message_hash = HashFor::<B>::hash(&message.data[..]);
-		self.register_message_hashed(message_hash, topic, message);
+		self.register_message_hashed(message_hash, topic, message, None);
 	}
 
 	/// Call when a peer has been disconnected to stop tracking gossip status.
@@ -439,7 +442,7 @@ impl<B: BlockT> ConsensusGossip<B> {
 		{
 			tx.unbounded_send(TopicNotification {
 					message: entry.message.data.clone(),
-					sender: None,
+					sender: entry.sender.clone(),
 				})
 				.expect("receiver known to be live; qed");
 		}
@@ -508,7 +511,7 @@ impl<B: BlockT> ConsensusGossip<B> {
 					}
 				}
 				if keep {
-					self.register_message_hashed(message_hash, topic, message);
+					self.register_message_hashed(message_hash, topic, message, Some(who.clone()));
 				}
 			} else {
 				trace!(target:"gossip", "Ignored statement from unregistered peer {}", who);
@@ -563,7 +566,7 @@ impl<B: BlockT> ConsensusGossip<B> {
 		force: bool,
 	) {
 		let message_hash = HashFor::<B>::hash(&message.data);
-		self.register_message_hashed(message_hash, topic, message.clone());
+		self.register_message_hashed(message_hash, topic, message.clone(), None);
 		let intent = if force { MessageIntent::ForcedBroadcast } else { MessageIntent::Broadcast };
 		propagate(protocol, iter::once((&message_hash, &topic, &message)), intent, &mut self.peers, &self.validators);
 	}
@@ -628,6 +631,7 @@ mod tests {
 					message_hash: $hash,
 					topic: $topic,
 					message: ConsensusMessage { data: $m, engine_id: [0, 0, 0, 0]},
+					sender: None,
 				});
 			}
 		}

@@ -6,13 +6,10 @@ extern crate alloc;
 #[cfg(feature = "std")]
 use serde::Serialize;
 
-use client::decl_runtime_apis;
 use codec::{Codec, Decode, Encode, Error as CodecError, Input};
+use client::decl_runtime_apis;
 use rstd::vec::Vec;
-use sr_primitives::{
-	traits::{DigestFor, NumberFor},
-	ConsensusEngineId,
-};
+use sr_primitives::ConsensusEngineId;
 
 pub const MP_ECDSA_ENGINE_ID: ConsensusEngineId = *b"MPEC";
 
@@ -75,10 +72,13 @@ impl ConsensusLog  {
 pub const PENDING_CHANGE_CALL: &str = "hbbft_pending_change";
 pub const AUTHORITIES_CALL: &str = "hbbft_authorities";
 pub const GET_THRESHOLD_SIGNATURE_CALL: &str = "get_threshold_signature";
+pub const REQ_THRESHOLD_SIGNATURE_CALL: &str = "req_threshold_signature";
 
 decl_runtime_apis! { // TODO implement srml module
 	#[api_version(2)]
 	pub trait MpecApi {
-		fn get_threshold_signature(data :Vec<u8>) -> Vec<u8>;
+		fn req_key_gen();
+		fn req_threshold_signature(req_id: Vec<u8>, data: Vec<u8>);
+		fn get_threshold_signature(req_id: Vec<u8>) -> Vec<u8>;
 	}
 }

@@ -20,7 +20,7 @@ use codec::{Decode, Encode};
 use log::{debug, error, info, warn};
 use network::{self, PeerId};
 //use parking_lot::RwLock;
-//use sr_primitives::generic::BlockId;
+use sr_primitives::generic::BlockId;
 use sr_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
 
 const SIGNER_SET_KEY: &[u8] = b"multi_ecdsa_signers";

@@ -1,6 +1,6 @@
 use codec::Encode;
-use futures::prelude::*;
-use futures::sync::mpsc;
+use futures03::prelude::*;
+use futures03::channel::{mpsc, oneshot};
 use keyring::Ed25519Keyring;
 use network::consensus_gossip as network_gossip;
 use network::test::{Block, Hash};
@@ -10,8 +10,8 @@ use tokio::runtime::current_thread;
 use tokio_executor::Executor;
 
 use super::{
-	gossip::{self, GossipValidator},
-	message::{ConfirmPeersMessage, KeyGenMessage, Message, SignMessage},
+	gossip::{GossipMessage, GossipValidator},
+	message::{ConfirmPeersMessage, KeyGenMessage, SignMessage},
 };
 
 use crate::NodeConfig;
@@ -68,10 +68,12 @@ impl super::Network<Block> for TestNetwork {
 		let _ = self.sender.unbounded_send(Event::Report(who, cost_benefit));
 	}
 
-	fn announce(&self, block: Hash) {
+	/// Inform peers that a block with given hash should be downloaded.
+	fn announce(&self, block: Hash, _associated_data: Vec<u8>) {
 		let _ = self.sender.unbounded_send(Event::Announce(block));
 	}
 }
+
 impl network_gossip::ValidatorContext<Block> for TestNetwork {
 	fn broadcast_topic(&mut self, _: Hash, _: bool) {}
 
@@ -117,7 +119,7 @@ fn make_test_network() -> impl Future<Item = Tester, Error = ()> {
 	let config = NodeConfig {
 		threshold: 1,
 		players: 3,
-		name: None,
+		keystore: None,
 	};
 
 	let id = network::PeerId::random();
@@ -146,11 +148,6 @@ fn test_confirm_peer_message() {
 
 	let global_topic = super::string_topic::<Block>("hash");
 
-	let encoded_msg = gossip::GossipMessage::Message(Message::ConfirmPeers(
-		ConfirmPeersMessage::Confirming(0, 1),
-	))
-	.encode();
-
 	let test = make_test_network()
 		.and_then(move |tester| {
 			tester.gossip_validator.new_peer(
@@ -164,8 +161,13 @@ fn test_confirm_peer_message() {
 		.and_then(move |(tester, id)| {
 			let (global_in, _) = tester.net_handle.global();
 
+			let all_hash = {
+				let inner = tester.gossip_validator.inner.read();
+				inner.get_peers_hash()
+			};
 			let sender_id = id.clone();
-			let msg_to_send = encoded_msg.clone();
+			let msg_to_send =
+				GossipMessage::ConfirmPeers(ConfirmPeersMessage::Confirming(0), all_hash);
 
 			let send_message = tester.filter_network_events(move |event| match event {
 				Event::MessagesFor(topic, sender) => {
@@ -173,7 +175,7 @@ fn test_confirm_peer_message() {
 						return false;
 					}
 					let _ = sender.unbounded_send(network_gossip::TopicNotification {
-						message: msg_to_send.clone(),
+						message: msg_to_send.encode(),
 						sender: Some(sender_id.clone()),
 					});
 
@@ -189,9 +191,12 @@ fn test_confirm_peer_message() {
 				.map(move |(item, _)| {
 					let (msg, sender_opt) = item.unwrap();
 					match msg {
-						Message::ConfirmPeers(ConfirmPeersMessage::Confirming(from, hash)) => {
+						GossipMessage::ConfirmPeers(
+							ConfirmPeersMessage::Confirming(from),
+							hash,
+						) => {
 							assert_eq!(from, 0);
-							assert_eq!(hash, 1);
+							assert_eq!(hash, all_hash);
 						}
 						_ => panic!("invalid msg"),
 					}
