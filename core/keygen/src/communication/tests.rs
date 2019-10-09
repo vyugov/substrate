@@ -28,7 +28,7 @@ use super::{
 use crate::NodeConfig;
 
 enum Event {
-	MessagesFor(Hash, mpsc::UnboundedSender<Result<TopicNotification, ()>>),
+	MessagesFor(Hash, mpsc::UnboundedSender<TopicNotification>),
 	RegisterValidator(Arc<dyn Validator<Block>>),
 	GossipMessage(Hash, Vec<u8>, bool),
 	SendMessage(Vec<network::PeerId>, Vec<u8>),
@@ -42,7 +42,7 @@ struct TestNetwork {
 }
 
 impl super::Network<Block> for TestNetwork {
-	type In = mpsc::UnboundedReceiver<Result<TopicNotification, ()>>;
+	type In = mpsc::UnboundedReceiver<TopicNotification>;
 
 	fn messages_for(&self, topic: Hash) -> Self::In {
 		let (tx, rx) = mpsc::unbounded();
@@ -185,10 +185,10 @@ fn test_confirm_peer_message() {
 					if topic != global_topic {
 						return false;
 					}
-					let _ = sender.unbounded_send(Ok(TopicNotification {
+					let _ = sender.unbounded_send(TopicNotification {
 						message: msg_to_send.encode(),
 						sender: Some(sender_id.clone()),
-					}));
+					});
 
 					true
 				}

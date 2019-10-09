@@ -3,7 +3,10 @@ use std::{marker::Unpin, pin::Pin, sync::Arc};
 use codec::{Decode, Encode};
 use futures::prelude::{Sink as Sink01, Stream as Stream01};
 use futures::sync::mpsc as mpsc01;
-use futures03::channel::{mpsc, oneshot};
+use futures03::channel::{
+	mpsc,
+	oneshot::{self, Canceled},
+};
 use futures03::compat::{Compat, Compat01As03};
 use futures03::prelude::{Future, Sink, Stream, TryStream};
 use futures03::sink::SinkExt;
@@ -28,14 +31,14 @@ use crate::Error;
 use gossip::{GossipMessage, GossipValidator, MessageWithReceiver, MessageWithSender};
 use message::{ConfirmPeersMessage, KeyGenMessage, SignMessage};
 
-pub struct NetworkStream<R: Stream<Item = Result<TopicNotification, ()>>> {
+pub struct NetworkStream<R> {
 	inner: Option<R>,
 	outer: oneshot::Receiver<R>,
 }
 
 impl<R> Stream for NetworkStream<R>
 where
-	R: Stream<Item = Result<TopicNotification, ()>> + Unpin,
+	R: Stream<Item = TopicNotification> + Unpin,
 {
 	type Item = R::Item;
 
@@ -51,7 +54,7 @@ where
 					(self.as_mut()).inner = Some(inner);
 					poll_result
 				}
-				Err(_) => Poll::Ready(Some(Err(()))),
+				Err(Canceled) => panic!("Oneshot cancelled"),
 			},
 			Poll::Pending => Poll::Pending,
 		}
@@ -68,7 +71,7 @@ pub(crate) fn string_topic<B: BlockT>(input: &str) -> B::Hash {
 
 pub trait Network<Block: BlockT>: Clone + Send + 'static {
 	/// A stream of input messages for a topic.
-	type In: Stream<Item = Result<TopicNotification, ()>> + Unpin;
+	type In: Stream<Item = TopicNotification> + Unpin;
 
 	/// Get a stream of messages for a specific gossip topic.
 	fn messages_for(&self, topic: Block::Hash) -> Self::In;
@@ -104,15 +107,14 @@ where
 	S: network::specialization::NetworkSpecialization<B>,
 	H: network::ExHashT,
 {
-	type In = NetworkStream<Compat01As03<mpsc01::UnboundedReceiver<TopicNotification>>>;
+	type In = NetworkStream<Pin<Box<dyn Stream<Item = TopicNotification> + Send>>>;
 
 	fn messages_for(&self, topic: B::Hash) -> Self::In {
 		let (tx, rx) = oneshot::channel();
 
 		self.with_gossip(move |gossip, _| {
 			let inner_rx = gossip.messages_for(MP_ECDSA_ENGINE_ID, topic);
-			let inner_rx = Compat01As03::new(inner_rx);
-			// inner_rx.map(|x| x.unwrap);
+			let inner_rx = Compat01As03::new(inner_rx).map(|x| x.unwrap()).boxed();
 			let _ = tx.send(inner_rx);
 		});
 
@@ -214,11 +216,11 @@ where
 		Ok(())
 	}
 
-	fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+	fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>> {
 		Poll::Ready(Ok(()))
 	}
 
-	fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+	fn poll_close(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>> {
 		Poll::Ready(Ok(()))
 	}
 }
@@ -251,7 +253,8 @@ where
 		let incoming = self
 			.service
 			.messages_for(topic)
-			.compat()
+			.map(|x| Ok(x)) // # TODO REMOVE ME
+			.compat() // # TODO REMOVE ME
 			.filter_map(|notification| {
 				let decoded = GossipMessage::decode(&mut &notification.message[..]);
 				if let Err(e) = decoded {
