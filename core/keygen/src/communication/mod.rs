@@ -1,12 +1,18 @@
-use std::sync::Arc;
+use std::{marker::Unpin, pin::Pin, sync::Arc};
 
 use codec::{Decode, Encode};
-use futures::prelude::*;
-use futures::sync::{mpsc, oneshot};
+use futures::prelude::{Sink as Sink01, Stream as Stream01};
+use futures::sync::mpsc as mpsc01;
+use futures03::channel::{mpsc, oneshot};
+use futures03::compat::{Compat, Compat01As03};
+use futures03::prelude::{Future, Sink, Stream, TryStream};
+use futures03::sink::SinkExt;
+use futures03::stream::{FilterMap, StreamExt, TryStreamExt};
+use futures03::task::{Context, Poll};
 use log::{error, info, trace};
 
 use network::{consensus_gossip as network_gossip, NetworkService, PeerId};
-use network_gossip::ConsensusMessage;
+use network_gossip::{ConsensusMessage, TopicNotification};
 use sr_primitives::traits::{
 	Block as BlockT, DigestFor, Hash as HashT, Header as HeaderT, NumberFor, ProvideRuntimeApi,
 };
@@ -22,27 +28,32 @@ use crate::Error;
 use gossip::{GossipMessage, GossipValidator, MessageWithReceiver, MessageWithSender};
 use message::{ConfirmPeersMessage, KeyGenMessage, SignMessage};
 
-pub struct NetworkStream {
-	inner: Option<mpsc::UnboundedReceiver<network_gossip::TopicNotification>>,
-	outer: oneshot::Receiver<mpsc::UnboundedReceiver<network_gossip::TopicNotification>>,
+pub struct NetworkStream<R: Stream<Item = Result<TopicNotification, ()>>> {
+	inner: Option<R>,
+	outer: oneshot::Receiver<R>,
 }
 
-impl Stream for NetworkStream {
-	type Item = network_gossip::TopicNotification;
-	type Error = ();
+impl<R> Stream for NetworkStream<R>
+where
+	R: Stream<Item = Result<TopicNotification, ()>> + Unpin,
+{
+	type Item = R::Item;
 
-	fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-		if let Some(ref mut inner) = self.inner {
-			return inner.poll();
+	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+		if let Some(ref mut inner) = self.as_mut().inner {
+			return Pin::new(inner).poll_next(cx);
 		}
-		match self.outer.poll() {
-			Ok(futures::Async::Ready(mut inner)) => {
-				let poll_result = inner.poll();
-				self.inner = Some(inner);
-				poll_result
-			}
-			Ok(futures::Async::NotReady) => Ok(futures::Async::NotReady),
-			Err(_) => Err(()),
+
+		match Pin::new(&mut self.outer).poll(cx) {
+			Poll::Ready(r) => match r {
+				Ok(mut inner) => {
+					let poll_result = (Pin::new(&mut inner)).poll_next(cx);
+					(self.as_mut()).inner = Some(inner);
+					poll_result
+				}
+				Err(_) => Poll::Ready(Some(Err(()))),
+			},
+			Poll::Pending => Poll::Pending,
 		}
 	}
 }
@@ -57,7 +68,7 @@ pub(crate) fn string_topic<B: BlockT>(input: &str) -> B::Hash {
 
 pub trait Network<Block: BlockT>: Clone + Send + 'static {
 	/// A stream of input messages for a topic.
-	type In: Stream<Item = network_gossip::TopicNotification, Error = ()>;
+	type In: Stream<Item = Result<TopicNotification, ()>> + Unpin;
 
 	/// Get a stream of messages for a specific gossip topic.
 	fn messages_for(&self, topic: Block::Hash) -> Self::In;
@@ -93,12 +104,13 @@ where
 	S: network::specialization::NetworkSpecialization<B>,
 	H: network::ExHashT,
 {
-	type In = NetworkStream;
+	type In = NetworkStream<Compat01As03<mpsc01::UnboundedReceiver<TopicNotification>>>;
 
 	fn messages_for(&self, topic: B::Hash) -> Self::In {
 		let (tx, rx) = oneshot::channel();
 		self.with_gossip(move |gossip, _| {
 			let inner_rx = gossip.messages_for(MP_ECDSA_ENGINE_ID, topic);
+			let inner_rx = Compat01As03::new(inner_rx);
 			let _ = tx.send(inner_rx);
 		});
 		Self::In {
@@ -153,7 +165,7 @@ where
 	}
 }
 
-struct MessageSender<Block: BlockT, N: Network<Block>> {
+struct MessageSender<Block: BlockT, N: Network<Block> + Unpin> {
 	network: N,
 	validator: Arc<GossipValidator<Block>>,
 }
@@ -161,7 +173,7 @@ struct MessageSender<Block: BlockT, N: Network<Block>> {
 impl<Block, N> MessageSender<Block, N>
 where
 	Block: BlockT,
-	N: Network<Block>,
+	N: Network<Block> + Unpin,
 {
 	fn broadcast(&self, msg: GossipMessage) {
 		let raw_msg = msg.encode();
@@ -176,15 +188,18 @@ where
 	}
 }
 
-impl<Block, N> Sink for MessageSender<Block, N>
+impl<Block, N> Sink<MessageWithReceiver> for MessageSender<Block, N>
 where
 	Block: BlockT,
-	N: Network<Block>,
+	N: Network<Block> + Unpin,
 {
-	type SinkItem = MessageWithReceiver;
-	type SinkError = Error;
+	type Error = Error;
 
-	fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
+	fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+		Poll::Ready(Ok(()))
+	}
+
+	fn start_send(self: Pin<&mut Self>, item: MessageWithReceiver) -> Result<(), Self::Error> {
 		let (msg, receiver_opt) = item;
 
 		if let Some(receiver) = receiver_opt {
@@ -193,15 +208,15 @@ where
 			self.broadcast(msg);
 		}
 
-		Ok(AsyncSink::Ready)
+		Ok(())
 	}
 
-	fn poll_complete(&mut self) -> Poll<(), Error> {
-		Ok(Async::Ready(()))
+	fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+		Poll::Ready(Ok(()))
 	}
 
-	fn close(&mut self) -> Poll<(), Error> {
-		Ok(Async::Ready(()))
+	fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+		Poll::Ready(Ok(()))
 	}
 }
 
@@ -210,7 +225,11 @@ pub(crate) struct NetworkBridge<B: BlockT, N: Network<B>> {
 	pub validator: Arc<GossipValidator<B>>,
 }
 
-impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
+impl<B, N> NetworkBridge<B, N>
+where
+	B: BlockT,
+	N: Network<B> + Unpin,
+{
 	pub fn new(service: N, config: crate::NodeConfig, local_peer_id: PeerId) -> Self {
 		let validator = Arc::new(GossipValidator::new(config, local_peer_id));
 		service.register_validator(validator.clone());
@@ -221,14 +240,15 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 	pub fn global(
 		&self,
 	) -> (
-		impl Stream<Item = MessageWithSender, Error = Error>,
-		impl Sink<SinkItem = MessageWithReceiver, SinkError = Error>,
+		impl Stream01<Item = MessageWithSender, Error = Error>,
+		impl Sink01<SinkItem = MessageWithReceiver, SinkError = Error>,
 	) {
 		let topic = string_topic::<B>("hash"); // related with `fn validate` in gossip.rs
 
 		let incoming = self
 			.service
 			.messages_for(topic)
+			.compat()
 			.filter_map(|notification| {
 				let decoded = GossipMessage::decode(&mut &notification.message[..]);
 				if let Err(e) = decoded {
@@ -247,7 +267,7 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N> {
 			validator: self.validator.clone(),
 		};
 
-		(incoming, outgoing)
+		(incoming, outgoing.compat())
 	}
 }
 

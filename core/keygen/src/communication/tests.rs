@@ -1,6 +1,8 @@
 use codec::Encode;
-use futures::prelude::*;
-use futures::sync::mpsc;
+use futures::Async;
+use futures03::channel::mpsc;
+use futures03::prelude::{Future, Sink, Stream, TryFuture, TryStream};
+use futures03::task::{Context, Poll};
 use keyring::Ed25519Keyring;
 use network::consensus_gossip as network_gossip;
 use network::test::{Block, Hash};
@@ -34,7 +36,7 @@ struct TestNetwork {
 }
 
 impl super::Network<Block> for TestNetwork {
-	type In = mpsc::UnboundedReceiver<network_gossip::TopicNotification>;
+	type In = mpsc::UnboundedReceiver<Result<network_gossip::TopicNotification, ()>>;
 
 	fn messages_for(&self, topic: Hash) -> Self::In {
 		let (tx, rx) = mpsc::unbounded();
@@ -93,26 +95,32 @@ struct Tester {
 }
 
 impl Tester {
-	fn filter_network_events<F>(self, mut pred: F) -> impl Future<Item = Self, Error = ()>
+	fn filter_network_events<F>(self, mut pred: F) -> impl TryFuture<Ok = Self, Error = ()>
 	where
 		F: FnMut(Event) -> bool,
 	{
 		let mut s = Some(self);
-		futures::future::poll_fn(move || loop {
-			match s.as_mut().unwrap().events.poll().expect("concluded early") {
-				Async::Ready(None) => panic!("concluded early"),
-				Async::Ready(Some(item)) => {
+		futures03::future::poll_fn(move || loop {
+			match s
+				.as_mut()
+				.unwrap()
+				.events
+				.poll_next()
+				.expect("concluded early")
+			{
+				Poll::Ready(None) => panic!("concluded early"),
+				Poll::Ready(Some(item)) => {
 					if pred(item) {
-						return Ok(Async::Ready(s.take().unwrap()));
+						return Poll::Ready(Ok(s.take().unwrap()));
 					}
 				}
-				Async::NotReady => return Ok(Async::NotReady),
+				Poll::Pending => return Poll::Pending,
 			}
 		})
 	}
 }
 
-fn make_test_network() -> impl Future<Item = Tester, Error = ()> {
+fn make_test_network() -> impl TryFuture<Ok = Tester, Error = ()> {
 	let (tx, rx) = mpsc::unbounded();
 	let net = TestNetwork { sender: tx };
 
@@ -125,7 +133,7 @@ fn make_test_network() -> impl Future<Item = Tester, Error = ()> {
 	let id = network::PeerId::random();
 	let bridge = super::NetworkBridge::new(net.clone(), config, id);
 
-	futures::future::lazy(move || {
+	futures03::future::lazy(move || {
 		Ok(Tester {
 			gossip_validator: bridge.validator.clone(),
 			net_handle: bridge,

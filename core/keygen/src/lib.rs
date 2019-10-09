@@ -126,7 +126,7 @@ fn global_comm<Block, N>(
 )
 where
 	Block: BlockT<Hash = H256>,
-	N: Network<Block>,
+	N: Network<Block> + Unpin,
 {
 	let (global_in, global_out) = bridge.global();
 	let global_in = PeriodicStream::<Block, _, MessageWithSender>::new(global_in);
@@ -152,7 +152,7 @@ where
 	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
 	Block: BlockT<Hash = H256>,
 	Block::Hash: Ord,
-	N: Network<Block> + Sync,
+	N: Network<Block> + Unpin + Sync,
 	N::In: Send + 'static,
 	RA: Send + Sync + 'static,
 {
@@ -195,7 +195,7 @@ where
 	E: CallExecutor<Block, Blake2Hasher> + 'static + Send + Sync,
 	Block: BlockT<Hash = H256>,
 	Block::Hash: Ord,
-	N: Network<Block> + Send + Sync + 'static,
+	N: Network<Block> + Send + Sync + Unpin + 'static,
 	N::In: Send + 'static,
 	RA: Send + Sync + 'static,
 {
@@ -255,17 +255,17 @@ where
 	}
 }
 
-pub fn init_shared_state<B, E, Block, RA>(client: Arc<Client<B, E, Block, RA>>) -> SharedState
-where
-	B: Backend<Block, Blake2Hasher> + 'static,
-	E: CallExecutor<Block, Blake2Hasher> + 'static + Clone + Send + Sync,
-	Block: BlockT<Hash = H256>,
-	Block::Hash: Ord,
-	RA: Send + Sync + 'static,
-{
-	let persistent_data: SharedState = load_persistent(&**client.backend()).unwrap();
-	persistent_data
-}
+// pub fn init_shared_state<B, E, Block, RA>(client: Arc<Client<B, E, Block, RA>>) -> SharedState
+// where
+// 	B: Backend<Block, Blake2Hasher> + 'static,
+// 	E: CallExecutor<Block, Blake2Hasher> + 'static + Clone + Send + Sync,
+// 	Block: BlockT<Hash = H256>,
+// 	Block::Hash: Ord,
+// 	RA: Send + Sync + 'static,
+// {
+// 	let persistent_data: SharedState = load_persistent(&**client.backend()).unwrap();
+// 	persistent_data
+// }
 
 pub fn run_key_gen<B, E, Block, N, RA>(
 	local_peer_id: PeerId,
@@ -279,7 +279,7 @@ where
 	E: CallExecutor<Block, Blake2Hasher> + 'static + Send + Sync,
 	Block: BlockT<Hash = H256>,
 	Block::Hash: Ord,
-	N: Network<Block> + Send + Sync + 'static,
+	N: Network<Block> + Send + Sync + Unpin + 'static,
 	N::In: Send + 'static,
 	RA: Send + Sync + 'static,
 {

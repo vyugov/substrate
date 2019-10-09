@@ -10,7 +10,7 @@ use consensus_common::import_queue::{
 use consensus_common::{
 	BlockImportParams, BlockOrigin, ForkChoiceStrategy, ImportResult, ImportedAux,
 };
-use futures03::{StreamExt as _, TryStreamExt as _};
+use futures03::{StreamExt, TryStreamExt};
 use keyring::Ed25519Keyring;
 use network::config::{BoxFinalityProofRequestBuilder, ProtocolConfig, Roles};
 use network::test::PassThroughVerifier;
@@ -134,7 +134,7 @@ fn test_1_of_3_key_gen() {
 			full_client,
 			network,
 		)
-		.unwrap();
+		.unwrap(); // compat future03 -> 01
 		runtime.spawn(node);
 	}
 
