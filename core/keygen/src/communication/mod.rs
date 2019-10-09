@@ -108,11 +108,14 @@ where
 
 	fn messages_for(&self, topic: B::Hash) -> Self::In {
 		let (tx, rx) = oneshot::channel();
+
 		self.with_gossip(move |gossip, _| {
 			let inner_rx = gossip.messages_for(MP_ECDSA_ENGINE_ID, topic);
 			let inner_rx = Compat01As03::new(inner_rx);
+			// inner_rx.map(|x| x.unwrap);
 			let _ = tx.send(inner_rx);
 		});
+
 		Self::In {
 			outer: rx,
 			inner: None,
@@ -259,7 +262,6 @@ where
 				println!("sender in global {:?}", notification.sender);
 				Some((decoded.unwrap(), notification.sender))
 			})
-			.filter_map(move |(msg, sender)| Some((msg, sender)))
 			.map_err(|()| Error::Network("Failed to receive gossip message".to_string()));
 
 		let outgoing = MessageSender::<B, N> {

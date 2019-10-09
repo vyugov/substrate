@@ -1,3 +1,5 @@
+#![feature(async_closure)]
+
 use std::{
 	collections::{BTreeMap, VecDeque},
 	fmt::Debug,
