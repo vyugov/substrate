@@ -1,4 +1,10 @@
-use std::{collections::VecDeque, marker::PhantomData, str::FromStr, sync::Arc};
+use std::{
+	collections::VecDeque,
+	marker::{PhantomData, Unpin},
+	pin::Pin,
+	str::FromStr,
+	sync::Arc,
+};
 
 use codec::{Decode, Encode};
 use curv::GE;
@@ -9,6 +15,7 @@ use futures::prelude::{
 use futures::stream::Fuse as Fuse01;
 use futures03::channel::mpsc;
 use futures03::compat::{Compat, Compat01As03};
+use futures03::future::FutureExt;
 use futures03::prelude::{Future, Sink, Stream, TryStream};
 use futures03::sink::SinkExt;
 use futures03::stream::{FilterMap, StreamExt, TryStreamExt};
@@ -35,12 +42,21 @@ use super::{
 	Network, PeerIndex, SignMessage,
 };
 
-struct Buffered<S: Sink01> {
+struct Buffered<Item, S>
+where
+	S: Sink<Item, Error = Error>,
+{
 	inner: S,
-	buffer: VecDeque<S::SinkItem>,
+	buffer: VecDeque<Item>,
 }
 
-impl<S: Sink01> Buffered<S> {
+impl<Item, S> Unpin for Buffered<Item, S> where S: Sink<Item, Error = Error> + Unpin {}
+
+impl<Item, S> Buffered<Item, S>
+where
+	Item: Clone,
+	S: Sink<Item, Error = Error> + Unpin,
+{
 	fn new(inner: S) -> Self {
 		Buffered {
 			buffer: VecDeque::new(),
@@ -54,51 +70,70 @@ impl<S: Sink01> Buffered<S> {
 
 	// push an item into the buffered sink.
 	// the sink _must_ be driven to completion with `poll` afterwards.
-	fn push(&mut self, item: S::SinkItem) {
+	fn push(&mut self, item: Item) {
 		self.buffer.push_back(item);
 	}
 
 	// returns ready when the sink and the buffer are completely flushed.
-	fn poll(&mut self) -> Poll01<(), S::SinkError> {
-		let polled = self.schedule_all()?;
+	fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), S::Error>> {
+		let polled = self.schedule_all(cx);
 
 		match polled {
-			Async::Ready(()) => self.inner.poll_complete(),
-			Async::NotReady => {
-				self.inner.poll_complete()?;
-				Ok(Async::NotReady)
+			Poll::Ready(r) => {
+				Pin::new(&mut self.inner).poll_flush(cx);
+				Poll::Ready(r)
+			}
+			Poll::Pending => {
+				Pin::new(&mut self.inner).poll_flush(cx);
+				Poll::Pending
 			}
 		}
 	}
 
-	fn schedule_all(&mut self) -> Poll01<(), S::SinkError> {
+	fn schedule_all(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), S::Error>> {
+		match Pin::new(&mut self.inner).poll_ready(cx) {
+			Poll::Pending => return Poll::Pending,
+			Poll::Ready(Ok(())) => {}
+			Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+		}
+
 		while let Some(front) = self.buffer.pop_front() {
-			match self.inner.start_send(front) {
-				Ok(AsyncSink::Ready) => continue,
-				Ok(AsyncSink::NotReady(front)) => {
-					self.buffer.push_front(front);
-					break;
-				}
-				Err(e) => return Err(e),
+			match Pin::new(&mut self.inner).start_send(front.clone()) {
+				Ok(()) => match Pin::new(&mut self.inner).poll_flush(cx) {
+					Poll::Pending => {
+						self.buffer.push_front(front);
+						break;
+					}
+					Poll::Ready(Ok(())) => {
+						match Pin::new(&mut self.inner).poll_ready(cx) {
+							Poll::Pending => return Poll::Pending,
+							Poll::Ready(Ok(())) => {}
+							Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+						}
+						continue;
+					}
+					Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+				},
+				Err(e) => return Poll::Ready(Err(e)),
 			}
 		}
 
 		if self.is_empty() {
-			Ok(Async::Ready(()))
+			Poll::Ready(Ok(()))
 		} else {
-			Ok(Async::NotReady)
+			Poll::Pending
 		}
 	}
 }
 
 pub(crate) struct Signer<B, E, Block: BlockT, N: Network<Block>, RA, In, Out>
 where
-	In: Stream01<Item = MessageWithSender, Error = Error>,
-	Out: Sink01<SinkItem = MessageWithSender, SinkError = Error>,
+	In: Stream<Item = MessageWithSender>,
+	Out: Sink<MessageWithSender, Error = Error>,
 {
 	env: Arc<Environment<B, E, Block, N, RA>>,
 	global_in: In,
-	global_out: Buffered<Out>,
+	global_out: Buffered<MessageWithSender, Out>,
 	should_rebuild: bool,
 	last_message_ok: bool,
 }
@@ -112,8 +147,8 @@ where
 	N: Network<Block> + Sync,
 	N::In: Send + 'static,
 	RA: Send + Sync + 'static,
-	In: Stream01<Item = MessageWithSender, Error = Error>,
-	Out: Sink01<SinkItem = MessageWithSender, SinkError = Error>,
+	In: Stream<Item = MessageWithSender> + Unpin,
+	Out: Sink<MessageWithSender, Error = Error> + Unpin,
 {
 	pub fn new(
 		env: Arc<Environment<B, E, Block, N, RA>>,
@@ -427,7 +462,7 @@ where
 	}
 }
 
-impl<B, E, Block, N, RA, In, Out> Future01 for Signer<B, E, Block, N, RA, In, Out>
+impl<B, E, Block, N, RA, In, Out> Future for Signer<B, E, Block, N, RA, In, Out>
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
 	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
@@ -436,20 +471,17 @@ where
 	N: Network<Block> + Sync,
 	N::In: Send + 'static,
 	RA: Send + Sync + 'static,
-	In: Stream01<Item = MessageWithSender, Error = Error>,
-	Out: Sink01<SinkItem = MessageWithSender, SinkError = Error>,
+	In: Stream<Item = MessageWithSender> + Unpin,
+	Out: Sink<MessageWithSender, Error = Error> + Unpin,
 {
-	type Item = ();
-	type Error = Error;
-	fn poll(&mut self) -> Poll01<Self::Item, Self::Error> {
+	type Output = Result<(), Error>;
+
+	fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
 		let mut rebuild_state_changed = false;
 
-		while let Async::Ready(Some(item)) = self.global_in.poll()? {
+		while let Poll::Ready(Some(item)) = self.global_in.poll_next_unpin(cx) {
 			let (msg, sender) = item;
 			let is_ok = self.handle_incoming(msg.clone(), sender);
-			if !is_ok {
-				// println!("NOT OK MSG {:?}", msg);
-			}
 
 			if !rebuild_state_changed {
 				let should_rebuild = self.last_message_ok ^ is_ok;
@@ -465,10 +497,16 @@ where
 		self.generate_shared_keys();
 
 		// send all messages generated above
-		self.global_out.poll()?;
-		if self.should_rebuild {
-			return Err(Error::Rebuild);
+
+		match Pin::new(&mut self.global_out).poll(cx) {
+			Poll::Ready(Ok()) => {}
+			Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+			Poll::Pending => return Poll::Pending,
 		}
-		Ok(Async::NotReady)
+
+		if self.should_rebuild {
+			return Poll::Ready(Err(Error::Rebuild));
+		}
+		Poll::Pending
 	}
 }

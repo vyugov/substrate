@@ -9,7 +9,6 @@ use std::{
 
 use codec::{Decode, Encode};
 
-use futures::prelude::{Sink as Sink01, Stream as Stream01};
 use futures03::compat::{Compat, Compat01As03};
 use futures03::prelude::{Future, Sink, Stream, TryStream};
 use futures03::sink::SinkExt;

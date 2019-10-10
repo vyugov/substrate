@@ -3,7 +3,8 @@
 use std::{
 	collections::{BTreeMap, VecDeque},
 	fmt::Debug,
-	marker::PhantomData,
+	marker::Unpin,
+	pin::Pin,
 	sync::Arc,
 	time::{Duration, Instant},
 };
@@ -12,10 +13,16 @@ use codec::{Decode, Encode};
 use curv::cryptographic_primitives::proofs::sigma_dlog::DLogProof;
 use curv::cryptographic_primitives::secret_sharing::feldman_vss::VerifiableSS;
 use curv::{FE, GE};
-use futures::prelude::*;
-use futures03::compat::Compat01As03;
+
+use futures::prelude::{Future as Future01, Sink as Sink01, Stream as Stream01};
+use futures03::channel::oneshot::{self, Canceled};
+use futures03::compat::{Compat, Compat01As03};
+use futures03::future::{FutureExt, TryFutureExt};
+use futures03::prelude::{Future, Sink, Stream, TryStream};
 use futures03::sink::SinkExt;
-use futures03::stream::{StreamExt, TryStreamExt};
+use futures03::stream::{FilterMap, StreamExt, TryStreamExt};
+use futures03::task::{Context, Poll};
+
 use keystore::KeyStorePtr;
 use log::{debug, error, info};
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{
@@ -126,8 +133,8 @@ pub struct SigGenState {
 fn global_comm<Block, N>(
 	bridge: &NetworkBridge<Block, N>,
 ) -> (
-	impl Stream<Item = MessageWithSender, Error = Error>,
-	impl Sink<SinkItem = MessageWithSender, SinkError = Error>,
+	impl Stream<Item = MessageWithSender>,
+	impl Sink<MessageWithSender, Error = Error>,
 )
 where
 	Block: BlockT<Hash = H256>,
@@ -135,11 +142,9 @@ where
 	N::In: Send,
 {
 	let (global_in, global_out) = bridge.global();
-	let global_in = PeriodicStream::<_, MessageWithSender>::new(global_in)
-		.map(|x| Ok(x))
-		.map_err(|()| Error::Periodic);
+	let global_in = PeriodicStream::<_, MessageWithSender>::new(global_in);
 
-	(global_in.compat(), global_out.compat())
+	(global_in, global_out)
 }
 
 pub(crate) struct Environment<B, E, Block: BlockT, N: Network<Block>, RA> {
@@ -150,7 +155,7 @@ pub(crate) struct Environment<B, E, Block: BlockT, N: Network<Block>, RA> {
 }
 
 struct KeyGenWork<B, E, Block: BlockT, N: Network<Block>, RA> {
-	key_gen: Box<dyn Future<Item = (), Error = Error> + Send + 'static>,
+	key_gen: Pin<Box<dyn Future<Output = Result<(), Error>> + Send + Unpin + 'static>>,
 	env: Arc<Environment<B, E, Block, N, RA>>,
 	check_pending: Interval,
 }
@@ -183,7 +188,7 @@ where
 		let check_pending = Interval::new(now + REBUILD_COOLDOWN, REBUILD_COOLDOWN);
 
 		let mut work = Self {
-			key_gen: Box::new(futures::empty()) as Box<_>,
+			key_gen: Box::pin(futures03::future::pending()),
 			env,
 			check_pending,
 		};
@@ -194,7 +199,7 @@ where
 	fn rebuild(&mut self, last_message_ok: bool) {
 		let (incoming, outgoing) = global_comm(&self.env.bridge);
 		let signer = Signer::new(self.env.clone(), incoming, outgoing, last_message_ok);
-		self.key_gen = Box::new(signer);
+		self.key_gen = Box::pin(signer);
 	}
 }
 
@@ -208,18 +213,17 @@ where
 	N::In: Send + 'static,
 	RA: Send + Sync + 'static,
 {
-	type Item = ();
-	type Error = Error;
+	type Output = Result<(), Error>;
 
-	fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+	fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
 		let mut is_ready = false;
-		while let Async::Ready(Some(_)) = self.check_pending.poll().map_err(|_| Error::Periodic)? {
-			is_ready = true;
-		}
+		// while let Poll::Ready(Some(_)) = self.check_pending.poll().map_err(|_| Error::Periodic)? {
+		// 	is_ready = true;
+		// }
 
 		println!("POLLLLLLLLLLLLLLLLLLLL");
-		match self.key_gen.poll() {
-			Ok(Async::NotReady) => {
+		match self.key_gen.poll_unpin(cx) {
+			Poll::Pending => {
 				let (is_complete, is_canceled, commits_len) = {
 					let state = self.env.state.read();
 					let validator = self.env.bridge.validator.inner.read();
@@ -243,22 +247,22 @@ where
 						state.commits.len(),
 					)
 				};
-				return Ok(Async::NotReady);
+				return Poll::Pending;
 			}
-			Ok(Async::Ready(())) => {
-				return Ok(Async::Ready(()));
+			Poll::Ready(Ok(())) => {
+				return Poll::Ready(Ok(()));
 			}
-			Err(e) => {
+			Poll::Ready(Err(e)) => {
 				match e {
 					Error::Rebuild => {
 						println!("inner keygen rebuilt");
 						self.rebuild(false);
 						futures::task::current().notify();
-						return Ok(Async::NotReady);
+						return Poll::Pending;
 					}
 					_ => {}
 				}
-				return Err(e);
+				return Poll::Ready(Err(e));
 			}
 		}
 	}
@@ -282,7 +286,7 @@ pub fn run_key_gen<B, E, Block, N, RA>(
 	keystore: KeyStorePtr,
 	client: Arc<Client<B, E, Block, RA>>,
 	network: N,
-) -> ClientResult<impl Future<Item = (), Error = ()> + Send + 'static>
+) -> ClientResult<impl Future01<Item = (), Error = ()> + Send + 'static>
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
 	E: CallExecutor<Block, Blake2Hasher> + 'static + Send + Sync,
@@ -314,7 +318,7 @@ where
 	let bridge = NetworkBridge::new(network, config.clone(), local_peer_id);
 
 	let key_gen_work = KeyGenWork::new(client, config, bridge).map_err(|e| error!("Error {:?}", e));
-	Ok(key_gen_work)
+	Ok(key_gen_work.compat())
 }
 
 #[cfg(test)]

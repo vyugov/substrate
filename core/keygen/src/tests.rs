@@ -10,7 +10,9 @@ use consensus_common::import_queue::{
 use consensus_common::{
 	BlockImportParams, BlockOrigin, ForkChoiceStrategy, ImportResult, ImportedAux,
 };
+use futures::prelude::*;
 use futures03::{StreamExt, TryStreamExt};
+
 use keyring::Ed25519Keyring;
 use network::config::{BoxFinalityProofRequestBuilder, ProtocolConfig, Roles};
 use network::test::PassThroughVerifier;
