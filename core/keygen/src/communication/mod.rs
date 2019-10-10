@@ -1,13 +1,10 @@
-use std::{marker::Unpin, pin::Pin, sync::Arc};
+use std::{future, marker::Unpin, pin::Pin, sync::Arc};
 
 use codec::{Decode, Encode};
 use futures::prelude::{Sink as Sink01, Stream as Stream01};
-use futures::sync::mpsc as mpsc01;
-use futures03::channel::{
-	mpsc,
-	oneshot::{self, Canceled},
-};
+use futures03::channel::oneshot::{self, Canceled};
 use futures03::compat::{Compat, Compat01As03};
+use futures03::future::FutureExt;
 use futures03::prelude::{Future, Sink, Stream, TryStream};
 use futures03::sink::SinkExt;
 use futures03::stream::{FilterMap, StreamExt, TryStreamExt};
@@ -44,14 +41,14 @@ where
 
 	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
 		if let Some(ref mut inner) = self.as_mut().inner {
-			return Pin::new(inner).poll_next(cx);
+			return inner.poll_next_unpin(cx);
 		}
 
-		match Pin::new(&mut self.outer).poll(cx) {
+		match self.outer.poll_unpin(cx) {
 			Poll::Ready(r) => match r {
 				Ok(mut inner) => {
-					let poll_result = (Pin::new(&mut inner)).poll_next(cx);
-					(self.as_mut()).inner = Some(inner);
+					let poll_result = inner.poll_next_unpin(cx);
+					self.inner = Some(inner);
 					poll_result
 				}
 				Err(Canceled) => panic!("Oneshot cancelled"),
@@ -234,6 +231,7 @@ impl<B, N> NetworkBridge<B, N>
 where
 	B: BlockT,
 	N: Network<B> + Unpin,
+	N::In: Stream<Item = TopicNotification> + Unpin + Send,
 {
 	pub fn new(service: N, config: crate::NodeConfig, local_peer_id: PeerId) -> Self {
 		let validator = Arc::new(GossipValidator::new(config, local_peer_id));
@@ -245,17 +243,13 @@ where
 	pub fn global(
 		&self,
 	) -> (
-		impl Stream01<Item = MessageWithSender, Error = Error>,
-		impl Sink01<SinkItem = MessageWithReceiver, SinkError = Error>,
+		impl Stream<Item = MessageWithSender>,
+		impl Sink<MessageWithReceiver, Error = Error>,
 	) {
 		let topic = string_topic::<B>("hash"); // related with `fn validate` in gossip.rs
 
-		let incoming = self
-			.service
-			.messages_for(topic)
-			.map(|x| Ok(x)) // # TODO REMOVE ME
-			.compat() // # TODO REMOVE ME
-			.filter_map(|notification| {
+		let incoming = self.service.messages_for(topic).filter_map(|notification| {
+			async {
 				let decoded = GossipMessage::decode(&mut &notification.message[..]);
 				if let Err(e) = decoded {
 					trace!("notification error {:?}", e);
@@ -264,15 +258,15 @@ where
 				}
 				println!("sender in global {:?}", notification.sender);
 				Some((decoded.unwrap(), notification.sender))
-			})
-			.map_err(|()| Error::Network("Failed to receive gossip message".to_string()));
+			}
+		});
 
 		let outgoing = MessageSender::<B, N> {
 			network: self.service.clone(),
 			validator: self.validator.clone(),
 		};
 
-		(incoming, outgoing.compat())
+		(incoming.boxed(), outgoing)
 	}
 }
 

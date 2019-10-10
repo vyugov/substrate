@@ -2,11 +2,21 @@ use std::{collections::VecDeque, marker::PhantomData, str::FromStr, sync::Arc};
 
 use codec::{Decode, Encode};
 use curv::GE;
-use futures::{prelude::*, sync::mpsc};
+
+use futures::prelude::{
+	Async, AsyncSink, Future as Future01, Poll as Poll01, Sink as Sink01, Stream as Stream01,
+};
+use futures::stream::Fuse as Fuse01;
+use futures03::channel::mpsc;
+use futures03::compat::{Compat, Compat01As03};
+use futures03::prelude::{Future, Sink, Stream, TryStream};
+use futures03::sink::SinkExt;
+use futures03::stream::{FilterMap, StreamExt, TryStreamExt};
+use futures03::task::{Context, Poll};
+
 use log::{debug, error, info, warn};
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{Keys, Parameters};
 use rand::prelude::Rng;
-use tokio_executor::DefaultExecutor;
 use tokio_timer::Interval;
 
 use client::{
@@ -25,13 +35,13 @@ use super::{
 	Network, PeerIndex, SignMessage,
 };
 
-struct Buffered<S: Sink> {
+struct Buffered<S: Sink01> {
 	inner: S,
 	buffer: VecDeque<S::SinkItem>,
 }
 
-impl<S: Sink> Buffered<S> {
-	fn new(inner: S) -> Buffered<S> {
+impl<S: Sink01> Buffered<S> {
+	fn new(inner: S) -> Self {
 		Buffered {
 			buffer: VecDeque::new(),
 			inner,
@@ -49,7 +59,7 @@ impl<S: Sink> Buffered<S> {
 	}
 
 	// returns ready when the sink and the buffer are completely flushed.
-	fn poll(&mut self) -> Poll<(), S::SinkError> {
+	fn poll(&mut self) -> Poll01<(), S::SinkError> {
 		let polled = self.schedule_all()?;
 
 		match polled {
@@ -61,7 +71,7 @@ impl<S: Sink> Buffered<S> {
 		}
 	}
 
-	fn schedule_all(&mut self) -> Poll<(), S::SinkError> {
+	fn schedule_all(&mut self) -> Poll01<(), S::SinkError> {
 		while let Some(front) = self.buffer.pop_front() {
 			match self.inner.start_send(front) {
 				Ok(AsyncSink::Ready) => continue,
@@ -83,8 +93,8 @@ impl<S: Sink> Buffered<S> {
 
 pub(crate) struct Signer<B, E, Block: BlockT, N: Network<Block>, RA, In, Out>
 where
-	In: Stream<Item = MessageWithSender, Error = Error>,
-	Out: Sink<SinkItem = MessageWithSender, SinkError = Error>,
+	In: Stream01<Item = MessageWithSender, Error = Error>,
+	Out: Sink01<SinkItem = MessageWithSender, SinkError = Error>,
 {
 	env: Arc<Environment<B, E, Block, N, RA>>,
 	global_in: In,
@@ -102,8 +112,8 @@ where
 	N: Network<Block> + Sync,
 	N::In: Send + 'static,
 	RA: Send + Sync + 'static,
-	In: Stream<Item = MessageWithSender, Error = Error>,
-	Out: Sink<SinkItem = MessageWithSender, SinkError = Error>,
+	In: Stream01<Item = MessageWithSender, Error = Error>,
+	Out: Sink01<SinkItem = MessageWithSender, SinkError = Error>,
 {
 	pub fn new(
 		env: Arc<Environment<B, E, Block, N, RA>>,
@@ -417,7 +427,7 @@ where
 	}
 }
 
-impl<B, E, Block, N, RA, In, Out> Future for Signer<B, E, Block, N, RA, In, Out>
+impl<B, E, Block, N, RA, In, Out> Future01 for Signer<B, E, Block, N, RA, In, Out>
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
 	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
@@ -426,12 +436,12 @@ where
 	N: Network<Block> + Sync,
 	N::In: Send + 'static,
 	RA: Send + Sync + 'static,
-	In: Stream<Item = MessageWithSender, Error = Error>,
-	Out: Sink<SinkItem = MessageWithSender, SinkError = Error>,
+	In: Stream01<Item = MessageWithSender, Error = Error>,
+	Out: Sink01<SinkItem = MessageWithSender, SinkError = Error>,
 {
 	type Item = ();
 	type Error = Error;
-	fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+	fn poll(&mut self) -> Poll01<Self::Item, Self::Error> {
 		let mut rebuild_state_changed = false;
 
 		while let Async::Ready(Some(item)) = self.global_in.poll()? {

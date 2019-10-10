@@ -12,7 +12,10 @@ use codec::{Decode, Encode};
 use curv::cryptographic_primitives::proofs::sigma_dlog::DLogProof;
 use curv::cryptographic_primitives::secret_sharing::feldman_vss::VerifiableSS;
 use curv::{FE, GE};
-use futures::{prelude::*, stream::Fuse, sync::mpsc};
+use futures::prelude::*;
+use futures03::compat::Compat01As03;
+use futures03::sink::SinkExt;
+use futures03::stream::{StreamExt, TryStreamExt};
 use keystore::KeyStorePtr;
 use log::{debug, error, info};
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{
@@ -129,10 +132,14 @@ fn global_comm<Block, N>(
 where
 	Block: BlockT<Hash = H256>,
 	N: Network<Block> + Unpin,
+	N::In: Send,
 {
 	let (global_in, global_out) = bridge.global();
-	let global_in = PeriodicStream::<Block, _, MessageWithSender>::new(global_in);
-	(global_in, global_out)
+	let global_in = PeriodicStream::<_, MessageWithSender>::new(global_in)
+		.map(|x| Ok(x))
+		.map_err(|()| Error::Periodic);
+
+	(global_in.compat(), global_out.compat())
 }
 
 pub(crate) struct Environment<B, E, Block: BlockT, N: Network<Block>, RA> {

@@ -1,84 +1,79 @@
 use std::{
 	collections::VecDeque,
 	fmt::Debug,
-	marker::PhantomData,
+	marker::Unpin,
+	pin::Pin,
+	sync::Arc,
 	time::{Duration, Instant},
 };
 
-use client::{
-	backend::Backend, blockchain::HeaderBackend, error::Error as ClientError, error::Result,
-	BlockchainEvents, CallExecutor, Client,
-};
 use codec::{Decode, Encode};
-use consensus_common::SelectChain;
-use futures::{future::Loop as FutureLoop, prelude::*, stream::Fuse, sync::mpsc};
-use inherents::InherentDataProviders;
-use sr_primitives::traits::Block as BlockT;
-use tokio_timer::Interval;
 
-use crate::Error;
+use futures::prelude::{Sink as Sink01, Stream as Stream01};
+use futures03::compat::{Compat, Compat01As03};
+use futures03::prelude::{Future, Sink, Stream, TryStream};
+use futures03::sink::SinkExt;
+use futures03::stream::{FilterMap, Fuse, StreamExt, TryStreamExt};
+use futures03::task::{Context, Poll};
 
-pub struct PeriodicStream<Block: BlockT, S, M> {
+use tokio02::timer::Interval;
+
+pub struct PeriodicStream<S, M>
+where
+	S: Stream<Item = M> + Unpin,
+{
 	incoming: Fuse<S>,
 	check_pending: Interval,
 	ready: VecDeque<M>,
-	_phantom: PhantomData<Block>,
 }
 
-impl<Block, S, M> PeriodicStream<Block, S, M>
+impl<S, M> PeriodicStream<S, M>
 where
-	Block: BlockT,
-	S: Stream<Item = M, Error = Error>,
-	M: Debug,
+	S: Stream<Item = M> + Unpin,
 {
 	pub fn new(stream: S) -> Self {
-		let now = Instant::now();
 		let dur = Duration::from_secs(5);
-		let check_pending = Interval::new(now + dur, dur);
 
 		Self {
 			incoming: stream.fuse(),
-			check_pending,
+			check_pending: Interval::new_interval(dur),
 			ready: VecDeque::new(),
-			_phantom: PhantomData,
 		}
 	}
 }
 
-impl<Block, S, M> Stream for PeriodicStream<Block, S, M>
+impl<S, M> Stream for PeriodicStream<S, M>
 where
-	Block: BlockT,
-	S: Stream<Item = M, Error = Error>,
-	M: Debug,
+	S: Stream<Item = M> + Unpin,
+	M: Debug + Unpin,
 {
-	type Item = M;
-	type Error = Error;
+	type Item = S::Item;
 
-	fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
 		loop {
-			match self.incoming.poll()? {
-				Async::Ready(None) => return Ok(Async::Ready(None)),
-				Async::Ready(Some(input)) => {
+			match self.incoming.poll_next_unpin(cx) {
+				Poll::Ready(None) => return Poll::Ready(None),
+				Poll::Ready(Some(input)) => {
 					let ready = &mut self.ready;
 					ready.push_back(input);
 				}
-				Async::NotReady => break,
+				Poll::Pending => break,
 			}
 		}
 
-		let mut is_ready = false;
-		while let Async::Ready(Some(_)) = self.check_pending.poll().map_err(|_| Error::Periodic)? {
-			is_ready = true;
-		}
+		while let Some(_) = match self.check_pending.poll_next_unpin(cx) {
+			Poll::Ready(instant) => instant,
+			Poll::Pending => return Poll::Pending,
+		} {}
 
 		if let Some(ready) = self.ready.pop_front() {
-			return Ok(Async::Ready(Some(ready)));
+			return Poll::Ready(Some(ready));
 		}
 
 		if self.incoming.is_done() {
-			Ok(Async::Ready(None))
+			Poll::Ready(None)
 		} else {
-			Ok(Async::NotReady)
+			Poll::Pending
 		}
 	}
 }

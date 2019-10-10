@@ -197,8 +197,8 @@ fn test_confirm_peer_message() {
 
 			let sender_id = id.clone();
 
-			let handle_in = Compat01As03::new(global_in)
-				.map_ok(move |(msg, sender_opt)| {
+			let handle_in = global_in
+				.map(move |(msg, sender_opt)| {
 					match msg {
 						GossipMessage::ConfirmPeers(
 							ConfirmPeersMessage::Confirming(from),
@@ -212,7 +212,6 @@ fn test_confirm_peer_message() {
 
 					assert_eq!(sender_opt.unwrap(), sender_id.clone());
 				})
-				.map_err(|_| panic!("could not process"))
 				.into_future();
 
 			futures03::future::join(send_message, handle_in)
