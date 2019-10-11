@@ -136,7 +136,8 @@ fn test_1_of_3_key_gen() {
 			full_client,
 			network,
 		)
-		.unwrap(); // compat future03 -> 01
+		.unwrap()
+		.compat(); // compat future03 -> 01
 		runtime.spawn(node);
 	}
 

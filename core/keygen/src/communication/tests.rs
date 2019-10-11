@@ -220,5 +220,5 @@ fn test_confirm_peer_message() {
 		});
 
 	let mut runtime = Runtime::new().unwrap();
-	let r = runtime.block_on(test);
+	let _ = runtime.block_on(test);
 }

@@ -31,8 +31,7 @@ use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{
 };
 use parking_lot::RwLock;
 use rand::prelude::Rng;
-use tokio_executor::DefaultExecutor;
-use tokio_timer::Interval;
+use tokio02::timer::Interval;
 
 use client::blockchain::HeaderBackend;
 use client::{
@@ -157,7 +156,6 @@ pub(crate) struct Environment<B, E, Block: BlockT, N: Network<Block>, RA> {
 struct KeyGenWork<B, E, Block: BlockT, N: Network<Block>, RA> {
 	key_gen: Pin<Box<dyn Future<Output = Result<(), Error>> + Send + Unpin + 'static>>,
 	env: Arc<Environment<B, E, Block, N, RA>>,
-	check_pending: Interval,
 }
 
 impl<B, E, Block, N, RA> KeyGenWork<B, E, Block, N, RA>
@@ -184,13 +182,9 @@ where
 			state: Arc::new(RwLock::new(state)),
 		});
 
-		let now = Instant::now();
-		let check_pending = Interval::new(now + REBUILD_COOLDOWN, REBUILD_COOLDOWN);
-
 		let mut work = Self {
 			key_gen: Box::pin(futures03::future::pending()),
 			env,
-			check_pending,
 		};
 		work.rebuild(true); // init should be okay
 		work
@@ -286,7 +280,7 @@ pub fn run_key_gen<B, E, Block, N, RA>(
 	keystore: KeyStorePtr,
 	client: Arc<Client<B, E, Block, RA>>,
 	network: N,
-) -> ClientResult<impl Future01<Item = (), Error = ()> + Send + 'static>
+) -> ClientResult<impl Future<Output = Result<(), ()>> + Send + 'static>
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
 	E: CallExecutor<Block, Blake2Hasher> + 'static + Send + Sync,
@@ -318,7 +312,7 @@ where
 	let bridge = NetworkBridge::new(network, config.clone(), local_peer_id);
 
 	let key_gen_work = KeyGenWork::new(client, config, bridge).map_err(|e| error!("Error {:?}", e));
-	Ok(key_gen_work.compat())
+	Ok(key_gen_work)
 }
 
 #[cfg(test)]

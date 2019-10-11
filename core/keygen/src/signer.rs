@@ -80,11 +80,17 @@ where
 
 		match polled {
 			Poll::Ready(r) => {
-				Pin::new(&mut self.inner).poll_flush(cx);
+				match Pin::new(&mut self.inner).poll_flush(cx) {
+					Poll::Pending => return Poll::Pending,
+					Poll::Ready(r) => {}
+				}
 				Poll::Ready(r)
 			}
 			Poll::Pending => {
-				Pin::new(&mut self.inner).poll_flush(cx);
+				match Pin::new(&mut self.inner).poll_flush(cx) {
+					Poll::Pending => return Poll::Pending,
+					Poll::Ready(r) => {}
+				}
 				Poll::Pending
 			}
 		}
@@ -499,7 +505,7 @@ where
 		// send all messages generated above
 
 		match Pin::new(&mut self.global_out).poll(cx) {
-			Poll::Ready(Ok()) => {}
+			Poll::Ready(Ok(())) => {}
 			Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
 			Poll::Pending => return Poll::Pending,
 		}

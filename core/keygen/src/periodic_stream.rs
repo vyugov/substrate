@@ -10,8 +10,7 @@ use std::{
 use codec::{Decode, Encode};
 
 use futures03::compat::{Compat, Compat01As03};
-use futures03::prelude::{Future, Sink, Stream, TryStream};
-use futures03::sink::SinkExt;
+use futures03::prelude::{Stream, TryStream};
 use futures03::stream::{FilterMap, Fuse, StreamExt, TryStreamExt};
 use futures03::task::{Context, Poll};
 
@@ -60,9 +59,14 @@ where
 			}
 		}
 
-		while let Some(_) = match self.check_pending.poll_next_unpin(cx) {
+		while let Some(_) = match self.check_pending.poll_next(cx) {
 			Poll::Ready(instant) => instant,
-			Poll::Pending => return Poll::Pending,
+			Poll::Pending => {
+				return {
+					println!("pending");
+					Poll::Pending
+				}
+			}
 		} {}
 
 		if let Some(ready) = self.ready.pop_front() {
@@ -75,4 +79,11 @@ where
 			Poll::Pending
 		}
 	}
+}
+
+#[cfg(test)]
+mod test {
+
+	#[test]
+	fn test_stream() {}
 }
