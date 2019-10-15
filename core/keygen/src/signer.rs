@@ -9,15 +9,11 @@ use std::{
 use codec::{Decode, Encode};
 use curv::GE;
 
-use futures::prelude::{
-	Async, AsyncSink, Future as Future01, Poll as Poll01, Sink as Sink01, Stream as Stream01,
-};
+use futures::prelude::{Async, AsyncSink, Future as Future01, Poll as Poll01, Sink as Sink01};
 use futures::stream::Fuse as Fuse01;
 use futures03::channel::mpsc;
 use futures03::compat::{Compat, Compat01As03};
-use futures03::future::FutureExt;
 use futures03::prelude::{Future, Sink, Stream, TryStream};
-use futures03::sink::SinkExt;
 use futures03::stream::{FilterMap, StreamExt, TryStreamExt};
 use futures03::task::{Context, Poll};
 
