@@ -1,8 +1,10 @@
-#![feature(trait_alias)]
+#![feature(async_closure)]
+
 use std::{
 	collections::{BTreeMap, VecDeque},
 	fmt::Debug,
-	//marker::PhantomData,
+	marker::Unpin,
+	pin::Pin,
 	sync::Arc,
 	time::{Duration, Instant},
 };
@@ -18,7 +20,15 @@ use codec::{Decode, Encode};
 use curv::cryptographic_primitives::proofs::sigma_dlog::DLogProof;
 use curv::cryptographic_primitives::secret_sharing::feldman_vss::VerifiableSS;
 use curv::{FE, GE};
-use futures03::{prelude::*, stream::Fuse, channel::mpsc,Poll,core_reexport::pin::Pin,task::Context,Future};
+
+use futures::prelude::{Future as Future01, Sink as Sink01, Stream as Stream01};
+use futures03::channel::oneshot::{self, Canceled};
+use futures03::compat::{Compat, Compat01As03};
+use futures03::future::{FutureExt, TryFutureExt};
+use futures03::prelude::{Future, Sink, Stream, TryStream};
+use futures03::sink::SinkExt;
+use futures03::stream::{FilterMap, StreamExt, TryStreamExt};
+use futures03::task::{Context, Poll};
 use keystore::KeyStorePtr;
 use log::{debug, error, info};
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{
@@ -28,10 +38,10 @@ use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{
 use parking_lot::RwLock;
 use rand::prelude::Rng;
 use tokio_executor::DefaultExecutor;
-use tokio_timer::Interval;
 use primitives::crypto::key_types::ECDSA_SHARED;
 use mpe_primitives::ConsensusLog::RequestForKeygen;
 use mpe_primitives::MP_ECDSA_ENGINE_ID;
+use tokio02::timer::Interval;
 
 use client::blockchain::HeaderBackend;
 use client::{
@@ -44,8 +54,8 @@ use network::{self, PeerId};
 use primitives::{Blake2Hasher, H256};
 use sr_primitives::generic::BlockId;
 use sr_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
-use crate::communication::MWSStream;
-use crate::communication::MWSSink;
+//use crate::communication::MWSStream;
+//use crate::communication::MWSSink;
 
 
 mod communication;
@@ -89,8 +99,8 @@ impl NodeConfig {
 		}
 	}
 }
-pub trait ErrorFuture=futures03::Future<Output = Result<(),Error>>;
-pub trait EmptyFuture=futures03::Future<Output = Result<(),()>>;
+//pub trait ErrorFuture=futures03::Future<Output = Result<(),Error>>;
+//pub trait EmptyFuture=futures03::Future<Output = Result<(),()>>;
 struct EmptyWrapper;
 impl futures03::Future for EmptyWrapper
 {
@@ -148,16 +158,17 @@ pub struct SigGenState {
 fn global_comm<Block, N>(
 	bridge: &NetworkBridge<Block, N>,
 ) -> (
-	impl MWSStream,
-	impl  MWSSink,
+	impl Stream<Item = MessageWithSender>,
+	impl Sink<MessageWithSender, Error = Error>,
 )
 where
-	Block: BlockT<Hash = H256>+Unpin,
-	N: Network<Block>+Unpin,
-	<N as Network<Block>>::In:Unpin,
+	Block: BlockT<Hash = H256>,
+	N: Network<Block> + Unpin,
+	N::In: Send,
 {
 	let (global_in, global_out) = bridge.global();
-	let global_in = PeriodicStream::<Block, _, MessageWithSender>::new(global_in);
+	let global_in = PeriodicStream::<_, MessageWithSender>::new(global_in);
+
 	(global_in, global_out)
 }
 
@@ -172,25 +183,11 @@ pub(crate) struct Environment<B, E, Block: BlockT, N: Network<Block>, RA,Storage
 struct KeyGenWork<B, E, Block: BlockT, N: Network<Block>, RA,Storage> 
 where Storage:OffchainStorage
 {
-	key_gen:Pin<Box<dyn  ErrorFuture+ Send >>,
+	key_gen: Pin<Box<dyn Future<Output = Result<(), Error>> + Send + Unpin + 'static>>,
 	env: Arc<Environment<B, E, Block, N, RA,Storage>>,
-	check_pending: Interval,
+	//check_pending: Interval,
 }
 
-fn new_signer<B,E,Block:BlockT,N: Network<Block>, RA, In, Out,Storage>(s:Signer<B,E,Block,N,RA,In,Out,Storage>) ->Pin<Box<Signer<B,E,Block,N,RA,In,Out,Storage>>>
-where	B: Backend<Block, Blake2Hasher> + 'static,
-	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
-	Block: BlockT<Hash = H256>,
-	Block::Hash: Ord,
-	N: Network<Block> + Sync,
-	N::In: Send + 'static,
-	RA: Send + Sync + 'static,
-	In: MWSStream,
-	Out: MWSSink,
-	Storage:OffchainStorage,
-{
-	Box::pin(s)
-}
 
 
 
@@ -222,13 +219,9 @@ where
 			offchain:Arc::new(RwLock::new(db)),
 		});
 
-		let now = Instant::now();
-		let check_pending = Interval::new(now + REBUILD_COOLDOWN, REBUILD_COOLDOWN);
-
 		let mut work = Self {
-			key_gen: Box::pin(Box::new(EmptyWrapper{})),
+			key_gen: Box::pin(futures03::future::pending()),
 			env,
-			check_pending,
 		};
 		work.rebuild(true); // init should be okay
 		work
@@ -237,7 +230,8 @@ where
 	fn rebuild(&mut self, last_message_ok: bool) {
 		let (incoming, outgoing) = global_comm(&self.env.bridge);
 		let signer = Signer::new(self.env.clone(), incoming, outgoing, last_message_ok);
-		self.key_gen = new_signer(signer);
+
+		self.key_gen = Box::pin(signer);
 	}
 }
 
@@ -247,27 +241,22 @@ where
 	E: CallExecutor<Block, Blake2Hasher> + 'static + Send + Sync,
 	Block: BlockT<Hash = H256>+Unpin,
 	Block::Hash: Ord,
-	N: Network<Block> + Send + Sync + 'static+Unpin,
-	N::In: Send + 'static+Unpin,
+	N: Network<Block> + Send + Sync + Unpin + 'static,
+	N::In: Send + 'static,
 	RA: Send + Sync + 'static,
 	Storage: OffchainStorage+'static,
 {
-	type Output = Result<(),Error>;
-	
+
+	type Output = Result<(), Error>;
+
 	fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
 		let mut is_ready = false;
-		while let Poll::Ready(val) = Pin::new(&mut self.as_mut().check_pending).poll_next(cx) {
-			match val
-			{
-				Some(_) => {is_ready = true},
-				None =>return Poll::Ready(Err(Error::Periodic))
-			}
-		}
+		// while let Poll::Ready(Some(_)) = self.check_pending.poll().map_err(|_| Error::Periodic)? {
+		// 	is_ready = true;
+		// }
 
 		println!("POLLLLLLLLLLLLLLLLLLLL");
-
-
-		match Pin::new(&mut self.as_mut().key_gen).poll(cx) {
+		match self.key_gen.poll_unpin(cx) {
 			Poll::Pending => {
 				let (is_complete, is_canceled, commits_len) = {
 					let state = self.env.state.read();
@@ -292,17 +281,18 @@ where
 						state.commits.len(),
 					)
 				};
-				return Poll::Pending ;
+
+				return Poll::Pending;
 			}
 			Poll::Ready(Ok(())) => {
-				return Poll::Ready(Ok(()))
+				return Poll::Ready(Ok(()));
 			}
 			Poll::Ready(Err(e)) => {
 				match e {
 					Error::Rebuild => {
 						println!("inner keygen rebuilt");
-						&mut self.as_mut().rebuild(false);
-						//futures03::task::current().notify(); //TODO
+						self.rebuild(false);
+						futures::task::current().notify();
 						return Poll::Pending;
 					}
 					_ => {}
@@ -315,18 +305,18 @@ where
 }
 
 
+// pub fn init_shared_state<B, E, Block, RA>(client: Arc<Client<B, E, Block, RA>>) -> SharedState
+// where
+// 	B: Backend<Block, Blake2Hasher> + 'static,
+// 	E: CallExecutor<Block, Blake2Hasher> + 'static + Clone + Send + Sync,
+// 	Block: BlockT<Hash = H256>,
+// 	Block::Hash: Ord,
+// 	RA: Send + Sync + 'static,
+// {
+// 	let persistent_data: SharedState = load_persistent(&**client.backend()).unwrap();
+// 	persistent_data
+// }
 
-pub fn init_shared_state<B, E, Block, RA>(client: Arc<Client<B, E, Block, RA>>) -> SharedState
-where
-	B: Backend<Block, Blake2Hasher> + 'static,
-	E: CallExecutor<Block, Blake2Hasher> + 'static + Clone + Send + Sync,
-	Block: BlockT<Hash = H256>,
-	Block::Hash: Ord,
-	RA: Send + Sync + 'static,
-{
-	let persistent_data: SharedState = load_persistent(&**client.backend()).unwrap();
-	persistent_data
-}
 
 pub fn run_key_gen<B, E, Block, N, RA>(
 	local_peer_id: PeerId,
@@ -335,14 +325,14 @@ pub fn run_key_gen<B, E, Block, N, RA>(
 	client: Arc<Client<B, E, Block, RA>>,
 	network: N,
 	backend:Arc<B>,
-) -> ClientResult<impl EmptyFuture + Send + 'static>
+) -> ClientResult<impl Future<Output = Result<(), ()>> + Send + 'static>
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
 	E: CallExecutor<Block, Blake2Hasher> + 'static + Send + Sync,
 	Block: BlockT<Hash = H256> +Unpin,
 	Block::Hash: Ord,
-	N: Network<Block> + Send + Sync + 'static+Unpin,
-	N::In: Send + 'static+Unpin,
+	N: Network<Block> + Send + Sync + Unpin + 'static,
+	N::In: Send + 'static,
 	RA: Send + Sync + 'static,
 {
 	let keyclone=keystore.clone();

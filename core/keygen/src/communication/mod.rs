@@ -1,16 +1,18 @@
-#![feature(trait_alias)]
-
-
-use std::sync::Arc;
+use std::{future, marker::Unpin, pin::Pin, sync::Arc};
 
 use codec::{Decode, Encode};
-use futures03::channel::{mpsc, oneshot};
-use futures03::prelude::*;
-
+use futures::prelude::{Sink as Sink01, Stream as Stream01};
+use futures03::channel::oneshot::{self, Canceled};
+use futures03::compat::{Compat, Compat01As03};
+use futures03::future::FutureExt;
+use futures03::prelude::{Future, Sink, Stream, TryStream};
+use futures03::sink::SinkExt;
+use futures03::stream::{FilterMap, StreamExt, TryStreamExt};
+use futures03::task::{Context, Poll};
 use log::{error, info, trace};
 
 use network::{consensus_gossip as network_gossip, NetworkService, PeerId};
-use network_gossip::ConsensusMessage;
+use network_gossip::{ConsensusMessage, TopicNotification};
 use sr_primitives::traits::{
 	Block as BlockT, DigestFor, Hash as HashT, Header as HeaderT, NumberFor, ProvideRuntimeApi,
 };
@@ -20,55 +22,41 @@ use mpe_primitives::MP_ECDSA_ENGINE_ID;
 pub mod gossip;
 pub mod message;
 mod peer;
-use std::{pin::Pin, task::Context, task::Poll};
-
 
 use crate::Error;
 
 use gossip::{GossipMessage, GossipValidator, MessageWithReceiver, MessageWithSender};
-//use message::{ConfirmPeersMessage, KeyGenMessage, SignMessage};
+use message::{ConfirmPeersMessage, KeyGenMessage, SignMessage};
 
-pub struct NetworkStream {
-	inner: Option<mpsc::UnboundedReceiver<network_gossip::TopicNotification>>,
-	outer: oneshot::Receiver<mpsc::UnboundedReceiver<network_gossip::TopicNotification>>,
+pub struct NetworkStream<R> {
+	inner: Option<R>,
+	outer: oneshot::Receiver<R>,
 }
 
-impl Stream for NetworkStream
+impl<R> Stream for NetworkStream<R>
+where
+	R: Stream<Item = TopicNotification> + Unpin,
 {
-  type Item = network_gossip::TopicNotification;
+	type Item = R::Item;
 
-  fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Option<Self::Item>>
-  {
-    if let Some(ref mut inner) = self.inner
-    {
-      match inner.try_next()
-      {
-        Ok(Some(opt)) => return futures03::Poll::Ready(Some(opt)),
-        Ok(None) => return futures03::Poll::Pending,
-        Err(_) => return futures03::Poll::Pending,
-      };
-    }
-    match self.outer.try_recv()
-    {
-      Ok(Some(mut inner)) =>
-      {
-        let poll_result = match inner.try_next()
-        {
-          Ok(Some(opt)) => futures03::Poll::Ready(Some(opt)),
-          Ok(None) => futures03::Poll::Pending,
-          Err(_) => futures03::Poll::Pending,
-        };
-        self.inner = Some(inner);
-        poll_result
-      }
-      Ok(None) => futures03::Poll::Pending,
-      Err(_) => futures03::Poll::Pending,
-    }
-  }
+	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+		if let Some(ref mut inner) = self.as_mut().inner {
+			return inner.poll_next_unpin(cx);
+		}
+
+		match self.outer.poll_unpin(cx) {
+			Poll::Ready(r) => match r {
+				Ok(mut inner) => {
+					let poll_result = inner.poll_next_unpin(cx);
+					self.inner = Some(inner);
+					poll_result
+				}
+				Err(Canceled) => panic!("Oneshot cancelled"),
+			},
+			Poll::Pending => Poll::Pending,
+		}
+	}
 }
-
-
-
 
 pub(crate) fn hash_topic<B: BlockT>(hash: u64) -> B::Hash {
 	<<B::Header as HeaderT>::Hashing as HashT>::hash(&hash.to_be_bytes())
@@ -80,7 +68,7 @@ pub(crate) fn string_topic<B: BlockT>(input: &str) -> B::Hash {
 
 pub trait Network<Block: BlockT>: Clone + Send + 'static {
 	/// A stream of input messages for a topic.
-	type In:Stream<Item = network_gossip::TopicNotification>;
+	type In: Stream<Item = TopicNotification> + Unpin;
 
 	/// Get a stream of messages for a specific gossip topic.
 	fn messages_for(&self, topic: Block::Hash) -> Self::In;
@@ -109,21 +97,24 @@ pub trait Network<Block: BlockT>: Clone + Send + 'static {
 	/// Inform peers that a block with given hash should be downloaded.
 	fn announce(&self, block: Block::Hash, associated_data: Vec<u8>);
 }
-
+use futures03::channel::mpsc::UnboundedReceiver;
 impl<B, S, H> Network<B> for Arc<NetworkService<B, S, H>>
 where
 	B: BlockT,
 	S: network::specialization::NetworkSpecialization<B>,
 	H: network::ExHashT,
 {
-	type In = NetworkStream;
+	type In = NetworkStream<UnboundedReceiver<TopicNotification>>;//Pin<Box<dyn Stream<Item = TopicNotification> + Send>>>;
 
 	fn messages_for(&self, topic: B::Hash) -> Self::In {
 		let (tx, rx) = oneshot::channel();
+
 		self.with_gossip(move |gossip, _| {
 			let inner_rx = gossip.messages_for(MP_ECDSA_ENGINE_ID, topic);
+		//	let inner_rx = Compat01As03::new(inner_rx).map(|x| x.unwrap()).boxed();
 			let _ = tx.send(inner_rx);
 		});
+
 		Self::In {
 			outer: rx,
 			inner: None,
@@ -176,7 +167,7 @@ where
 	}
 }
 
-struct MessageSender<Block: BlockT, N: Network<Block>> {
+struct MessageSender<Block: BlockT, N: Network<Block> + Unpin> {
 	network: N,
 	validator: Arc<GossipValidator<Block>>,
 }
@@ -184,7 +175,7 @@ struct MessageSender<Block: BlockT, N: Network<Block>> {
 impl<Block, N> MessageSender<Block, N>
 where
 	Block: BlockT,
-	N: Network<Block>,
+	N: Network<Block> + Unpin,
 {
 	fn broadcast(&self, msg: GossipMessage) {
 		let raw_msg = msg.encode();
@@ -199,18 +190,18 @@ where
 	}
 }
 
-
-impl<Block: BlockT, N: Network<Block>> Sink<MessageWithReceiver> for MessageSender<Block, N>
+impl<Block, N> Sink<MessageWithReceiver> for MessageSender<Block, N>
+where
+	Block: BlockT,
+	N: Network<Block> + Unpin,
 {
-  type Error = Error;
+	type Error = Error;
 
-  fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>>
-  {
-    Poll::Ready(Ok(()))
-  }
+	fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+		Poll::Ready(Ok(()))
+	}
 
- 	fn start_send(self:Pin<&mut Self> , item: MessageWithReceiver) ->  Result<(), Self::Error>
-	  {
+	fn start_send(self: Pin<&mut Self>, item: MessageWithReceiver) -> Result<(), Self::Error> {
 		let (msg, receiver_opt) = item;
 
 		if let Some(receiver) = receiver_opt {
@@ -222,36 +213,25 @@ impl<Block: BlockT, N: Network<Block>> Sink<MessageWithReceiver> for MessageSend
 		Ok(())
 	}
 
-	 fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>>
-  {
-    Poll::Ready(Ok(()))
-  }
+	fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+		Poll::Ready(Ok(()))
+	}
 
-	fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>>
-  {
-    Poll::Ready(Ok(()))
-  }
-
+	fn poll_close(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+		Poll::Ready(Ok(()))
+	}
 }
-
-
-
 
 pub(crate) struct NetworkBridge<B: BlockT, N: Network<B>> {
 	pub service: N,
 	pub validator: Arc<GossipValidator<B>>,
 }
 
-
-pub trait MWSStream= Stream<Item = MessageWithSender>+Unpin;
-
-pub trait MWRSink= Sink<MessageWithReceiver,Error = Error>;
-
-pub trait MWSSink= Sink<MessageWithSender, Error = Error>+Unpin;
-
-
-impl<B: BlockT+Unpin, N: Network<B>+Unpin> NetworkBridge<B, N> 
-where <N as Network<B>>::In: Unpin
+impl<B, N> NetworkBridge<B, N>
+where
+	B: BlockT,
+	N: Network<B> + Unpin,
+	N::In: Stream<Item = TopicNotification> + Unpin + Send,
 {
 	pub fn new(service: N, config: crate::NodeConfig, local_peer_id: PeerId) -> Self {
 		let validator = Arc::new(GossipValidator::new(config, local_peer_id));
@@ -263,33 +243,30 @@ where <N as Network<B>>::In: Unpin
 	pub fn global(
 		&self,
 	) -> (
-		impl MWSStream,
-		impl MWRSink,
+		impl Stream<Item = MessageWithSender>,
+		impl Sink<MessageWithReceiver, Error = Error>,
 	) {
 		let topic = string_topic::<B>("hash"); // related with `fn validate` in gossip.rs
 
-		let incoming = self
-			.service
-			.messages_for(topic)
-			.filter_map(|notification| {
+		let incoming = self.service.messages_for(topic).filter_map(|notification| {
+			async {
 				let decoded = GossipMessage::decode(&mut &notification.message[..]);
 				if let Err(e) = decoded {
 					trace!("notification error {:?}", e);
 					println!("NOTIFICATION ERROR");
-					return future::ready(None);
+					return None;
 				}
 				println!("sender in global {:?}", notification.sender);
-				future::ready(Some((decoded.unwrap(), notification.sender)))
-			})
-			.filter_map(move |(msg, sender)| future::ready(Some((msg, sender)))  );
-			//.map_err(|()| Error::Network("Failed to receive gossip message".to_string()));
+				Some((decoded.unwrap(), notification.sender))
+			}
+		});
 
 		let outgoing = MessageSender::<B, N> {
 			network: self.service.clone(),
 			validator: self.validator.clone(),
 		};
 
-		(incoming, outgoing)
+		(incoming.boxed(), outgoing)
 	}
 }
 

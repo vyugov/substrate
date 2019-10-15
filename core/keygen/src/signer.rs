@@ -1,20 +1,27 @@
-use std::{collections::VecDeque, marker::PhantomData, str::FromStr, sync::Arc};
+use std::{
+	collections::VecDeque,
+	marker::{PhantomData, Unpin},
+	pin::Pin,
+	str::FromStr,
+	sync::Arc,
+};
 
 use codec::{Decode, Encode};
 use curv::GE;
-use futures03::{prelude::*, channel::mpsc};
-use futures03::Poll;
-use futures03::core_reexport::pin::Pin;
+use client::backend::OffchainStorage;
+
+use futures::prelude::{Async, AsyncSink, Future as Future01, Poll as Poll01, Sink as Sink01};
+use futures::stream::Fuse as Fuse01;
+use futures03::channel::mpsc;
+use futures03::compat::{Compat, Compat01As03};
+use futures03::prelude::{Future, Sink, Stream, TryStream};
+use futures03::stream::{FilterMap, StreamExt, TryStreamExt};
+use futures03::task::{Context, Poll};
 
 use log::{debug, error, info, warn};
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{Keys, Parameters};
 use rand::prelude::Rng;
-use tokio_executor::DefaultExecutor;
 use tokio_timer::Interval;
-use client::backend::OffchainStorage;
-use crate::communication::MWSStream;
-use crate::communication::MWSSink;
-
 
 use client::{
 	backend::Backend, error::Error as ClientError, error::Result as ClientResult, BlockchainEvents,
@@ -32,105 +39,107 @@ use super::{
 	Network, PeerIndex, SignMessage,
 };
 
-struct Buffered<A,S>
-where S: futures03::sink::Sink<A, Error = Error>+Unpin
- {
-	inner:S,
-	buffer: VecDeque<A>,
+struct Buffered<Item, S>
+where
+	S: Sink<Item, Error = Error>,
+{
+	inner: S,
+	buffer: VecDeque<Item>,
 }
 
-impl<A,S>  Unpin for  Buffered<A,S>
-where S: futures03::sink::Sink<A, Error = Error>+Unpin
-{}
+impl<Item, S> Unpin for Buffered<Item, S> where S: Sink<Item, Error = Error> + Unpin {}
 
-
-impl<SinkItem,S> Buffered<SinkItem,S> 
-where S: futures03::sink::Sink<SinkItem, Error = Error>+Unpin,
+impl<Item, S> Buffered<Item, S>
+where
+	Item: Clone,
+	S: Sink<Item, Error = Error> + Unpin,
 {
-	fn new(inner: S) -> Buffered<SinkItem,S>
-	 {
+	fn new(inner: S) -> Self {
 		Buffered {
 			buffer: VecDeque::new(),
 			inner,
 		}
 	}
-    fn is_empty(&self) -> bool {
+
+	fn is_empty(&self) -> bool {
 		self.buffer.is_empty()
 	}
+
 	// push an item into the buffered sink.
 	// the sink _must_ be driven to completion with `poll` afterwards.
-	fn push(&mut self, item: SinkItem) {
+	fn push(&mut self, item: Item) {
 		self.buffer.push_back(item);
 	}
-	// returns ready when the sink and the buffer are completely flushed.
-	fn poll(mut self: Pin<&mut Self>,cx: &mut std::task::Context<'_>) -> Poll<()> {
-		let polled =  (*self).schedule_all(cx);
 
-		let respoll=match polled {
-			futures03::Poll::Ready(()) => Pin::new((&mut (*self).inner)).poll_flush(cx),
-			futures03::Poll::Pending => {
-				Pin::new((&mut (*self).inner)).poll_flush(cx);
-				futures03::Poll::Pending 
+	// returns ready when the sink and the buffer are completely flushed.
+	fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), S::Error>> {
+		let polled = self.schedule_all(cx);
+
+		match polled {
+			Poll::Ready(r) => {
+				match Pin::new(&mut self.inner).poll_flush(cx) {
+					Poll::Pending => return Poll::Pending,
+					Poll::Ready(r) => {}
+				}
+				Poll::Ready(r)
 			}
-		};
-		match respoll
-		{
-        Poll::Pending => Poll::Pending,
-		Poll::Ready(Ok(_)) =>Poll::Ready(()),
-		Poll::Ready(Err(_)) =>Poll::Pending,
+			Poll::Pending => {
+				match Pin::new(&mut self.inner).poll_flush(cx) {
+					Poll::Pending => return Poll::Pending,
+					Poll::Ready(r) => {}
+				}
+				Poll::Pending
+			}
 		}
 	}
 
-	fn schedule_all(&mut self,cx: &mut std::task::Context<'_>) -> Poll<()> {
-		match Pin::new(&mut self.inner).poll_ready(cx)
-		{
+	fn schedule_all(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), S::Error>> {
+		match Pin::new(&mut self.inner).poll_ready(cx) {
 			Poll::Pending => return Poll::Pending,
-			Poll::Ready(Ok( () )) => {},
-			Poll::Ready(Err(_)) => return Poll::Pending,
+			Poll::Ready(Ok(())) => {}
+			Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
 		}
+
 		while let Some(front) = self.buffer.pop_front() {
-              info!("Some in FRONT {:?}",self.buffer.len());
-			match Pin::new(&mut self.inner).start_send(front) {
-				Ok(()) => {
-             match Pin::new(&mut self.inner).poll_ready(cx)
-		 {
-			Poll::Pending => return Poll::Pending,
-			Poll::Ready(Ok( () )) => continue,
-			Poll::Ready(Err(_)) => return Poll::Pending, //todo::convert
-		 }
-
+			match Pin::new(&mut self.inner).start_send(front.clone()) {
+				Ok(()) => match Pin::new(&mut self.inner).poll_flush(cx) {
+					Poll::Pending => {
+						self.buffer.push_front(front);
+						break;
+					}
+					Poll::Ready(Ok(())) => {
+						match Pin::new(&mut self.inner).poll_ready(cx) {
+							Poll::Pending => return Poll::Pending,
+							Poll::Ready(Ok(())) => {}
+							Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+						}
+						continue;
+					}
+					Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
 				},
-				Err(_)=> {
-				//	self.buffer.push_front(front);
-					break;
-				}
+				Err(e) => return Poll::Ready(Err(e)),
 			}
-			
 		}
 
-		if self.buffer.is_empty() {
-			Poll::Ready(())
+		if self.is_empty() {
+			Poll::Ready(Ok(()))
 		} else {
 			Poll::Pending
 		}
 	}
 }
 
-
-
 pub(crate) struct Signer<B, E, Block: BlockT, N: Network<Block>, RA, In, Out,Storage>
 where
 	In: Stream<Item = MessageWithSender>,
-	Out: Sink<MessageWithSender, Error = Error>+Unpin,
+	Out: Sink<MessageWithSender, Error = Error>,
 {
 	env: Arc<Environment<B, E, Block, N, RA,Storage>>,
 	global_in: In,
-	global_out: Buffered<MessageWithSender,Out>,
+	global_out: Buffered<MessageWithSender, Out>,
 	should_rebuild: bool,
 	last_message_ok: bool,
 }
-
-
 
 impl<B, E, Block, N, RA, In, Out,Storage> Signer<B, E, Block, N, RA, In, Out,Storage>
 where
@@ -141,8 +150,8 @@ where
 	N: Network<Block> + Sync,
 	N::In: Send + 'static,
 	RA: Send + Sync + 'static,
-	In: MWSStream,
-	Out: MWSSink,
+	In: Stream<Item = MessageWithSender> + Unpin,
+	Out: Sink<MessageWithSender, Error = Error> + Unpin,
 	Storage:OffchainStorage,
 {
 	pub fn new(
@@ -466,24 +475,18 @@ where
 	N: Network<Block> + Sync,
 	N::In: Send + 'static,
 	RA: Send + Sync + 'static,
-	In:MWSStream,
-	Out: MWSSink,
+	In: Stream<Item = MessageWithSender> + Unpin,
+	Out: Sink<MessageWithSender, Error = Error> + Unpin,
 	Storage: OffchainStorage,
 {
-	type Output=Result<(),Error>;
+	type Output = Result<(), Error>;
 
-fn poll(mut self: Pin<&mut Self>,cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+	fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+		let mut rebuild_state_changed = false;
 
-	let mut rebuild_state_changed = false;
-
-
-		while let Poll::Ready(Some(item)) = Pin::new(&mut self.global_in).poll_next(cx) {
+		while let Poll::Ready(Some(item)) = self.global_in.poll_next_unpin(cx) {
 			let (msg, sender) = item;
-			
 			let is_ok = self.handle_incoming(msg.clone(), sender);
-			if !is_ok {
-				info!("NOT OK MSG {:?}", msg);
-			}
 
 			if !rebuild_state_changed {
 				let should_rebuild = self.last_message_ok ^ is_ok;
@@ -494,22 +497,21 @@ fn poll(mut self: Pin<&mut Self>,cx: &mut std::task::Context<'_>) -> Poll<Self::
 					rebuild_state_changed = true;
 				}
 			}
-
 		}
 
-
-
-	
 		self.generate_shared_keys();
 
-			// send messages generated by `handle_incoming`
-		 Pin::new(&mut self.global_out).poll(cx);
-		
+		// send all messages generated above
 
-        if self.should_rebuild {
-			return  Poll::Ready(Err(Error::Rebuild));
+		match Pin::new(&mut self.global_out).poll(cx) {
+			Poll::Ready(Ok(())) => {}
+			Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+			Poll::Pending => return Poll::Pending,
+		}
+
+		if self.should_rebuild {
+			return Poll::Ready(Err(Error::Rebuild));
 		}
 		Poll::Pending
 	}
-
 }
