@@ -17,8 +17,7 @@
 use crate::traits::{AugmentClap, GetLogFilter};
 
 use std::path::PathBuf;
-use structopt::{StructOpt, clap::{arg_enum, App, AppSettings, _clap_count_exprs, SubCommand, Arg}};
-use client;
+use structopt::{StructOpt, clap::{arg_enum, App, AppSettings, SubCommand, Arg}};
 
 pub use crate::execution_strategy::ExecutionStrategy;
 
@@ -40,6 +39,24 @@ impl Into<client::ExecutionStrategy> for ExecutionStrategy {
 			ExecutionStrategy::Wasm => client::ExecutionStrategy::AlwaysWasm,
 			ExecutionStrategy::Both => client::ExecutionStrategy::Both,
 			ExecutionStrategy::NativeElseWasm => client::ExecutionStrategy::NativeElseWasm,
+		}
+	}
+}
+
+arg_enum! {
+	/// How to execute Wasm runtime code
+	#[allow(missing_docs)]
+	#[derive(Debug, Clone)]
+	pub enum WasmExecutionMethod {
+		// Uses an interpreter.
+		Interpreted,
+	}
+}
+
+impl Into<service::config::WasmExecutionMethod> for WasmExecutionMethod {
+	fn into(self) -> service::config::WasmExecutionMethod {
+		match self {
+			WasmExecutionMethod::Interpreted => service::config::WasmExecutionMethod::Interpreted,
 		}
 	}
 }
@@ -188,11 +205,9 @@ pub struct NodeKeyParams {
 	#[structopt(
 		long = "node-key-type",
 		value_name = "TYPE",
-		raw(
-			possible_values = "&NodeKeyType::variants()",
-			case_insensitive = "true",
-			default_value = r#""Ed25519""#
-		)
+		possible_values = &NodeKeyType::variants(),
+		case_insensitive = true,
+		default_value = "Ed25519"
 	)]
 	pub node_key_type: NodeKeyType,
 
@@ -231,11 +246,9 @@ pub struct ExecutionStrategies {
 	#[structopt(
 		long = "execution-syncing",
 		value_name = "STRATEGY",
-		raw(
-			possible_values = "&ExecutionStrategy::variants()",
-			case_insensitive = "true",
-			default_value = r#""NativeElseWasm""#
-		)
+		possible_values = &ExecutionStrategy::variants(),
+		case_insensitive = true,
+		default_value = "NativeElseWasm"
 	)]
 	pub execution_syncing: ExecutionStrategy,
 
@@ -243,11 +256,9 @@ pub struct ExecutionStrategies {
 	#[structopt(
 		long = "execution-import-block",
 		value_name = "STRATEGY",
-		raw(
-			possible_values = "&ExecutionStrategy::variants()",
-			case_insensitive = "true",
-			default_value = r#""NativeElseWasm""#
-		)
+		possible_values = &ExecutionStrategy::variants(),
+		case_insensitive = true,
+		default_value = "NativeElseWasm"
 	)]
 	pub execution_import_block: ExecutionStrategy,
 
@@ -255,11 +266,9 @@ pub struct ExecutionStrategies {
 	#[structopt(
 		long = "execution-block-construction",
 		value_name = "STRATEGY",
-		raw(
-			possible_values = "&ExecutionStrategy::variants()",
-			case_insensitive = "true",
-			default_value = r#""Wasm""#
-		)
+		possible_values = &ExecutionStrategy::variants(),
+		case_insensitive = true,
+		default_value = "Wasm"
 	)]
 	pub execution_block_construction: ExecutionStrategy,
 
@@ -267,11 +276,9 @@ pub struct ExecutionStrategies {
 	#[structopt(
 		long = "execution-offchain-worker",
 		value_name = "STRATEGY",
-		raw(
-			possible_values = "&ExecutionStrategy::variants()",
-			case_insensitive = "true",
-			default_value = r#""Native""#
-		)
+		possible_values = &ExecutionStrategy::variants(),
+		case_insensitive = true,
+		default_value = "Native"
 	)]
 	pub execution_offchain_worker: ExecutionStrategy,
 
@@ -279,11 +286,9 @@ pub struct ExecutionStrategies {
 	#[structopt(
 		long = "execution-other",
 		value_name = "STRATEGY",
-		raw(
-			possible_values = "&ExecutionStrategy::variants()",
-			case_insensitive = "true",
-			default_value = r#""Native""#
-		)
+		possible_values = &ExecutionStrategy::variants(),
+		case_insensitive = true,
+		default_value = "Native"
 	)]
 	pub execution_other: ExecutionStrategy,
 
@@ -291,17 +296,15 @@ pub struct ExecutionStrategies {
 	#[structopt(
 		long = "execution",
 		value_name = "STRATEGY",
-		raw(
-			possible_values = "&ExecutionStrategy::variants()",
-			case_insensitive = "true",
-			conflicts_with_all = "&[
-				\"execution_other\",
-				\"execution_offchain_worker\",
-				\"execution_block_construction\",
-				\"execution_import_block\",
-				\"execution_syncing\",
-			]"
-		)
+		possible_values = &ExecutionStrategy::variants(),
+		case_insensitive = true,
+		conflicts_with_all = &[
+			"execution-other",
+			"execution-offchain-worker",
+			"execution-block-construction",
+			"execution-import-block",
+			"execution-syncing",
+		]
 	)]
 	pub execution: Option<ExecutionStrategy>,
 }
@@ -360,7 +363,7 @@ pub struct RunCmd {
 	/// allow localhost, https://polkadot.js.org and
 	/// https://substrate-ui.parity.io origins. When running in --dev mode the
 	/// default is to allow all origins.
-	#[structopt(long = "rpc-cors", value_name = "ORIGINS", parse(try_from_str = "parse_cors"))]
+	#[structopt(long = "rpc-cors", value_name = "ORIGINS", parse(try_from_str = parse_cors))]
 	pub rpc_cors: Option<Cors>,
 
 	/// Specify the pruning mode, a number of blocks to keep or 'archive'.
@@ -387,7 +390,7 @@ pub struct RunCmd {
 	/// telemetry endpoints. Verbosity levels range from 0-9, with 0 denoting
 	/// the least verbosity. If no verbosity level is specified the default is
 	/// 0.
-	#[structopt(long = "telemetry-url", value_name = "URL VERBOSITY", parse(try_from_str = "parse_telemetry_endpoints"))]
+	#[structopt(long = "telemetry-url", value_name = "URL VERBOSITY", parse(try_from_str = parse_telemetry_endpoints))]
 	pub telemetry_endpoints: Vec<(String, u8)>,
 
 	/// Should execute offchain workers on every block.
@@ -396,13 +399,21 @@ pub struct RunCmd {
 	#[structopt(
 		long = "offchain-worker",
 		value_name = "ENABLED",
-		raw(
-			possible_values = "&OffchainWorkerEnabled::variants()",
-			case_insensitive = "true",
-			default_value = r#""WhenValidating""#
-		)
+		possible_values = &OffchainWorkerEnabled::variants(),
+		case_insensitive = true,
+		default_value = "WhenValidating"
 	)]
 	pub offchain_worker: OffchainWorkerEnabled,
+
+	/// Method for executing Wasm runtime code.
+	#[structopt(
+		long = "wasm-execution",
+		value_name = "METHOD",
+		possible_values = &WasmExecutionMethod::variants(),
+		case_insensitive = true,
+		default_value = "Interpreted"
+	)]
+	pub wasm_method: WasmExecutionMethod,
 
 	#[allow(missing_docs)]
 	#[structopt(flatten)]
@@ -435,14 +446,14 @@ pub struct RunCmd {
 	/// Use interactive shell for entering the password used by the keystore.
 	#[structopt(
 		long = "password-interactive",
-		raw(conflicts_with_all = "&[ \"password\", \"password_filename\" ]")
+		conflicts_with_all = &[ "password", "password-filename" ]
 	)]
 	pub password_interactive: bool,
 
 	/// Password used by the keystore.
 	#[structopt(
 		long = "password",
-		raw(conflicts_with_all = "&[ \"password_interactive\", \"password_filename\" ]")
+		conflicts_with_all = &[ "password-interactive", "password-filename" ]
 	)]
 	pub password: Option<String>,
 
@@ -451,7 +462,7 @@ pub struct RunCmd {
 		long = "password-filename",
 		value_name = "PATH",
 		parse(from_os_str),
-		raw(conflicts_with_all = "&[ \"password_interactive\", \"password\" ]")
+		conflicts_with_all = &[ "password-interactive", "password" ]
 	)]
 	pub password_filename: Option<PathBuf>
 }
@@ -651,15 +662,23 @@ pub struct ImportBlocksCmd {
 	#[structopt(flatten)]
 	pub shared_params: SharedParams,
 
+	/// Method for executing Wasm runtime code.
+	#[structopt(
+		long = "wasm-execution",
+		value_name = "METHOD",
+		possible_values = &WasmExecutionMethod::variants(),
+		case_insensitive = true,
+		default_value = "Interpreted"
+	)]
+	pub wasm_method: WasmExecutionMethod,
+
 	/// The means of execution used when calling into the runtime while importing blocks.
 	#[structopt(
 		long = "execution",
 		value_name = "STRATEGY",
-		raw(
-			possible_values = "&ExecutionStrategy::variants()",
-			case_insensitive = "true",
-			default_value = r#""NativeElseWasm""#
-		)
+		possible_values = &ExecutionStrategy::variants(),
+		case_insensitive = true,
+		default_value = "NativeElseWasm"
 	)]
 	pub execution: ExecutionStrategy,
 }
