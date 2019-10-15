@@ -19,7 +19,7 @@ use tokio_timer::Interval as Interval01;
 
 pub struct PeriodicStream<S, M>
 where
-	S: Stream<Item = M> + Unpin,
+	S: Stream<Item = M>,
 {
 	incoming: Fuse<S>,
 	check_pending: Pin<Box<dyn Stream<Item = Result<Instant, tokio_timer::Error>> + Send>>,
@@ -28,7 +28,7 @@ where
 
 impl<S, M> PeriodicStream<S, M>
 where
-	S: Stream<Item = M> + Unpin,
+	S: Stream<Item = M>,
 {
 	pub fn new(stream: S) -> Self {
 		let dur = Duration::from_secs(1);
@@ -88,19 +88,18 @@ mod test {
 		stream,
 	};
 	use tokio::runtime::Runtime as Runtime01;
-	use tokio02::runtime::Runtime;
 
 	use super::*;
 
 	#[test]
-	fn test_stream() {
+	fn test_periodic() {
 		let mut rt01 = Runtime01::new().unwrap();
 
 		struct F<S>
 		where
 			S: Stream<Item = u8>,
 		{
-			i: S,
+			s: S,
 		};
 
 		impl<S> Future for F<S>
@@ -110,23 +109,29 @@ mod test {
 			type Output = ();
 
 			fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-				println!("in future");
-
 				loop {
-					match self.i.poll_next_unpin(cx) {
+					match self.s.poll_next_unpin(cx) {
 						Poll::Ready(Some(item)) => {
 							println!("item {:?}", item);
+							assert_eq!(item, 1);
 						}
-						Poll::Ready(None) => return Poll::Ready(()),
-						Poll::Pending => return Poll::Pending,
+						Poll::Ready(None) => {
+							println!("finished");
+							return Poll::Ready(());
+						}
+						Poll::Pending => {
+							println!("pending");
+							return Poll::Pending;
+						}
 					}
 				}
 			}
 		}
 
 		let s = stream::repeat(1u8).take(5);
-		let ps = PeriodicStream::<_, u8>::new(s);
-		let f = F { i: ps };
+		let f = F {
+			s: PeriodicStream::<_, u8>::new(s),
+		};
 
 		let _ = rt01
 			.block_on(f.map(|_| -> Result<(), ()> { Ok(()) }).compat())

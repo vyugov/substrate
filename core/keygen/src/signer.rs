@@ -42,7 +42,7 @@ where
 	buffer: VecDeque<Item>,
 }
 
-impl<Item, S> Unpin for Buffered<Item, S> where S: Sink<Item, Error = Error> + Unpin {}
+// impl<Item, S> Unpin for Buffered<Item, S> where S: Sink<Item, Error = Error> + Unpin {}
 
 impl<Item, S> Buffered<Item, S>
 where
