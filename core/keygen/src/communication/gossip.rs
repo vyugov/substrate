@@ -270,7 +270,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 			(RwLockWriteGuard::downgrade(inner), do_rebroadcast)
 		};
 
-		Box::new(move |who, intent, topic, mut data| {
+		Box::new(move |_who, intent, _topic, mut data| {
 			println!("In `message_allowed` rebroadcast: {:?}", do_rebroadcast);
 
 			if let MessageIntent::PeriodicRebroadcast = intent {
@@ -325,13 +325,13 @@ impl<Block: BlockT> network_gossip::Validator<Block> for GossipValidator<Block> 
 				// println!("msg: {:?}", gossip_msg);
 				let gmsg = gossip_msg.clone();
 				match gmsg {
-					GossipMessage::ConfirmPeers(cpm, all_peers_hash) => match cpm {
+					GossipMessage::ConfirmPeers(cpm, _all_peers_hash) => match cpm {
 						ConfirmPeersMessage::Confirming(from) => {
 							println!("confirming from {:?}", from);
 						}
 						_ => {}
 					},
-					GossipMessage::KeyGen(kgm, all_peers_hash) => match kgm {
+					GossipMessage::KeyGen(kgm, _all_peers_hash) => match kgm {
 						KeyGenMessage::CommitAndDecommit(from, _, _) => {
 							println!("com decom from {:?}", from);
 						}

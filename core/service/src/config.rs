@@ -19,6 +19,7 @@
 pub use client::ExecutionStrategies;
 pub use client_db::PruningMode;
 pub use network::config::{ExtTransport, NetworkConfiguration, Roles};
+pub use substrate_executor::WasmExecutionMethod;
 
 use std::{path::PathBuf, net::SocketAddr};
 use transaction_pool;
@@ -64,6 +65,8 @@ pub struct Configuration<C, G, E = NoExtension> {
 	pub custom: C,
 	/// Node name.
 	pub name: String,
+	/// Wasm execution method.
+	pub wasm_method: WasmExecutionMethod,
 	/// Execution strategies.
 	pub execution_strategies: ExecutionStrategies,
 	/// RPC over HTTP binding address. `None` if disabled.
@@ -95,6 +98,8 @@ pub struct Configuration<C, G, E = NoExtension> {
 	///
 	/// Should only be set when `node` is running development mode.
 	pub dev_key_seed: Option<String>,
+
+	/// Config file for node / badger
 	pub n_conf_file: Option<String>
 }
 
@@ -121,6 +126,7 @@ impl<C, G, E> Configuration<C, G, E> where
 			state_cache_child_ratio: Default::default(),
 			custom: Default::default(),
 			pruning: PruningMode::default(),
+			wasm_method: WasmExecutionMethod::Interpreted,
 			execution_strategies: Default::default(),
 			rpc_http: None,
 			rpc_ws: None,

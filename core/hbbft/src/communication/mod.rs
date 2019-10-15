@@ -33,7 +33,7 @@ use network::consensus_gossip::MessageIntent;
 use network::consensus_gossip::ValidatorContext;
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::{Duration, };//Instant
+//use std::time::{Duration, };//Instant
 //use runtime_primitives::traits::NumberFor;
 use ::unsigned_varint::encode;
 use badger::dynamic_honey_badger::DynamicHoneyBadger;
@@ -1352,7 +1352,7 @@ impl<Block: BlockT> Stream for BadgerStream<Block>
 struct TransactionFeed<Block: BlockT, N: Network<Block>>
 {
   network: N,
-  is_voter: bool,
+  //is_voter: bool,
   gossip_validator: Arc<BadgerGossipValidator<Block>>,
 }
 pub trait SendOut
@@ -1363,12 +1363,12 @@ impl<Block: BlockT, N: Network<Block>> TransactionFeed<Block, N>
 {
   /// Create a new commit output stream.
   pub fn new(
-    network: N, is_voter: bool, gossip_validator: Arc<BadgerGossipValidator<Block>>,
+    network: N, _is_voter: bool, gossip_validator: Arc<BadgerGossipValidator<Block>>,
   ) -> Self
   {
     TransactionFeed {
       network,
-      is_voter,
+     // is_voter,
       gossip_validator,
     }
   }

@@ -455,6 +455,8 @@ macro_rules! new_impl {
 
 
 mod builder;
+
+/// Abstract service
 pub trait AbstractService: 'static + Future<Item = (), Error = Error> +
 	Executor<Box<dyn Future<Item = (), Error = ()> + Send>> + Send {
 	/// Type of block of this chain.

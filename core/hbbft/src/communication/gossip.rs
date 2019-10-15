@@ -95,7 +95,7 @@ use parity_codec::{Decode, Encode};
 
 use log::info;
 use std::collections::HashMap;
-use std::time::{ Instant};//Duration
+//use std::time::{ Instant};//Duration
 
 //const REBROADCAST_AFTER: Duration = Duration::from_secs(60 * 5);
 //const CATCH_UP_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -302,11 +302,11 @@ pub enum Action<H>
   Useless(H),
 }
 
-struct Inner
+/*struct Inner
 {
   //local_view: Option<View<NumberFor<Block>>>,
   peers: Peers,
   authorities: Vec<AuthorityId>,
   config: crate::Config,
   next_rebroadcast: Instant,
-}
+}*/

@@ -22,7 +22,7 @@
 
 use rstd::prelude::*;
 use support::{
-	construct_runtime, parameter_types, traits::{Currency, }
+	construct_runtime, parameter_types, traits::{Currency, Randomness}
 };
 //use primitives::u32_trait::{_1, _2, _3, _4};
 use hb_node_primitives::{
@@ -39,7 +39,7 @@ use client::{
 	block_builder::api::{self as block_builder_api, InherentData, CheckInherentsResult},
 	runtime_api as client_api, impl_runtime_apis
 };
-use sr_primitives::{ApplyResult,  generic, create_runtime_str, key_types};
+use sr_primitives::{ApplyResult,  generic, create_runtime_str, };//key_types
 use sr_primitives::transaction_validity::TransactionValidity;
 use sr_primitives::weights::Weight;
 use sr_primitives::traits::{
@@ -61,7 +61,7 @@ pub use support::StorageValue;
 
 /// Implementations of some helper traits passed into runtime modules as associated types.
 pub mod impls;
-use impls::{WeightMultiplierUpdateHandler, Author, WeightToFee}; //CurrencyToVoteHandler 
+use impls::{WeightMultiplierUpdateHandler,  WeightToFee}; //CurrencyToVoteHandler 
 
 /// Constant values used within the runtime.
 pub mod constants;
@@ -129,6 +129,7 @@ impl contracts::Trait for Runtime {
 	type Currency = Balances;
 	type Call = Call;
 	type Event = Event;
+	type Randomness = RandomnessCollectiveFlip;
 	type DetermineContractAddress = contracts::SimpleAddressDeterminator<Runtime>;
 	type ComputeDispatchFee = contracts::DefaultDispatchFeeComputor<Runtime>;
 	type TrieIdGenerator = contracts::TrieIdFromParentCounter<Runtime>;
@@ -312,6 +313,7 @@ construct_runtime!(
 		Balances: balances,
 		Contracts: contracts,
 		FinalityTracker: finality_tracker::{Module, Call, Inherent},
+		RandomnessCollectiveFlip: randomness_collective_flip::{Module, Call, Storage},
 		Sudo: sudo,
 	}
 );
@@ -382,8 +384,8 @@ impl_runtime_apis! {
 			data.check_extrinsics(&block)
 		}
 
-		fn random_seed() -> <Block as BlockT>::Hash {
-			System::random_seed()
+        fn random_seed() -> <Block as BlockT>::Hash {
+			RandomnessCollectiveFlip::random_seed()
 		}
 	}
 

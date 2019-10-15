@@ -117,7 +117,7 @@ use badger::ConsensusProtocol;
 use fg_primitives::PublicKeySetWrap;
 use fg_primitives::PublicKeyWrap;
 use fg_primitives::SecretKeyShareWrap;
-use fg_primitives::SecretKeyWrap;
+//use fg_primitives::SecretKeyWrap;
 use std::path::PathBuf;
 //use fg_primitives::AuthorityId;
 use fg_primitives::AuthorityPair;
@@ -321,7 +321,8 @@ fn secret_share_from_string(st: &str) -> Result<SecretKeyShareWrap, Error>
     Err(_) => return Err(Error::Badger("secret key share binary invalid".to_string())),
   }
 }
-fn secret_from_string(st: &str) -> Result<SecretKeyWrap, Error>
+
+/*fn secret_from_string(st: &str) -> Result<SecretKeyWrap, Error>
 {
   let data = hex::decode(st)?;
   match bincode::deserialize(&data)
@@ -329,7 +330,8 @@ fn secret_from_string(st: &str) -> Result<SecretKeyWrap, Error>
     Ok(val) => Ok(SecretKeyWrap { 0: val }),
     Err(_) => return Err(Error::Badger("secret key binary invalid".to_string())),
   }
-}
+}*/
+
 impl Config
 {
   fn name(&self) -> &str
@@ -816,7 +818,7 @@ where
   RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
 {
   type Item = TransactionSet;
-  fn poll_next(self: Pin<&mut Self>, cx: &mut futures03::task::Context)
+  fn poll_next(self: Pin<&mut Self>, _cx: &mut futures03::task::Context)
     -> Poll<Option<Self::Item>>
   {
     trace!("BADgER! Polled stream!");
@@ -897,7 +899,7 @@ S: Unpin
 
     }
 }*/
-use futures_timer::Delay;
+//use futures_timer::Delay;
 use futures_timer::Interval;
 /// Run a HBBFT churn as a task. Provide configuration and a link to a
 /// block import worker that has already been instantiated with `block_import`.
@@ -934,11 +936,11 @@ where
   //let PersistentData { authority_set, set_state, consensus_changes } = persistent_data;
 
   //	register_finality_tracker_inherent_data_provider(client.clone(), &inherent_data_providers)?;
-  let (blk_out, mut tx_in) = global_communication(&client, network_bridge);
+  let (blk_out,  tx_in) = global_communication(&client, network_bridge);
   let txcopy = Arc::new(parking_lot::RwLock::new(tx_in));
   let tx_in_arc = txcopy.clone();
 
-  let mut tx_out = TxStream {
+  let  tx_out = TxStream {
     transaction_pool: t_pool.clone(),
     client: client.clone(),
   };
@@ -960,7 +962,7 @@ where
   let cclient = client.clone();
   let cblock_import = block_import.clone();
   let ping_sel = selch.clone();
-  let receiver = blk_out.for_each(move |mut batch| {
+  let receiver = blk_out.for_each(move | batch| {
 	  info!("[[[[[[[");
     let inherent_digests = generic::Digest { logs: vec![] };
     info!(
@@ -1067,7 +1069,7 @@ where
             let (header, body) = block.deconstruct();
 
             let header_num = header.number().clone();
-            let mut parent_hash = header.parent_hash().clone();
+            let mut parent_hash ;//= header.parent_hash().clone();
 
             // sign the pre-sealed hash of the block and then
             // add it to a digest item.

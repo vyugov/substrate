@@ -19,7 +19,6 @@ use cli::{NoCustom, CoreParams};
 use std::{fs, env, path::Path};
 
 use structopt::{StructOpt, clap::Shell};
-
 fn main() {
 	build_shell_completion();
 }
