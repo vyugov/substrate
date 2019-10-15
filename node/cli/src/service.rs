@@ -33,6 +33,7 @@ use transaction_pool::{self, txpool::{Pool as TransactionPool}};
 use inherents::InherentDataProviders;
 use network::construct_simple_protocol;
 use keygen::{self};
+use futures03::future::TryFutureExt;
 
 use substrate_service::{NewService, NetworkStatus};
 use client::{Client, LocalCallExecutor};
@@ -185,7 +186,7 @@ macro_rules! new_full {
 				service.client(),
 				service.network()
 			)?;
-			service.spawn_task(key_gen);
+			service.spawn_task(key_gen.compat());
 		}
 
 		let config = grandpa::Config {

@@ -92,9 +92,9 @@ fn test_1_of_3_key_gen() {
 		Ed25519Keyring::Alice,
 		Ed25519Keyring::Bob,
 		Ed25519Keyring::Charlie,
-		Ed25519Keyring::Dave,
-		Ed25519Keyring::Eve,
-		Ed25519Keyring::Ferdie,
+		// Ed25519Keyring::Dave,
+		// Ed25519Keyring::Eve,
+		// Ed25519Keyring::Ferdie,
 	];
 
 	let peers_len = peers.len();

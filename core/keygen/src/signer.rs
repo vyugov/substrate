@@ -9,10 +9,7 @@ use std::{
 use codec::{Decode, Encode};
 use curv::GE;
 
-use futures::prelude::{Async, AsyncSink, Future as Future01, Poll as Poll01, Sink as Sink01};
-use futures::stream::Fuse as Fuse01;
 use futures03::channel::mpsc;
-use futures03::compat::{Compat, Compat01As03};
 use futures03::prelude::{Future, Sink, Stream, TryStream};
 use futures03::stream::{FilterMap, StreamExt, TryStreamExt};
 use futures03::task::{Context, Poll};
@@ -20,7 +17,6 @@ use futures03::task::{Context, Poll};
 use log::{debug, error, info, warn};
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{Keys, Parameters};
 use rand::prelude::Rng;
-use tokio_timer::Interval;
 
 use client::{
 	backend::Backend, error::Error as ClientError, error::Result as ClientResult, BlockchainEvents,
@@ -71,7 +67,7 @@ where
 	}
 
 	// returns ready when the sink and the buffer are completely flushed.
-	fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), S::Error>> {
+	fn poll(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), S::Error>> {
 		let polled = self.schedule_all(cx);
 
 		match polled {
@@ -500,7 +496,7 @@ where
 
 		// send all messages generated above
 
-		match Pin::new(&mut self.global_out).poll(cx) {
+		match self.global_out.poll(cx) {
 			Poll::Ready(Ok(())) => {}
 			Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
 			Poll::Pending => return Poll::Pending,

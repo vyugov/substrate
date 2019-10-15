@@ -14,7 +14,6 @@ use curv::cryptographic_primitives::proofs::sigma_dlog::DLogProof;
 use curv::cryptographic_primitives::secret_sharing::feldman_vss::VerifiableSS;
 use curv::{FE, GE};
 
-use futures::prelude::{Future as Future01, Sink as Sink01, Stream as Stream01};
 use futures03::channel::oneshot::{self, Canceled};
 use futures03::compat::{Compat, Compat01As03};
 use futures03::future::{FutureExt, TryFutureExt};
@@ -210,11 +209,6 @@ where
 	type Output = Result<(), Error>;
 
 	fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-		let mut is_ready = false;
-		// while let Poll::Ready(Some(_)) = self.check_pending.poll().map_err(|_| Error::Periodic)? {
-		// 	is_ready = true;
-		// }
-
 		println!("POLLLLLLLLLLLLLLLLLLLL");
 		match self.key_gen.poll_unpin(cx) {
 			Poll::Pending => {
@@ -223,7 +217,7 @@ where
 					let validator = self.env.bridge.validator.inner.read();
 
 					println!(
-						"INDEX {:?} state: commits {:?} decommits {:?} vss {:?} ss {:?}  proof {:?} has key {:?} complete {:?} periodic ready {:?} peers hash {:?}",
+						"INDEX {:?} state: commits {:?} decommits {:?} vss {:?} ss {:?}  proof {:?} has key {:?} complete {:?} peers hash {:?}",
 						validator.get_local_index(),
 						state.commits.len(),
 						state.decommits.len(),
@@ -232,7 +226,6 @@ where
 						state.proofs.len(),
 						state.local_key.is_some(),
 						state.complete,
-						is_ready,
 						validator.get_peers_hash()
 					);
 					(

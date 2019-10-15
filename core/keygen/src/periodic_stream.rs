@@ -9,19 +9,20 @@ use std::{
 
 use codec::{Decode, Encode};
 
-use futures03::compat::{Compat, Compat01As03};
+use futures03::compat::{Compat, Stream01CompatExt};
 use futures03::prelude::{Stream, TryStream};
 use futures03::stream::{FilterMap, Fuse, StreamExt, TryStreamExt};
 use futures03::task::{Context, Poll};
 
-use tokio02::timer::Interval;
+// TODO change to tokio 0.2's interval when runtime changed to 0.2
+use tokio_timer::Interval as Interval01;
 
 pub struct PeriodicStream<S, M>
 where
 	S: Stream<Item = M> + Unpin,
 {
 	incoming: Fuse<S>,
-	check_pending: Interval,
+	check_pending: Pin<Box<dyn Stream<Item = Result<Instant, tokio_timer::Error>> + Send>>,
 	ready: VecDeque<M>,
 }
 
@@ -30,11 +31,11 @@ where
 	S: Stream<Item = M> + Unpin,
 {
 	pub fn new(stream: S) -> Self {
-		let dur = Duration::from_secs(5);
+		let dur = Duration::from_secs(1);
 
 		Self {
 			incoming: stream.fuse(),
-			check_pending: Interval::new_interval(dur),
+			check_pending: Interval01::new_interval(dur).compat().boxed(),
 			ready: VecDeque::new(),
 		}
 	}
@@ -48,12 +49,10 @@ where
 	type Item = S::Item;
 
 	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-		println!("in ps");
 		loop {
 			match self.incoming.poll_next_unpin(cx) {
 				Poll::Ready(None) => break,
 				Poll::Ready(Some(input)) => {
-					println!("input {:?}", input);
 					let ready = &mut self.ready;
 					ready.push_back(input);
 				}
@@ -61,26 +60,19 @@ where
 			}
 		}
 
-		if let Some(_) = match self.check_pending.poll_next(cx) {
-			Poll::Ready(instant) => {
-				println!("ready {:?}", instant);
-				instant
-			}
-			Poll::Pending => {
-				return {
-					println!("pending");
-					Poll::Pending
-				}
-			}
+		if let Some(_) = match self.check_pending.poll_next_unpin(cx) {
+			Poll::Ready(r) => match r.unwrap() {
+				Ok(instant) => Some(instant),
+				Err(e) => panic!(e),
+			},
+			Poll::Pending => return { Poll::Pending },
 		} {}
 
 		if let Some(ready) = self.ready.pop_front() {
-			println!("return");
 			return Poll::Ready(Some(ready));
 		}
 
 		if self.incoming.is_done() {
-			println!("finished");
 			Poll::Ready(None)
 		} else {
 			Poll::Pending
@@ -102,23 +94,7 @@ mod test {
 
 	#[test]
 	fn test_stream() {
-		let rt = Runtime::new().unwrap();
-
 		let mut rt01 = Runtime01::new().unwrap();
-
-		// let mut i = 0;
-		// let f = future::poll_fn(move |_| {
-		// 	i += 1;
-		// 	println!("{:?}", i);
-		// 	if i == 10000 {
-		// 		return Poll::Ready(None);
-		// 	}
-		// 	if i % 10 == 0 {
-		// 		Poll::Ready(Some(i))
-		// 	} else {
-		// 		Poll::Pending
-		// 	}
-		// });
 
 		struct F<S>
 		where
@@ -126,6 +102,7 @@ mod test {
 		{
 			i: S,
 		};
+
 		impl<S> Future for F<S>
 		where
 			S: Stream<Item = u8> + Unpin,
@@ -134,11 +111,6 @@ mod test {
 
 			fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
 				println!("in future");
-
-				// while let Poll::Ready(Some(item)) = self.i.poll_next_unpin(cx) {
-				// 	println!("get item {:?}", item);
-				// }
-				// Poll::Pending
 
 				loop {
 					match self.i.poll_next_unpin(cx) {
@@ -152,14 +124,12 @@ mod test {
 			}
 		}
 
-		let s = stream::repeat(1u8).take(10);
+		let s = stream::repeat(1u8).take(5);
 		let ps = PeriodicStream::<_, u8>::new(s);
 		let f = F { i: ps };
 
-		rt.block_on(f);
-		// rt01.block_on(f.map(|_| -> Result<(), ()> { Ok(()) }).compat())
-		// .unwrap();
-
-		println!("test");
+		let _ = rt01
+			.block_on(f.map(|_| -> Result<(), ()> { Ok(()) }).compat())
+			.unwrap();
 	}
 }
