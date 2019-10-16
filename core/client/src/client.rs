@@ -114,6 +114,7 @@ impl Default for ExecutionStrategies {
 			syncing: ExecutionStrategy::NativeElseWasm,
 			importing: ExecutionStrategy::NativeElseWasm,
 			block_construction: ExecutionStrategy::AlwaysWasm,
+		//	block_construction: ExecutionStrategy::NativeWhenPossible,
 			offchain_worker: ExecutionStrategy::NativeWhenPossible,
 			other: ExecutionStrategy::NativeElseWasm,
 		}
@@ -641,7 +642,6 @@ impl<B, E, Block, RA> Client<B, E, Block, RA> where
 			) -> bool {
 				self.storage.with_cached_changed_keys(root, functor)
 			}
-
 			fn get(&self, key: &H256, prefix: Prefix) -> Result<Option<DBValue>, String> {
 				self.storage.get(key, prefix)
 			}
@@ -888,11 +888,11 @@ impl<B, E, Block, RA> Client<B, E, Block, RA> where
 
 		if let Ok(ImportResult::Imported(ref aux)) = result {
 			if aux.is_new_best {
-				telemetry!(SUBSTRATE_INFO; "block.import";
-					"height" => height,
-					"best" => ?hash,
-					"origin" => ?origin
-				);
+		telemetry!(SUBSTRATE_INFO; "block.import";
+			"height" => height,
+			"best" => ?hash,
+			"origin" => ?origin
+		);
 			}
 		}
 
@@ -925,6 +925,7 @@ impl<B, E, Block, RA> Client<B, E, Block, RA> where
 		// the block is lower than our last finalized block so it must revert
 		// finality, refusing import.
 		if *import_headers.post().number() <= info.finalized_number {
+			info!("Number mismatch {:?}",import_headers.post().number());
 			return Err(error::Error::NotInFinalizedChain);
 		}
 
@@ -952,8 +953,7 @@ impl<B, E, Block, RA> Client<B, E, Block, RA> where
 			hash,
 			body.clone(),
 		)?;
-
-		let is_new_best = finalized || match fork_choice {
+        let is_new_best = finalized || match fork_choice {
 			ForkChoiceStrategy::LongestChain => import_headers.post().number() > &info.best_number,
 			ForkChoiceStrategy::Custom(v) => v,
 		};
@@ -976,7 +976,6 @@ impl<B, E, Block, RA> Client<B, E, Block, RA> where
 		} else {
 			Vec::default()
 		};
-
 		trace!("Imported {}, (#{}), best={}, origin={:?}", hash, import_headers.post().number(), is_new_best, origin);
 
 		operation.op.set_block_data(
@@ -988,6 +987,8 @@ impl<B, E, Block, RA> Client<B, E, Block, RA> where
 
 		operation.op.update_cache(new_cache);
 		if let Some(storage_update) = storage_update {
+			         info!("storage_update ");
+		
 			operation.op.update_db_storage(storage_update)?;
 		}
 		if let Some(storage_changes) = storage_changes.clone() {
@@ -1042,6 +1043,7 @@ impl<B, E, Block, RA> Client<B, E, Block, RA> where
 					match execution_strategy {
 						ExecutionStrategy::NativeElseWasm => ExecutionManager::NativeElseWasm,
 						ExecutionStrategy::AlwaysWasm => ExecutionManager::AlwaysWasm(BackendTrustLevel::Trusted),
+					//	ExecutionStrategy::AlwaysWasm => ExecutionManager::NativeWhenPossible,
 						ExecutionStrategy::NativeWhenPossible => ExecutionManager::NativeWhenPossible,
 						ExecutionStrategy::Both => ExecutionManager::Both(|wasm_result, native_result| {
 							let header = import_headers.post();
@@ -1590,7 +1592,7 @@ impl<B, E, Block, RA> consensus::BlockImport<Block> for Client<B, E, Block, RA> 
 	}
 }
 
-impl<B, E, Block, RA> Finalizer<Block, Blake2Hasher, B> for Client<B, E, Block, RA> where
+impl<B, E, Block, RA> Finalizer<Block, Blake2Hasher, B> for Client<B, E, Block, RA> where 
 	B: backend::Backend<Block, Blake2Hasher>,
 	E: CallExecutor<Block, Blake2Hasher>,
 	Block: BlockT<Hash=H256>,
@@ -1614,7 +1616,7 @@ impl<B, E, Block, RA> Finalizer<Block, Blake2Hasher, B> for Client<B, E, Block, 
 	}
 }
 
-impl<B, E, Block, RA> Finalizer<Block, Blake2Hasher, B> for &Client<B, E, Block, RA> where
+impl<B, E, Block, RA> Finalizer<Block, Blake2Hasher, B> for &Client<B, E, Block, RA> where 
 	B: backend::Backend<Block, Blake2Hasher>,
 	E: CallExecutor<Block, Blake2Hasher>,
 	Block: BlockT<Hash=H256>,
@@ -1781,7 +1783,7 @@ impl<B, E, Block, RA> backend::AuxStore for &Client<B, E, Block, RA>
 		B: backend::Backend<Block, Blake2Hasher>,
 		E: CallExecutor<Block, Blake2Hasher>,
 		Block: BlockT<Hash=H256>,
-{
+{ 
 
 	fn insert_aux<
 		'a,

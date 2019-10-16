@@ -36,6 +36,7 @@ use parking_lot::Mutex;
 use client::{runtime_api::BlockT, Client};
 use exit_future::Signal;
 use futures::prelude::*;
+
 use futures03::{
 	future::{ready, FutureExt as _, TryFutureExt as _},
 	stream::{StreamExt as _, TryStreamExt as _},
@@ -44,7 +45,7 @@ use network::{
 	NetworkService, NetworkState, specialization::NetworkSpecialization,
 	Event, DhtEvent, PeerId, ReportHandle,
 };
-use log::{log, warn, debug, error, Level};
+use log::{log, warn, debug, error, Level,info};
 use codec::{Encode, Decode};
 use primitives::{Blake2Hasher, H256};
 use sr_primitives::generic::BlockId;
@@ -94,6 +95,8 @@ pub struct NewService<TBl, TCl, TSc, TNetStatus, TNet, TTxPool, TOc> {
 	/// If spawning a background task is not possible, we instead push the task into this `Vec`.
 	/// The elements must then be polled manually.
 	to_poll: Vec<Box<dyn Future<Item = (), Error = ()> + Send>>,
+	/// Configuration of this Service
+	//config: TCfg,
 	rpc_handlers: rpc_servers::RpcHandler<rpc::Metadata>,
 	_rpc: Box<dyn std::any::Any + Send + Sync>,
 	_telemetry: Option<tel::Telemetry>,
@@ -127,6 +130,7 @@ impl Executor<Box<dyn Future<Item = (), Error = ()> + Send>> for SpawnTaskHandle
 		}
 	}
 }
+	
 
 macro_rules! new_impl {
 	(
@@ -208,6 +212,7 @@ macro_rules! new_impl {
 		};
 
 		let has_bootnodes = !network_params.network_config.boot_nodes.is_empty();
+			let propagat= network_params.network_config.propagate_extr;
 		let network_mut = network::NetworkWorker::new(network_params)?;
 		let network = network_mut.service().clone();
 		let network_status_sinks = Arc::new(Mutex::new(Vec::new()));
@@ -276,7 +281,10 @@ macro_rules! new_impl {
 				.map(|v| Ok::<_, ()>(v)).compat()
 				.for_each(move |_| {
 					if let Some(network) = network.upgrade() {
+						if propagat 
+						{
 						network.trigger_repropagate();
+						}
 					}
 					let status = transaction_pool_.status();
 					telemetry!(SUBSTRATE_INFO; "txpool.import";
@@ -445,9 +453,10 @@ macro_rules! new_impl {
 	}}
 }
 
+
 mod builder;
 
-/// Abstraction over a Substrate service.
+/// Abstract service
 pub trait AbstractService: 'static + Future<Item = (), Error = Error> +
 	Executor<Box<dyn Future<Item = (), Error = ()> + Send>> + Send {
 	/// Type of block of this chain.
@@ -514,6 +523,7 @@ pub trait AbstractService: 'static + Future<Item = (), Error = Error> +
 	/// Get a handle to a future that will resolve on exit.
 	fn on_exit(&self) -> ::exit_future::Exit;
 }
+
 
 impl<TBl, TBackend, TExec, TRtApi, TSc, TNetSpec, TExPoolApi, TOc> AbstractService for
 	NewService<TBl, Client<TBackend, TExec, TBl, TRtApi>, TSc, NetworkStatus<TBl>,
@@ -696,6 +706,7 @@ fn build_network_future<
 			last = Some(item);
 		}
 		if let Some(notification) = last {
+			info!("FINALIZED");
 			network.on_block_finalized(notification.hash, notification.header);
 		}
 

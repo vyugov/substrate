@@ -19,6 +19,8 @@
 #[cfg(feature = "std")]
 use std::fmt;
 
+
+
 use rstd::prelude::*;
 use runtime_io::blake2_256;
 use codec::{Decode, Encode, EncodeLike, Input, Error};
@@ -92,6 +94,9 @@ impl<Address, Call, Signature, Extra: SignedExtension> Extrinsic
 		})
 	}
 }
+
+
+
 
 impl<Address, AccountId, Call, Signature, Extra, Lookup>
 	Checkable<Lookup>

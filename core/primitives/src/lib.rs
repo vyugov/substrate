@@ -57,6 +57,10 @@ pub mod u32_trait;
 
 pub mod ed25519;
 pub mod sr25519;
+pub mod hbbft_thresh;
+
+///ecdsa keygen
+pub mod ecdsa_keygen;
 pub mod hash;
 mod hasher;
 pub mod offchain;

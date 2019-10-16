@@ -956,12 +956,13 @@ impl<B: BlockT> ChainSync<B> {
 	/// header (call `on_block_data`). The network request isn't sent
 	/// in this case. Both hash and header is passed as an optimization
 	/// to avoid rehashing the header.
-	pub fn on_block_announce(&mut self, who: PeerId, hash: B::Hash, announce: &BlockAnnounce<B::Header>, is_best: bool)
+	pub fn on_block_announce(&mut self,who: PeerId, hash: B::Hash, announce: &BlockAnnounce<B::Header>, is_best: bool)
 		-> OnBlockAnnounce<B>
 	{
 		let header = &announce.header;
 		let number = *header.number();
 		debug!(target: "sync", "Received block announcement with number {:?}", number);
+		return OnBlockAnnounce::Nothing;//TODO?
 		if number.is_zero() {
 			warn!(target: "sync", "Ignored genesis block (#0) announcement from {}: {}", who, hash);
 			return OnBlockAnnounce::Nothing

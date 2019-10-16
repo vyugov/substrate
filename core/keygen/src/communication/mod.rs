@@ -97,21 +97,21 @@ pub trait Network<Block: BlockT>: Clone + Send + 'static {
 	/// Inform peers that a block with given hash should be downloaded.
 	fn announce(&self, block: Block::Hash, associated_data: Vec<u8>);
 }
-
+use futures03::channel::mpsc::UnboundedReceiver;
 impl<B, S, H> Network<B> for Arc<NetworkService<B, S, H>>
 where
 	B: BlockT,
 	S: network::specialization::NetworkSpecialization<B>,
 	H: network::ExHashT,
 {
-	type In = NetworkStream<Pin<Box<dyn Stream<Item = TopicNotification> + Send>>>;
+	type In = NetworkStream<UnboundedReceiver<TopicNotification>>;//Pin<Box<dyn Stream<Item = TopicNotification> + Send>>>;
 
 	fn messages_for(&self, topic: B::Hash) -> Self::In {
 		let (tx, rx) = oneshot::channel();
 
 		self.with_gossip(move |gossip, _| {
 			let inner_rx = gossip.messages_for(MP_ECDSA_ENGINE_ID, topic);
-			let inner_rx = Compat01As03::new(inner_rx).map(|x| x.unwrap()).boxed();
+		//	let inner_rx = Compat01As03::new(inner_rx).map(|x| x.unwrap()).boxed();
 			let _ = tx.send(inner_rx);
 		});
 

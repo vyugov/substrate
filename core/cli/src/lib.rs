@@ -564,6 +564,7 @@ fn fill_network_configuration(
 	is_dev: bool,
 ) -> error::Result<()> {
 	config.boot_nodes.extend(cli.bootnodes.into_iter());
+	config.propagate_extr=!cli.dont_propagate_extr;
 	config.config_path = Some(
 		network_path(&base_path, chain_spec_id).to_string_lossy().into()
 	);
@@ -648,7 +649,7 @@ where
 	config.impl_name = impl_name;
 	config.impl_commit = version.commit;
 	config.impl_version = version.version;
-
+    config.n_conf_file=  cli.nconffile;
 	config.name = match cli.name.or(cli.keyring.account.map(|a| a.to_string())) {
 		None => generate_node_name(),
 		Some(name) => name,

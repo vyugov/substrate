@@ -1,21 +1,25 @@
 use std::{
-	collections::VecDeque,
+	//collections::VecDeque,
 	fmt::Debug,
-	marker::PhantomData,
-	sync::Arc,
-	time::{Duration, Instant},
+	//marker::PhantomData,
+	//sync::Arc,
+	//time::{Duration, Instant},
 };
 
-use client::blockchain::HeaderBackend;
+//use client::blockchain::HeaderBackend;
 use client::{
-	backend::{AuxStore, Backend},
+	backend::{AuxStore, },// Backend},
 	error::Error as ClientError,
 	error::Result as ClientResult,
-	BlockchainEvents, CallExecutor, Client,
+//	BlockchainEvents, CallExecutor, Client,
 };
 use codec::{Decode, Encode};
+//use consensus_common::SelectChain;
+//use futures::{future::Loop as FutureLoop, prelude::*, stream::Fuse, sync::mpsc};
+//use inherents::InherentDataProviders;
+use log::{debug, error, info, warn};
 use network::{self, PeerId};
-use parking_lot::RwLock;
+//use parking_lot::RwLock;
 use sr_primitives::generic::BlockId;
 use sr_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
 

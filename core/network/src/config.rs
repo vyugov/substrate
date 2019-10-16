@@ -262,6 +262,8 @@ pub struct NetworkConfiguration {
 	pub node_name: String,
 	/// Configuration for the transport layer.
 	pub transport: TransportConfig,
+	/// Whether or not to propagate extrinsics
+	pub propagate_extr: bool,
 }
 
 impl Default for NetworkConfiguration {
@@ -283,6 +285,7 @@ impl Default for NetworkConfiguration {
 				enable_mdns: false,
 				wasm_external_transport: None,
 			},
+			propagate_extr: true,
 		}
 	}
 }

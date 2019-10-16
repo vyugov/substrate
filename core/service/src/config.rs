@@ -25,8 +25,12 @@ use std::{path::PathBuf, net::SocketAddr};
 use transaction_pool;
 use chain_spec::{ChainSpec, RuntimeGenesis, Extension, NoExtension};
 use primitives::crypto::Protected;
+
+
+
 use target_info::Target;
 use tel::TelemetryEndpoints;
+
 
 /// Service configuration.
 #[derive(Clone)]
@@ -94,6 +98,9 @@ pub struct Configuration<C, G, E = NoExtension> {
 	///
 	/// Should only be set when `node` is running development mode.
 	pub dev_key_seed: Option<String>,
+
+	/// Config file for node / badger
+	pub n_conf_file: Option<String>
 }
 
 impl<C, G, E> Configuration<C, G, E> where
@@ -133,6 +140,7 @@ impl<C, G, E> Configuration<C, G, E> where
 			disable_grandpa: false,
 			keystore_password: None,
 			dev_key_seed: None,
+			n_conf_file:None
 		};
 		configuration.network.boot_nodes = configuration.chain_spec.boot_nodes().to_vec();
 

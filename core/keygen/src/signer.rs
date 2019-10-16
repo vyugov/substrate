@@ -8,6 +8,7 @@ use std::{
 
 use codec::{Decode, Encode};
 use curv::GE;
+use client::backend::OffchainStorage;
 
 use futures03::channel::mpsc;
 use futures03::prelude::{Future, Sink, Stream, TryStream};
@@ -124,19 +125,19 @@ where
 	}
 }
 
-pub(crate) struct Signer<B, E, Block: BlockT, N: Network<Block>, RA, In, Out>
+pub(crate) struct Signer<B, E, Block: BlockT, N: Network<Block>, RA, In, Out,Storage>
 where
 	In: Stream<Item = MessageWithSender>,
 	Out: Sink<MessageWithSender, Error = Error>,
 {
-	env: Arc<Environment<B, E, Block, N, RA>>,
+	env: Arc<Environment<B, E, Block, N, RA,Storage>>,
 	global_in: In,
 	global_out: Buffered<MessageWithSender, Out>,
 	should_rebuild: bool,
 	last_message_ok: bool,
 }
 
-impl<B, E, Block, N, RA, In, Out> Signer<B, E, Block, N, RA, In, Out>
+impl<B, E, Block, N, RA, In, Out,Storage> Signer<B, E, Block, N, RA, In, Out,Storage>
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
 	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
@@ -147,9 +148,10 @@ where
 	RA: Send + Sync + 'static,
 	In: Stream<Item = MessageWithSender> + Unpin,
 	Out: Sink<MessageWithSender, Error = Error> + Unpin,
+	Storage:OffchainStorage,
 {
 	pub fn new(
-		env: Arc<Environment<B, E, Block, N, RA>>,
+		env: Arc<Environment<B, E, Block, N, RA,Storage>>,
 		global_in: In,
 		global_out: Out,
 		last_message_ok: bool,
@@ -460,7 +462,7 @@ where
 	}
 }
 
-impl<B, E, Block, N, RA, In, Out> Future for Signer<B, E, Block, N, RA, In, Out>
+impl<B, E, Block, N, RA, In, Out,Storage> Future for Signer<B, E, Block, N, RA, In, Out,Storage>
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
 	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
@@ -471,6 +473,7 @@ where
 	RA: Send + Sync + 'static,
 	In: Stream<Item = MessageWithSender> + Unpin,
 	Out: Sink<MessageWithSender, Error = Error> + Unpin,
+	Storage: OffchainStorage,
 {
 	type Output = Result<(), Error>;
 
