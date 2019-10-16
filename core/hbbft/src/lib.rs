@@ -478,11 +478,15 @@ impl Config
               Ok(val) => val,
               Err(_) => return Err("public key binary invalid".to_string()),
             };
-            info!("JSON! {:?} {:?}", &peer, &pubkey.0);
+            
             //		let cpeer=peer.clone();
             ret.insert(PeerIdW { 0: peer }, pubkey.0);
           }
-
+          let kv:Vec<_>=ret.keys().cloned().collect();
+          for  k in kv
+          {
+            info!("JSON! {:?} {:?}", &k, &ret.get(&k));
+          }
           ret
         }
         _ => return Err("Invalid initial_validators, should be object".to_string()),
