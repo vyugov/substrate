@@ -85,14 +85,14 @@ fn create_keystore(authority: Ed25519Keyring) -> (KeyStorePtr, tempfile::TempDir
 }
 
 #[test]
-fn test_1_of_3_key_gen() {
+fn test_key_gen() {
 	use super::*;
 
 	let peers = &[
 		Ed25519Keyring::Alice,
 		Ed25519Keyring::Bob,
 		Ed25519Keyring::Charlie,
-		// Ed25519Keyring::Dave,
+		Ed25519Keyring::Dave,
 		// Ed25519Keyring::Eve,
 		// Ed25519Keyring::Ferdie,
 	];
@@ -132,6 +132,7 @@ fn test_1_of_3_key_gen() {
 		let node = run_key_gen(
 			local_peer_id,
 			(1, peers_len as u16),
+			1,
 			keystore,
 			full_client,
 			network,

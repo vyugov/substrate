@@ -231,10 +231,10 @@ where
 				// let sender = sender.clone().unwrap();
 
 				let validator = self.env.bridge.validator.inner.read();
-				let receiver = validator.get_peer_id_by_index(from_index as usize);
-				if receiver.is_none() {
-					return false;
-				}
+				// let receiver = validator.get_peer_id_by_index(from_index as usize);
+				// if receiver.is_none() {
+				// 	return false;
+				// }
 				// let index = validator.get_peer_index(&sender) as PeerIndex;
 				// let peer_len = validator.peers.len();
 				// println!("{:?}  {:?} {:?}", *all_peers_hash, our_hash, peer_len);
@@ -247,7 +247,7 @@ where
 						ConfirmPeersMessage::Confirmed(validator.local_string_peer_id()),
 						all_peers_hash,
 					),
-					receiver,
+					Some(sender),
 				));
 			}
 			ConfirmPeersMessage::Confirmed(sender_string_id) => {

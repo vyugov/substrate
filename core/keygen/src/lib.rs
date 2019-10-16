@@ -18,7 +18,6 @@ use futures03::channel::oneshot::{self, Canceled};
 use futures03::compat::{Compat, Compat01As03};
 use futures03::future::{FutureExt, TryFutureExt};
 use futures03::prelude::{Future, Sink, Stream, TryStream};
-use futures03::sink::SinkExt;
 use futures03::stream::{FilterMap, StreamExt, TryStreamExt};
 use futures03::task::{Context, Poll};
 
@@ -32,17 +31,20 @@ use parking_lot::RwLock;
 use rand::prelude::Rng;
 use tokio02::timer::Interval;
 
-use client::blockchain::HeaderBackend;
 use client::{
 	backend::Backend, error::Error as ClientError, error::Result as ClientResult, BlockchainEvents,
 	CallExecutor, Client,
 };
 use consensus_common::SelectChain;
 use inherents::InherentDataProviders;
+use mpe_primitives::ConsensusLog;
+use mpe_primitives::ConsensusLog::RequestForKeygen;
+use mpe_primitives::MP_ECDSA_ENGINE_ID;
 use network::{self, PeerId};
+use primitives::crypto::key_types::ECDSA_SHARED;
 use primitives::{Blake2Hasher, H256};
-use sr_primitives::generic::BlockId;
-use sr_primitives::traits::{Block as BlockT, DigestFor, NumberFor, ProvideRuntimeApi};
+use sr_primitives::generic::{BlockId, OpaqueDigestItemId};
+use sr_primitives::traits::{Block as BlockT, DigestFor, Header, NumberFor, ProvideRuntimeApi};
 
 mod communication;
 mod periodic_stream;
@@ -60,8 +62,6 @@ use signer::Signer;
 
 type Count = u16;
 
-const REBUILD_COOLDOWN: Duration = Duration::from_secs(10);
-
 #[derive(Debug)]
 pub enum Error {
 	Network(String),
@@ -72,6 +72,7 @@ pub enum Error {
 
 #[derive(Clone)]
 pub struct NodeConfig {
+	pub duration: u64,
 	pub threshold: Count,
 	pub players: Count,
 	pub keystore: Option<KeyStorePtr>,
@@ -130,6 +131,7 @@ pub struct SigGenState {
 
 fn global_comm<Block, N>(
 	bridge: &NetworkBridge<Block, N>,
+	duration: u64,
 ) -> (
 	impl Stream<Item = MessageWithSender>,
 	impl Sink<MessageWithSender, Error = Error>,
@@ -140,7 +142,7 @@ where
 	N::In: Send,
 {
 	let (global_in, global_out) = bridge.global();
-	let global_in = PeriodicStream::<_, MessageWithSender>::new(global_in);
+	let global_in = PeriodicStream::<_, MessageWithSender>::new(global_in, duration);
 
 	(global_in, global_out)
 }
@@ -153,7 +155,7 @@ pub(crate) struct Environment<B, E, Block: BlockT, N: Network<Block>, RA> {
 }
 
 struct KeyGenWork<B, E, Block: BlockT, N: Network<Block>, RA> {
-	key_gen: Pin<Box<dyn Future<Output = Result<(), Error>> + Send + Unpin + 'static>>,
+	key_gen: Pin<Box<dyn Future<Output = Result<(), Error>> + Send + Unpin>>,
 	env: Arc<Environment<B, E, Block, N, RA>>,
 }
 
@@ -190,7 +192,7 @@ where
 	}
 
 	fn rebuild(&mut self, last_message_ok: bool) {
-		let (incoming, outgoing) = global_comm(&self.env.bridge);
+		let (incoming, outgoing) = global_comm(&self.env.bridge, self.env.config.duration);
 		let signer = Signer::new(self.env.clone(), incoming, outgoing, last_message_ok);
 		self.key_gen = Box::pin(signer);
 	}
@@ -270,6 +272,7 @@ where
 pub fn run_key_gen<B, E, Block, N, RA>(
 	local_peer_id: PeerId,
 	(threshold, players): (PeerIndex, PeerIndex),
+	duration: u64,
 	keystore: KeyStorePtr,
 	client: Arc<Client<B, E, Block, RA>>,
 	network: N,
@@ -287,6 +290,7 @@ where
 		threshold,
 		players,
 		keystore: Some(keystore),
+		duration,
 	};
 
 	// let keystore = keystore.read();

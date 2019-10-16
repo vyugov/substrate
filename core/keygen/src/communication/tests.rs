@@ -133,6 +133,7 @@ fn make_test_network() -> impl Future<Output = Tester> {
 		threshold: 1,
 		players: 3,
 		keystore: None,
+		duration: 5,
 	};
 
 	let id = network::PeerId::random();

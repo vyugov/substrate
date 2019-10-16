@@ -30,8 +30,8 @@ impl<S, M> PeriodicStream<S, M>
 where
 	S: Stream<Item = M>,
 {
-	pub fn new(stream: S) -> Self {
-		let dur = Duration::from_secs(1);
+	pub fn new(stream: S, duration: u64) -> Self {
+		let dur = Duration::from_secs(duration);
 
 		Self {
 			incoming: stream.fuse(),
@@ -130,7 +130,7 @@ mod test {
 
 		let s = stream::repeat(1u8).take(5);
 		let f = F {
-			s: PeriodicStream::<_, u8>::new(s),
+			s: PeriodicStream::<_, u8>::new(s, 5),
 		};
 
 		let _ = rt01
