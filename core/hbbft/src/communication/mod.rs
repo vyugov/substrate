@@ -39,6 +39,7 @@ use ::unsigned_varint::encode;
 use badger::dynamic_honey_badger::DynamicHoneyBadger;
 use badger::queueing_honey_badger::QueueingHoneyBadger;
 use badger::sender_queue::{Message as BMessage, SenderQueue};
+use badger::sync_key_gen::{to_pub_keys, PartOutcome, SyncKeyGen};
 use badger::{ConsensusProtocol, CpStep, NetworkInfo, Target};
 use fg_primitives::{PublicKeyWrap, SignatureWrap};
 use network::PeerId;
@@ -828,7 +829,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
             );
             if let Some(_) = msg.my_pubshare
             {
-              //self.inner.write().register_peer_public_key(who,share);
+              //self.inner.write().register_peer_public_key(who,share); TODO : maybe fix?
             }
             let mut inner = self.inner.write();
             inner

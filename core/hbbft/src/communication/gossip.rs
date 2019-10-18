@@ -114,7 +114,7 @@ use crate::communication::PeerIdW;
 #[derive(Debug, Encode, Decode)]
 pub enum GossipMessage
 {
-  /// Grandpa message with round and set info.
+  /// Greeting to register peer id. Probably should be replaced by Session aspects
   Greeting(GreetingMessage),
   /// Raw Badger data
   BadgerData(BadgeredMessage),
