@@ -588,7 +588,7 @@ where
           })
           .collect();
         self.outputs.extend(step.output.into_iter());
-        debug_assert!!(
+        debug!(
           "BaDGER!! OK message from {}, {} ",
           who.0,
           self.outputs.len()

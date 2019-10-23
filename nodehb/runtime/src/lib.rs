@@ -316,7 +316,7 @@ construct_runtime!(
 		Timestamp: timestamp::{Module, Call, Storage, Inherent},
 		Authorship: authorship::{Module, Call, Storage, Inherent},
 		Badger: srml_badger::{Module, Call, Storage, Event},
-		Keygen: srml_keygen::{Module, Call, Storage, Event},
+		Keygen: srml_keygen::{Module, Call, Storage, Event,ValidateUnsigned},
 		Indices: indices,
 		Balances: balances,
 		Contracts: contracts,
