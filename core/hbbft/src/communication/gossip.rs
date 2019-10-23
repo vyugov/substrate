@@ -118,7 +118,8 @@ pub enum GossipMessage
   Greeting(GreetingMessage),
   /// Raw Badger data
   BadgerData(BadgeredMessage),
-
+  
+  KeygenData(BadgeredMessage),
   RequestGreeting,
 }
 
@@ -129,6 +130,8 @@ pub struct BadgeredMessage
   pub data: Vec<u8>,
   pub originator: PeerIdW,
 }
+
+
 
 #[derive(Debug, Encode, Decode)]
 pub struct GreetingMessage

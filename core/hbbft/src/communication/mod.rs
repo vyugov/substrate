@@ -908,6 +908,11 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
             Action::Discard(-1)
           }
         }
+        Ok(GossipMessage::KeygenData(keygen_msg)) =>
+        { 
+          Action::Discard(-1)
+
+        }
 
         Err(e) =>
         {
@@ -1050,6 +1055,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
       {
         Err(_) => false,
         Ok(GossipMessage::BadgerData(_)) => return false,
+         Ok(GossipMessage::KeygenData(_)) => return false,
         Ok(GossipMessage::Greeting(_)) => true,
         Ok(GossipMessage::RequestGreeting) => false,
       }

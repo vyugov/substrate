@@ -1252,7 +1252,7 @@ where
     let inherent_data = match inherent_data_providers.create_inherent_data()
     {
       Ok(id) => id,
-      Err(err) => return future::ready(()), //future::err(err),
+      Err(_) => return future::ready(()), //future::err(err),
     };
     //empty for now?
 

@@ -29,7 +29,7 @@ use hb_node_primitives::{
 	AccountId, AccountIndex, Balance, BlockNumber, Hash, Index,
 	Moment, Signature,ContractExecResult,
 };
-//use substrate_badger_rapi::HbbftApi;
+use substrate_badger_rapi::app::Public as BadgerId;
 pub use contracts;
 pub use contracts::Gas;
 pub use srml_keygen::sr25519::AuthorityId as KeygenId;
@@ -39,7 +39,7 @@ use client::{
 	block_builder::api::{self as block_builder_api, InherentData, CheckInherentsResult},
 	runtime_api as client_api, impl_runtime_apis
 };
-use sr_primitives::{ApplyResult,  generic, create_runtime_str, };//key_types
+use sr_primitives::{ApplyResult,  generic, create_runtime_str,impl_opaque_keys,key_types  };//key_types
 use sr_primitives::transaction_validity::TransactionValidity;
 use sr_primitives::weights::Weight;
 use sr_primitives::traits::{
@@ -95,6 +95,15 @@ pub fn native_version() -> NativeVersion {
 }
 
 type NegativeImbalance = <Balances as Currency<AccountId>>::NegativeImbalance;
+
+	pub type SessionHandlers = (Badger,);
+
+	impl_opaque_keys! {
+		pub struct SessionKeys {
+			#[id(key_types::HB_NODE)]
+			pub hbbft: BadgerId,
+		}
+	}
 
 
 parameter_types! {
@@ -405,8 +414,9 @@ impl_runtime_apis! {
 
 	impl substrate_session::SessionKeys<Block> for Runtime {
 		fn generate_session_keys(seed: Option<Vec<u8>>) -> Vec<u8> {
-			let _seed = seed.as_ref().map(|s| rstd::str::from_utf8(&s).expect("Seed is an utf8 string"));
-			Vec::new()
+			let seed = seed.as_ref().map(|s| rstd::str::from_utf8(&s).expect("Seed is an utf8 string"));
+			//Vec::new()
+			SessionKeys::generate(seed)
 		}
 	}
 

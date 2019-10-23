@@ -29,6 +29,12 @@ use serde::Deserialize;
 
 
 
+pub mod app {
+	use sr_primitives::app_crypto::{app_crypto, key_types::HB_NODE, hbbft_thresh};
+	app_crypto!(hbbft_thresh, HB_NODE);
+}
+
+
 use parity_codec::{Input};//Encode, Decode, Codec,
 use sr_primitives::{ConsensusEngineId,};
 use badger::crypto::{ PublicKey, PublicKeySet, PublicKeyShare, SecretKey, SecretKeyShare,Signature,};
