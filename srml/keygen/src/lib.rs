@@ -216,6 +216,7 @@ decl_module! {
 
         // Runs after every block.
     fn offchain_worker(_now: T::BlockNumber) {
+       print("Offchain OFFCHAIN");
       // Only send messages if we are a potential validator.
       if runtime_io::is_validator() {
 //        let mut requests = <ReqIds>::get();
