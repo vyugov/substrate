@@ -573,7 +573,7 @@ where
 
   pub fn handle_message(&mut self, who: &PeerIdW, msg: D::Message) -> Result<(), &'static str>
   {
-    info!("BaDGER!! Handling message from {} {:?}", who.0, &msg);
+    debug!("BaDGER!! Handling message from {} {:?}", who.0, &msg);
     match self.algo.handle_message(who, msg, &mut self.main_rng)
     {
       Ok(step) =>
@@ -582,13 +582,13 @@ where
           .messages
           .into_iter()
           .map(|mmsg| {
-            info!("BaDGER!! Hundling  {:?} ", &mmsg.message);
+            debug!("BaDGER!! Hundling  {:?} ", &mmsg.message);
             let ser_msg = bincode::serialize(&mmsg.message).expect("serialize");
             (mmsg.target, ser_msg)
           })
           .collect();
         self.outputs.extend(step.output.into_iter());
-        info!(
+        debug_assert!!(
           "BaDGER!! OK message from {}, {} ",
           who.0,
           self.outputs.len()

@@ -24,7 +24,7 @@ use primitives::offchain::StorageKind;
 use rstd::prelude::*;
 use sr_primitives::traits::Member;
 use sr_primitives::traits::Printable;
-use sr_primitives::{
+use sr_primitives::{RuntimeDebug,
   generic::{DigestItem, OpaqueDigestItemId},
  // traits::Zero,
  // Perbill,
@@ -143,14 +143,14 @@ impl Printable for OffchainErr
   }
 }
 
-#[derive(Encode, Decode, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Encode, Decode, Clone, PartialEq, Eq,RuntimeDebug)]
 pub struct KeygenResult
 {
   pub req_id: u64,
   pub result_data: Option<Vec<u8>>,
   pub our_auth_index: AuthIndex,
 }
+
 
 decl_module! {
   pub struct Module<T: Trait> for enum Call where origin: T::Origin {

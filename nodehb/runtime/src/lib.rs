@@ -61,7 +61,7 @@ pub use support::StorageValue;
 
 /// Implementations of some helper traits passed into runtime modules as associated types.
 pub mod impls;
-use impls::{WeightMultiplierUpdateHandler,  WeightToFee}; //CurrencyToVoteHandler 
+use impls::{ WeightToFee}; //CurrencyToVoteHandler 
 
 /// Constant values used within the runtime.
 pub mod constants;
@@ -124,7 +124,6 @@ impl system::Trait for Runtime {
 	type AccountId = AccountId;
 	type Lookup = Indices;
 	type Header = generic::Header<BlockNumber, BlakeTwo256>;
-	type WeightMultiplierUpdate = WeightMultiplierUpdateHandler;
 	type Event = Event;
 	type BlockHashCount = BlockHashCount;
 	type MaximumBlockWeight = MaximumBlockWeight;
@@ -191,19 +190,19 @@ parameter_types! {
 }
 
 impl balances::Trait for Runtime {
+	/// The type for recording an account's balance.
 	type Balance = Balance;
+	/// What to do if an account's free balance gets zeroed.
 	type OnFreeBalanceZero = ();
+	/// What to do if a new account is created.
 	type OnNewAccount = Indices;
+	/// The ubiquitous event type.
 	type Event = Event;
-	type TransactionPayment = ();
 	type DustRemoval = ();
 	type TransferPayment = ();
 	type ExistentialDeposit = ExistentialDeposit;
 	type TransferFee = TransferFee;
 	type CreationFee = CreationFee;
-	type TransactionBaseFee = TransactionBaseFee;
-	type TransactionByteFee = TransactionByteFee;
-	type WeightToFee = WeightToFee;
 }
 
 parameter_types! {
@@ -327,6 +326,15 @@ construct_runtime!(
 	}
 );
 
+impl transaction_payment::Trait for Runtime {
+	type Currency = Balances;
+	type OnTransactionPayment = ();
+	type TransactionBaseFee = TransactionBaseFee;
+	type TransactionByteFee = TransactionByteFee;
+	type WeightToFee = WeightToFee;
+	type FeeMultiplierUpdate = impls::FeeMultiplierUpdateHandler;
+}
+
 /// The address format for describing accounts.
 pub type Address = <Indices as StaticLookup>::Source;
 /// Block header type as expected by this runtime.
@@ -344,9 +352,8 @@ pub type SignedExtra = (
 	system::CheckEra<Runtime>,
 	system::CheckNonce<Runtime>,
 	system::CheckWeight<Runtime>,
-	balances::TakeFees<Runtime>,
+	transaction_payment::ChargeTransactionPayment<Runtime>,
 	contracts::CheckBlockGasLimit<Runtime>,
-				
 );
 /// Unchecked extrinsic type as expected by this runtime.
 pub type UncheckedExtrinsic = generic::UncheckedExtrinsic<Address, Call, Signature, SignedExtra>;
