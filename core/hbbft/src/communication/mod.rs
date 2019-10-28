@@ -13,15 +13,12 @@ use futures03::channel::{mpsc, oneshot};
 use futures03::prelude::*;
 use futures03::{task::Context, task::Poll};
 use hex_fmt::HexFmt;
-use libp2p::multihash;
-use libp2p::multihash::Multihash;
 use log::{debug, info, trace};
 use parity_codec::{Decode, Encode};
 use parking_lot::RwLock;
 use rand::{rngs::OsRng, Rng};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use unsigned_varint::encode;
 
 use badger_primitives::AuthorityId;
 pub use badger_primitives::HBBFT_ENGINE_ID;
