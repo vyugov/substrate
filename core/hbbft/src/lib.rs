@@ -1,55 +1,3 @@
-// Copyright 2018-2019 Parity Technologies (UK) Ltd.
-// This file is part of Substrate.
-
-// Substrate is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-
-// Substrate is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-
-// You should have received a copy of the GNU General Public License
-// along with Substrate.  If not, see <http://www.gnu.org/licenses/>.
-
-//! Integration of the GRANDPA finality gadget into substrate.
-//!
-//! This crate is unstable and the API and usage may change.
-//!
-//! This crate provides a long-running future that produces finality notifications.
-//!
-//! # Usage
-//!
-//! First, create a block-import wrapper with the `block_import` function.
-//! The GRANDPA worker needs to be linked together with this block import object,
-//! so a `LinkHalf` is returned as well. All blocks imported (from network or consensus or otherwise)
-//! must pass through this wrapper, otherwise consensus is likely to break in
-//! unexpected ways.
-//!
-//! # Changing authority sets
-//!
-//! The rough idea behind changing authority sets in GRANDPA is that at some point,
-//! we obtain agreement for some maximum block height that the current set can
-//! finalize, and once a block with that height is finalized the next set will
-//! pick up finalization from there.
-//!
-//! Technically speaking, this would be implemented as a voting rule which says,
-//! "if there is a signal for a change in N blocks in block B, only vote on
-//! chains with length NUM(B) + N if they contain B". This conditional-inclusion
-//! logic is complex to compute because it requires looking arbitrarily far
-//! back in the chain.
-//!
-//! Instead, we keep track of a list of all signals we've seen so far (across
-//! all forks), sorted ascending by the block number they would be applied at.
-//! We never vote on chains with number higher than the earliest handoff block
-//! number (this is num(signal) + N). When finalizing a block, we either apply
-//! or prune any signaled changes based on whether the signaling block is
-//! included in the newly-finalized chain.
-
-extern crate serde;
-extern crate unsigned_varint;
 use keystore::KeyStorePtr;
 use runtime_primitives::traits::Hash as THash;
 use runtime_primitives::traits::{
@@ -59,6 +7,8 @@ use runtime_primitives::{
   generic::{self, BlockId},
   ApplyError, Justification,
 };
+use serde;
+use unsigned_varint;
 //use runtime_primitives::{
 //traits::{Block as BlockT, Hash as HashT, Header as HeaderT, ProvideRuntimeApi, DigestFor, },
 //generic::BlockId,
@@ -114,15 +64,15 @@ use futures03::core_reexport::pin::Pin;
 
 use crate::communication::Network;
 use badger::ConsensusProtocol;
-use fg_primitives::PublicKeySetWrap;
-use fg_primitives::PublicKeyWrap;
-use fg_primitives::SecretKeyShareWrap;
-//use fg_primitives::SecretKeyWrap;
+use badger_primitives::PublicKeySetWrap;
+use badger_primitives::PublicKeyWrap;
+use badger_primitives::SecretKeyShareWrap;
+//use badger_primitives::SecretKeyWrap;
 use std::path::PathBuf;
-//use fg_primitives::AuthorityId;
-use fg_primitives::AuthorityPair;
+//use badger_primitives::AuthorityId;
+use badger_primitives::AuthorityPair;
 use substrate_badger_rapi::HbbftApi;
-//use fg_primitives::AuthoritySignature;
+//use badger_primitives::AuthoritySignature;
 use serde_json::Value;
 use serde_json::Value::Number;
 use serde_json::Value::Object;
@@ -174,11 +124,7 @@ where
   Pub: std::marker::Send + std::marker::Sync,
 {
   fn check_inherents<B: BlockT>(
-    &self,
-    _block: B,
-    _block_id: BlockId<B>,
-    _inherent_data: InherentData,
-    _timestamp_now: u64,
+    &self, _block: B, _block_id: BlockId<B>, _inherent_data: InherentData, _timestamp_now: u64,
   ) -> Result<(), String>
   where
     C: ProvideRuntimeApi,
@@ -198,10 +144,7 @@ where
   Sig: Encode + Decode + Send + Sync,
 {
   fn verify(
-    &mut self,
-    origin: BlockOrigin,
-    header: B::Header,
-    justification: Option<Justification>,
+    &mut self, origin: BlockOrigin, header: B::Header, justification: Option<Justification>,
     body: Option<Vec<B::Extrinsic>>,
   ) -> Result<(BlockImportParams<B>, Option<Vec<(CacheKeyId, Vec<u8>)>>), String>
   {
@@ -225,8 +168,7 @@ where
 
 /// Register the aura inherent data provider, if not registered already.
 fn register_badger_inherent_data_provider(
-  inherent_data_providers: &InherentDataProviders,
-  _slot_duration: u64,
+  inherent_data_providers: &InherentDataProviders, _slot_duration: u64,
 ) -> Result<(), consensus_common::Error>
 {
   if !inherent_data_providers.has_provider(&srml_timestamp::INHERENT_IDENTIFIER)
@@ -253,10 +195,8 @@ fn register_badger_inherent_data_provider(
 
 /// Start an import queue for the Badger consensus algorithm.
 pub fn badger_import_queue<B, C, Pub, Sig>(
-  block_import: BoxBlockImport<B>,
-  justification_import: Option<BoxJustificationImport<B>>,
-  finality_proof_import: Option<BoxFinalityProofImport<B>>,
-  client: Arc<C>,
+  block_import: BoxBlockImport<B>, justification_import: Option<BoxJustificationImport<B>>,
+  finality_proof_import: Option<BoxFinalityProofImport<B>>, client: Arc<C>,
   inherent_data_providers: InherentDataProviders,
 ) -> Result<BadgerImportQueue<B>, consensus_common::Error>
 where
@@ -478,12 +418,12 @@ impl Config
               Ok(val) => val,
               Err(_) => return Err("public key binary invalid".to_string()),
             };
-            
+
             //		let cpeer=peer.clone();
             ret.insert(PeerIdW { 0: peer }, pubkey.0);
           }
-          let kv:Vec<_>=ret.keys().cloned().collect();
-          for  k in kv
+          let kv: Vec<_> = ret.keys().cloned().collect();
+          for k in kv
           {
             info!("JSON! {:?} {:?}", &k, &ret.get(&k));
           }
@@ -753,8 +693,7 @@ where
 } */
 use crate::communication::SendOut;
 fn global_communication<Block: BlockT<Hash = H256>, B, E, N, RA>(
-  client: &Arc<Client<B, E, Block, RA>>,
-  network: NetworkBridge<Block, N>,
+  client: &Arc<Client<B, E, Block, RA>>, network: NetworkBridge<Block, N>,
 ) -> (
   impl Stream<Item = <QHB as ConsensusProtocol>::Output>,
   impl SendOut,
@@ -908,15 +847,9 @@ use futures_timer::Interval;
 /// Run a HBBFT churn as a task. Provide configuration and a link to a
 /// block import worker that has already been instantiated with `block_import`.
 pub fn run_honey_badger<B, E, Block: BlockT<Hash = H256>, N, RA, SC, X, I, A>(
-  client: Arc<Client<B, E, Block, RA>>,
-  t_pool: Arc<TransactionPool<A>>,
-  config: Config,
-  network: N,
-  on_exit: X,
-  block_import: Arc<Mutex<I>>,
-  inherent_data_providers: InherentDataProviders,
-  selch: SC,
-  keystore: KeyStorePtr,
+  client: Arc<Client<B, E, Block, RA>>, t_pool: Arc<TransactionPool<A>>, config: Config,
+  network: N, on_exit: X, block_import: Arc<Mutex<I>>,
+  inherent_data_providers: InherentDataProviders, selch: SC, keystore: KeyStorePtr,
 ) -> ::client::error::Result<impl Future<Output = ()> + Send + Unpin>
 where
   Block::Hash: Ord,
@@ -940,11 +873,11 @@ where
   //let PersistentData { authority_set, set_state, consensus_changes } = persistent_data;
 
   //	register_finality_tracker_inherent_data_provider(client.clone(), &inherent_data_providers)?;
-  let (blk_out,  tx_in) = global_communication(&client, network_bridge);
+  let (blk_out, tx_in) = global_communication(&client, network_bridge);
   let txcopy = Arc::new(parking_lot::RwLock::new(tx_in));
   let tx_in_arc = txcopy.clone();
 
-  let  tx_out = TxStream {
+  let tx_out = TxStream {
     transaction_pool: t_pool.clone(),
     client: client.clone(),
   };
@@ -966,8 +899,8 @@ where
   let cclient = client.clone();
   let cblock_import = block_import.clone();
   let ping_sel = selch.clone();
-  let receiver = blk_out.for_each(move | batch| {
-	  info!("[[[[[[[");
+  let receiver = blk_out.for_each(move |batch| {
+    info!("[[[[[[[");
     let inherent_digests = generic::Digest { logs: vec![] };
     info!(
       "Processing batch with epoch {:?} of {:?} transactions into blocks",
@@ -999,7 +932,10 @@ where
     // proceed with transactions
     let mut is_first = true;
     //let mut skipped = 0;
-    info!("Attempting to push transactions from the batch. {}", batch.len());
+    info!(
+      "Attempting to push transactions from the batch. {}",
+      batch.len()
+    );
 
     for pending in batch.iter()
     {
@@ -1016,7 +952,7 @@ where
       };
       //a.data.encode()
       info!("[{:?}] Pushing to the block.", pending);
-	  info!("[{:?}] Data ", &data);
+      info!("[{:?}] Data ", &data);
       match client::block_builder::BlockBuilder::push(&mut block_builder, data.clone())
       {
         Ok(()) =>
@@ -1073,7 +1009,7 @@ where
             let (header, body) = block.deconstruct();
 
             let header_num = header.number().clone();
-            let mut parent_hash ;//= header.parent_hash().clone();
+            let mut parent_hash; //= header.parent_hash().clone();
 
             // sign the pre-sealed hash of the block and then
             // add it to a digest item.
@@ -1220,7 +1156,7 @@ where
         }
       }
     }
-	  info!("[[[[[[[--]]]]]]]");
+    info!("[[[[[[[--]]]]]]]");
 
     future::ready(())
   });
