@@ -1,3 +1,27 @@
+use std::collections::BTreeMap;
+use std::fs::File;
+use std::marker::{Send, Sync};
+use std::path::PathBuf;
+use std::pin::Pin;
+use std::str::FromStr;
+use std::{fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
+
+use bincode;
+use futures03::future::Future;
+use futures03::prelude::*;
+use futures03::task::Poll;
+use futures_timer::Interval;
+use hex;
+use log::{debug, error, info, trace, warn};
+use parity_codec::{Decode, Encode};
+use parking_lot::Mutex;
+use serde_json as json;
+use serde_json::Value;
+use serde_json::Value::Number;
+use serde_json::Value::Object;
+
+use consensus_common::evaluation;
+use inherents::InherentIdentifier;
 use keystore::KeyStorePtr;
 use runtime_primitives::traits::Hash as THash;
 use runtime_primitives::traits::{
@@ -7,88 +31,44 @@ use runtime_primitives::{
   generic::{self, BlockId},
   ApplyError, Justification,
 };
-use serde;
-use unsigned_varint;
-//use runtime_primitives::{
-//traits::{Block as BlockT, Hash as HashT, Header as HeaderT, ProvideRuntimeApi, DigestFor, },
-//generic::BlockId,
-//ApplyError,
-//};
-use consensus_common::evaluation;
-//mod aux_schema;
-use inherents::InherentIdentifier;
+
 pub mod communication;
+use crate::communication::Network;
+use badger::crypto::{PublicKey, SecretKey};
+use badger::ConsensusProtocol;
+use badger_primitives::AuthorityPair;
+use badger_primitives::PublicKeySetWrap;
+use badger_primitives::PublicKeyWrap;
+use badger_primitives::SecretKeyShareWrap;
+use client::backend::Backend;
+use client::blockchain::HeaderBackend;
+use client::error::Error as ClientError;
+use client::runtime_api::ConstructRuntimeApi;
+use client::CallExecutor;
+use client::Client;
+use client::{
+  backend::AuxStore, block_builder::api::BlockBuilder as BlockBuilderApi, blockchain::ProvideCache,
+  error,
+};
 use communication::NetworkBridge;
 use communication::PeerIdW;
 use communication::TransactionSet;
 use communication::QHB;
-//use network::consensus_gossip::{self as network_gossip, MessageIntent, ValidatorContext};
-use client::error::Error as ClientError;
-use client::runtime_api::ConstructRuntimeApi;
-use futures03::prelude::*;
-use futures03::task::Poll;
-use hex;
-use network::PeerId; //config::Roles,
-use runtime_primitives::traits::DigestFor;
-use serde_json as json;
-use std::{fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration}; //time::Instant, thread,
-use substrate_telemetry::{telemetry, CONSENSUS_INFO, CONSENSUS_WARN}; //CONSENSUS_TRATransactionCE, CONSENSUS_DEBUG,
-use transaction_pool::txpool::{self, Pool as TransactionPool};
-
-//use service::TelemetryOnConnect;
-use badger::crypto::{PublicKey, SecretKey}; //PublicKeySet,PublicKeyShare,SecretKeyShare,Signature,
-use client::backend::Backend;
-use client::blockchain::HeaderBackend;
-use client::CallExecutor;
-use client::Client;
-use std::str::FromStr;
-//use client::blockchain::Backend;
-
 use consensus_common::block_import::BlockImport;
-use parity_codec::{Decode, Encode};
-
 use consensus_common::import_queue::{
   BasicQueue, BoxBlockImport, BoxFinalityProofImport, BoxJustificationImport, CacheKeyId, Verifier,
 };
-use consensus_common::{self, BlockImportParams, BlockOrigin, ForkChoiceStrategy, SelectChain}; //Environment, Proposer,Error as ConsensusError,self,
-
-use client::{
-  //error::Result as CResult,
-  backend::AuxStore,
-  block_builder::api::BlockBuilder as BlockBuilderApi,
-  blockchain::ProvideCache,
-  //runtime_api::ApiExt,
-  error,
-};
-use futures03::core_reexport::pin::Pin;
-
-use crate::communication::Network;
-use badger::ConsensusProtocol;
-use badger_primitives::PublicKeySetWrap;
-use badger_primitives::PublicKeyWrap;
-use badger_primitives::SecretKeyShareWrap;
-//use badger_primitives::SecretKeyWrap;
-use std::path::PathBuf;
-//use badger_primitives::AuthorityId;
-use badger_primitives::AuthorityPair;
-use substrate_badger_rapi::HbbftApi;
-//use badger_primitives::AuthoritySignature;
-use serde_json::Value;
-use serde_json::Value::Number;
-use serde_json::Value::Object;
-
-use bincode;
-use inherents::{InherentData, InherentDataProviders};
-use std::fs::File;
-//use std::fmt;
-use futures03::future::Future;
-use parking_lot::Mutex;
-//use tokio_timer::Timeout;
-use log::{debug, error, info, trace, warn};
-
 pub use consensus_common::SyncOracle;
-
+use consensus_common::{self, BlockImportParams, BlockOrigin, ForkChoiceStrategy, SelectChain};
+use inherents::{InherentData, InherentDataProviders};
+use network::PeerId;
+use runtime_primitives::traits::DigestFor;
+use substrate_badger_rapi::HbbftApi;
 use substrate_primitives::{Blake2Hasher, ExecutionContext, H256};
+use substrate_telemetry::{telemetry, CONSENSUS_INFO, CONSENSUS_WARN};
+use transaction_pool::txpool::{self, Pool as TransactionPool};
+
+use crate::communication::SendOut;
 
 pub const INHERENT_IDENTIFIER: InherentIdentifier = *b"snakeshr";
 
@@ -109,22 +89,26 @@ where
 
 pub struct BadgerVerifier<C, Pub, Sig>
 where
-  Sig: std::marker::Send + std::marker::Sync,
-  Pub: std::marker::Send + std::marker::Sync,
+  Sig: Send + Sync,
+  Pub: Send + Sync,
 {
   client: Arc<C>,
-  phantom: PhantomData<Pub>,
-  phantom2: PhantomData<Sig>,
+  _pub: PhantomData<Pub>,
+  _sig: PhantomData<Sig>,
   inherent_data_providers: inherents::InherentDataProviders,
 }
 
 impl<C, Pub, Sig> BadgerVerifier<C, Pub, Sig>
 where
-  Sig: std::marker::Send + std::marker::Sync,
-  Pub: std::marker::Send + std::marker::Sync,
+  Sig: Send + Sync,
+  Pub: Send + Sync,
 {
   fn check_inherents<B: BlockT>(
-    &self, _block: B, _block_id: BlockId<B>, _inherent_data: InherentData, _timestamp_now: u64,
+    &self,
+    _block: B,
+    _block_id: BlockId<B>,
+    _inherent_data: InherentData,
+    _timestamp_now: u64,
   ) -> Result<(), String>
   where
     C: ProvideRuntimeApi,
@@ -144,7 +128,10 @@ where
   Sig: Encode + Decode + Send + Sync,
 {
   fn verify(
-    &mut self, origin: BlockOrigin, header: B::Header, justification: Option<Justification>,
+    &mut self,
+    origin: BlockOrigin,
+    header: B::Header,
+    justification: Option<Justification>,
     body: Option<Vec<B::Extrinsic>>,
   ) -> Result<(BlockImportParams<B>, Option<Vec<(CacheKeyId, Vec<u8>)>>), String>
   {
@@ -168,7 +155,8 @@ where
 
 /// Register the aura inherent data provider, if not registered already.
 fn register_badger_inherent_data_provider(
-  inherent_data_providers: &InherentDataProviders, _slot_duration: u64,
+  inherent_data_providers: &InherentDataProviders,
+  _slot_duration: u64,
 ) -> Result<(), consensus_common::Error>
 {
   if !inherent_data_providers.has_provider(&srml_timestamp::INHERENT_IDENTIFIER)
@@ -182,21 +170,14 @@ fn register_badger_inherent_data_provider(
   {
     Ok(())
   }
-  //Ok(())
-  /*	if !inherent_data_providers.has_provider(&hbbft::INHERENT_IDENTIFIER) {
-      inherent_data_providers
-          .register_provider(srml_aura::InherentDataProvider::new(slot_duration))
-          .map_err(Into::into)
-          .map_err(consensus_common::Error::InherentData)
-  } else {
-      Ok(())
-  }*/
 }
 
 /// Start an import queue for the Badger consensus algorithm.
 pub fn badger_import_queue<B, C, Pub, Sig>(
-  block_import: BoxBlockImport<B>, justification_import: Option<BoxJustificationImport<B>>,
-  finality_proof_import: Option<BoxFinalityProofImport<B>>, client: Arc<C>,
+  block_import: BoxBlockImport<B>,
+  justification_import: Option<BoxJustificationImport<B>>,
+  finality_proof_import: Option<BoxFinalityProofImport<B>>,
+  client: Arc<C>,
   inherent_data_providers: InherentDataProviders,
 ) -> Result<BadgerImportQueue<B>, consensus_common::Error>
 where
@@ -213,8 +194,8 @@ where
   let verifier = BadgerVerifier::<C, Pub, Sig> {
     client: client.clone(),
     inherent_data_providers,
-    phantom: PhantomData,
-    phantom2: PhantomData,
+    _pub: PhantomData,
+    _sig: PhantomData,
   };
 
   Ok(BasicQueue::new(
@@ -224,19 +205,6 @@ where
     finality_proof_import,
   ))
 }
-
-use std::collections::BTreeMap;
-
-//const REBROADCAST_AFTER: Duration = Duration::from_secs(60 * 5);
-//const CATCH_UP_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
-//const CATCH_UP_PROCESS_TIMEOUT: Duration = Duration::from_secs(15);
-/// Maximum number of rounds we are behind a peer before issuing a
-/// catch up request.
-//const CATCH_UP_THRESHOLD: u64 = 2;
-
-//const KEEP_RECENT_ROUNDS: usize = 3;
-
-//const BADGER_TOPIC: &str = "itsasnake";
 
 /// Configuration for the Badger service.
 #[derive(Clone)]
@@ -261,16 +229,6 @@ fn secret_share_from_string(st: &str) -> Result<SecretKeyShareWrap, Error>
     Err(_) => return Err(Error::Badger("secret key share binary invalid".to_string())),
   }
 }
-
-/*fn secret_from_string(st: &str) -> Result<SecretKeyWrap, Error>
-{
-  let data = hex::decode(st)?;
-  match bincode::deserialize(&data)
-  {
-    Ok(val) => Ok(SecretKeyWrap { 0: val }),
-    Err(_) => return Err(Error::Badger("secret key binary invalid".to_string())),
-  }
-}*/
 
 impl Config
 {
@@ -549,151 +507,9 @@ where
   }
 }
 
-/*
-pub struct BadgerBlockImport<B, E, Block: BlockT<Hash=H256>, RA, PRA, SC> {
-    inner: Arc<Client<B, E, Block, RA>>,
-    select_chain: SC,
-    //authority_set: SharedAuthoritySet<Block::Hash, NumberFor<Block>>,
-    //send_voter_commands: mpsc::UnboundedSender<VoterCommand<Block::Hash, NumberFor<Block>>>,
-    consensus_changes: SharedConsensusChanges<Block::Hash, NumberFor<Block>>,
-    api: Arc<PRA>,
-}
-
-impl<B, E, Block: BlockT<Hash=H256>, RA, PRA, SC: Clone> Clone for
-    GrandpaBlockImport<B, E, Block, RA, PRA, SC>
-{
-    fn clone(&self) -> Self {
-        GrandpaBlockImport {
-            inner: self.inner.clone(),
-            select_chain: self.select_chain.clone(),
-            authority_set: self.authority_set.clone(),
-            send_voter_commands: self.send_voter_commands.clone(),
-            consensus_changes: self.consensus_changes.clone(),
-            api: self.api.clone(),
-        }
-    }
-}
-
-impl<B, E, Block: BlockT<Hash=H256>, RA, PRA, SC> JustificationImport<Block>
-    for GrandpaBlockImport<B, E, Block, RA, PRA, SC> where
-        NumberFor<Block>: grandpa::BlockNumberOps,
-        B: Backend<Block, Blake2Hasher> + 'static,
-        E: CallExecutor<Block, Blake2Hasher> + 'static + Clone + Send + Sync,
-        DigestFor<Block>: Encode,
-        RA: Send + Sync,
-        PRA: ProvideRuntimeApi,
-        PRA::Api: GrandpaApi<Block>,
-        SC: SelectChain<Block>,
-{
-    type Error = ConsensusError;
-
-    fn on_start(&mut self) -> Vec<(Block::Hash, NumberFor<Block>)> {
-        let mut out = Vec::new();
-        let chain_info = self.inner.info().chain;
-
-        // request justifications for all pending changes for which change blocks have already been imported
-        let authorities = self.authority_set.inner().read();
-        for pending_change in authorities.pending_changes() {
-            if pending_change.delay_kind == DelayKind::Finalized &&
-                pending_change.effective_number() > chain_info.finalized_number &&
-                pending_change.effective_number() <= chain_info.best_number
-            {
-                let effective_block_hash = self.select_chain.finality_target(
-                    pending_change.canon_hash,
-                    Some(pending_change.effective_number()),
-                );
-
-                if let Ok(Some(hash)) = effective_block_hash {
-                    if let Ok(Some(header)) = self.inner.header(&BlockId::Hash(hash)) {
-                        if *header.number() == pending_change.effective_number() {
-                            out.push((header.hash(), *header.number()));
-                        }
-                    }
-                }
-            }
-        }
-
-        out
-    }
-
-    fn import_justification(
-        &mut self,
-        hash: Block::Hash,
-        number: NumberFor<Block>,
-        justification: Justification,
-    ) -> Result<(), Self::Error> {
-        self.import_justification(hash, number, justification, false)
-    }
-}
-
-
-
-*/
-
-//pub struct LinkHalf<B, E, Block: BlockT<Hash=H256>, RA, SC> {
-//	client: Arc<Client<B, E, Block, RA>>,
-
-//persistent_data: PersistentData<Block>,
-//voter_commands_rx: mpsc::UnboundedReceiver<VoterCommand<Block::Hash, NumberFor<Block>>>,
-//}
-
-/// Make block importer and link half necessary to tie the background voter
-/// to it.
-/*pub fn block_import<B, E, Block: BlockT<Hash=H256>, RA, PRA, SC>(
-    client: Arc<Client<B, E, Block, RA>>,
-    api: Arc<PRA>,
-    select_chain: SC,
-) -> Result<BadgerBlockImport<B, E, Block, RA, PRA, SC>, ClientError>
-where
-    B: Backend<Block, Blake2Hasher> + 'static,
-    E: CallExecutor<Block, Blake2Hasher> + 'static + Clone + Send + Sync,
-    RA: Send + Sync,
-    PRA: ProvideRuntimeApi,
-    PRA::Api: HbbftApi<Block>,
-    SC: SelectChain<Block>,
-{
-
-
-    let chain_info = client.info();
-    let genesis_hash = chain_info.chain.genesis_hash;
-
-    /* let persistent_data = aux_schema::load_persistent(
-        #[allow(deprecated)]
-        &**client.backend(),
-        genesis_hash,
-        <NumberFor<Block>>::zero(),
-        || {
-            let genesis_authorities = api.runtime_api()
-                .badger_authorities(&BlockId::number(Zero::zero()))?;
-            telemetry!(CONSENSUS_DEBUG; "afg.loading_authorities";
-                "authorities_len" => ?genesis_authorities.len()
-            );
-            Ok(genesis_authorities)
-        }
-    )?; */
-
-    let (voter_commands_tx, voter_commands_rx) = mpsc::unbounded();
-
-    Ok((
-        BadgerBlockImport::new(
-            client.clone(),
-            select_chain.clone(),
-            persistent_data.authority_set.clone(),
-            voter_commands_tx,
-            persistent_data.consensus_changes.clone(),
-            api,
-        ),
-        LinkHalf {
-            client,
-            select_chain,
-            persistent_data,
-            voter_commands_rx,
-        },
-    ))
-} */
-use crate::communication::SendOut;
 fn global_communication<Block: BlockT<Hash = H256>, B, E, N, RA>(
-  client: &Arc<Client<B, E, Block, RA>>, network: NetworkBridge<Block, N>,
+  client: &Arc<Client<B, E, Block, RA>>,
+  network: NetworkBridge<Block, N>,
 ) -> (
   impl Stream<Item = <QHB as ConsensusProtocol>::Output>,
   impl SendOut,
@@ -810,46 +626,18 @@ where
   phb: PhantomData<Block>,
 }
 
-/*
-impl<S: Stream<Item = <QHB as ConsensusProtocol>::Output> +'static ,Block:BlockT<Hash=H256>,I:BlockImport<Block>+'static,B,E,RA:'static,SC:'static>   BadgerProposerWorker<S,Block,I,B,E,RA,SC>
-where
-NumberFor<Block>: BlockNumberOps,
-Client<B, E, Block, RA>: ProvideRuntimeApi,
-<Client<B, E, Block, RA> as ProvideRuntimeApi>::Api: BlockBuilderApi<Block>,
-B: client::backend::Backend<Block, Blake2Hasher> + Send + Sync + 'static,
-E: CallExecutor<Block, Blake2Hasher> + Send + Sync + Clone + 'static,
-RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>+ Send + Sync,
-SC:SelectChain<Block> + Clone,
-S: Unpin
-{
-
-
-
-   pub fn  get_aggregate(mut self) -> impl Future
-   {
-
-
-   }
-
-}
-*/
-/*impl<D:ConsensusProtocol<NodeId=PeerIdW>,S: Stream<Item = D::Output>  ,N,Block:BlockT,TF: Sink<TransactionSet>+Unpin,C,A: txpool::ChainApi,I:BlockImport<Block>>
-  Future on BadgerProposerWorker<D,S,N,Block,TF,C,A,I>
-{
-    type Output=();
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output>
-    {
-
-    }
-}*/
-//use futures_timer::Delay;
-use futures_timer::Interval;
 /// Run a HBBFT churn as a task. Provide configuration and a link to a
 /// block import worker that has already been instantiated with `block_import`.
 pub fn run_honey_badger<B, E, Block: BlockT<Hash = H256>, N, RA, SC, X, I, A>(
-  client: Arc<Client<B, E, Block, RA>>, t_pool: Arc<TransactionPool<A>>, config: Config,
-  network: N, on_exit: X, block_import: Arc<Mutex<I>>,
-  inherent_data_providers: InherentDataProviders, selch: SC, keystore: KeyStorePtr,
+  client: Arc<Client<B, E, Block, RA>>,
+  t_pool: Arc<TransactionPool<A>>,
+  config: Config,
+  network: N,
+  on_exit: X,
+  block_import: Arc<Mutex<I>>,
+  inherent_data_providers: InherentDataProviders,
+  selch: SC,
+  keystore: KeyStorePtr,
 ) -> ::client::error::Result<impl Future<Output = ()> + Send + Unpin>
 where
   Block::Hash: Ord,
