@@ -43,7 +43,7 @@ use sr_primitives::{ApplyResult,  generic, create_runtime_str,impl_opaque_keys,k
 use sr_primitives::transaction_validity::TransactionValidity;
 use sr_primitives::weights::Weight;
 use sr_primitives::traits::{
-	BlakeTwo256, Block as BlockT,  NumberFor, StaticLookup,
+	BlakeTwo256, Block as BlockT,  NumberFor, StaticLookup, ConvertInto
 };
 use version::RuntimeVersion;
 use elections::VoteIndex;
@@ -61,7 +61,7 @@ pub use support::StorageValue;
 
 /// Implementations of some helper traits passed into runtime modules as associated types.
 pub mod impls;
-use impls::{ WeightToFee}; //CurrencyToVoteHandler 
+use impls::{ WeightToFee}; //CurrencyToVoteHandler
 
 /// Constant values used within the runtime.
 pub mod constants;
@@ -100,7 +100,6 @@ type NegativeImbalance = <Balances as Currency<AccountId>>::NegativeImbalance;
 
 	impl_opaque_keys! {
 		pub struct SessionKeys {
-			#[id(key_types::HB_NODE)]
 			pub hbbft: BadgerId,
 		}
 	}
@@ -160,6 +159,7 @@ impl contracts::Trait for Runtime {
 	type MaxValueSize = contracts::DefaultMaxValueSize;
 	type BlockGasLimit = contracts::DefaultBlockGasLimit;
 	type Time = Timestamp;
+	type RentPayment = ();
 }
 
 
@@ -276,7 +276,7 @@ impl sudo::Trait for Runtime {
 }
 
 
-impl srml_badger::Trait for Runtime 
+impl srml_badger::Trait for Runtime
 {
 	type Event=Event;
 
@@ -285,13 +285,13 @@ use system::offchain::TransactionSubmitter;
 
 
 type SubmitTransaction = TransactionSubmitter<KeygenId, Runtime, UncheckedExtrinsic>;
-impl srml_keygen::Trait for Runtime 
+impl srml_keygen::Trait for Runtime
 {
 	type Event=Event;
     type AuthorityId=KeygenId;
 	type Call = Call;
 	type SubmitTransaction = SubmitTransaction;
-	
+
 }
 
 
@@ -327,12 +327,12 @@ construct_runtime!(
 );
 
 impl transaction_payment::Trait for Runtime {
-	type Currency = Balances;
+	type Currency = balances::Module<Runtime>;
 	type OnTransactionPayment = ();
 	type TransactionBaseFee = TransactionBaseFee;
 	type TransactionByteFee = TransactionByteFee;
-	type WeightToFee = WeightToFee;
-	type FeeMultiplierUpdate = impls::FeeMultiplierUpdateHandler;
+	type WeightToFee = ConvertInto;
+	type FeeMultiplierUpdate = ();
 }
 
 /// The address format for describing accounts.
@@ -458,7 +458,7 @@ impl_runtime_apis! {
 		}
 	}
 
-    impl substrate_badger_rapi::HbbftApi<Block> for Runtime 
+    impl substrate_badger_rapi::HbbftApi<Block> for Runtime
 	{
  fn do_nothing()
  {
@@ -466,7 +466,7 @@ impl_runtime_apis! {
  }
 	}
 	//not used for now and has no_std problems
-	/*	impl HbbftApi<Block> for Runtime 
+	/*	impl HbbftApi<Block> for Runtime
 		{
 
 		 fn badger_pending_change(digest: &DigestFor<Block>)
@@ -476,7 +476,7 @@ impl_runtime_apis! {
 			}
 
 
-	
+
 		fn badger_forced_change(digest: &DigestFor<Block>)
 			-> Option<(NumberFor<Block>, ScheduledChange<NumberFor<Block>>)>
 			{
@@ -488,6 +488,6 @@ impl_runtime_apis! {
 			Vec::new()
 		}
 
-	
+
 	}*/
 }
