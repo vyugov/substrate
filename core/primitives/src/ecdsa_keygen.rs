@@ -454,7 +454,7 @@ impl From<Pair> for secp256_k1::Secp256k1Scalar {
 type Seed = [u8; SK_SIZE];
 
 #[cfg(feature = "std")]
-use secp256k1::{Secp256k1, Message};
+use secp256k1_wrap::{Secp256k1, Message};
 
 #[cfg(feature = "std")]
 impl TraitPair for Pair {
