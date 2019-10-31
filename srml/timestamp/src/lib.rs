@@ -101,7 +101,7 @@ use inherents::ProvideInherentData;
 use log::info;
 
 
-use support::{StorageValue, Parameter, decl_storage, decl_module};
+use support::{Parameter, decl_storage, decl_module};
 use support::traits::{Time, Get};
 use sr_primitives::traits::{
 	SimpleArithmetic,  SaturatedConversion, Scale
