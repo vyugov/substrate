@@ -40,7 +40,10 @@ const STAGING_TELEMETRY_URL: &str = "wss://telemetry.polkadot.io/submit/";
 pub type ChainSpec = substrate_service::ChainSpec<GenesisConfig>;
 
 
-
+/// Flaming Fir testnet generator
+pub fn flaming_fir_config() -> Result<ChainSpec, String> {
+	ChainSpec::from_json_bytes(&include_bytes!("../res/flaming-fir.json")[..])
+}
 
 fn staging_testnet_config_genesis() -> GenesisConfig {
 	// stash, controller, session-key

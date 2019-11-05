@@ -20,6 +20,7 @@ authorship = { package = "srml-authorship", path = "../../srml/authorship", defa
 #badger = { package = "substrate-badger-mushroom", path = "../../core/hbbft" }
 #badger-primitives = { package = "substrate-badger-primitives", path = "../../core/hbbft/primitives" }
 contracts = { package = "srml-contracts", path = "../../srml/contracts", default-features = false }
+contracts-rpc-runtime-api = { package = "srml-contracts-rpc-runtime-api", path = "../../srml/contracts/rpc/runtime-api/", default-features = false }
 #consensus-primitives = { package = "substrate-consensus-common-primitives", path = "../../core/consensus/common/primitives", default-features = false }
 balances = { package = "srml-balances", path = "../../srml/balances", default-features = false }
 elections = { package = "srml-elections", path = "../../srml/elections", default-features = false }
@@ -32,6 +33,7 @@ indices = { package = "srml-indices", path = "../../srml/indices", default-featu
 membership = { package = "srml-membership", path = "../../srml/membership", default-features = false }
 session = { package = "srml-session", path = "../../srml/session", default-features = false, features = ["historical"] }
 system = { package = "srml-system", path = "../../srml/system", default-features = false }
+system-rpc-runtime-api = { package = "srml-system-rpc-runtime-api", path = "../../srml/system/rpc/runtime-api/", default-features = false }
 timestamp = { package = "srml-timestamp", path = "../../srml/timestamp", default-features = false }
 treasury = { package = "srml-treasury", path = "../../srml/treasury", default-features = false }
 sudo = { package = "srml-sudo", path = "../../srml/sudo", default-features = false }

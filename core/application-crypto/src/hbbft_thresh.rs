@@ -23,6 +23,11 @@ pub use primitives::hbbft_thresh::*;
 mod app {
 	use crate::key_types::HB_NODE;
 	crate::app_crypto!(super, HB_NODE);
+
+	impl crate::traits::BoundToRuntimeAppPublic for Public {
+		type Public = Self;
+	}
+
 }
 
 pub use app::Public as AppPublic;

@@ -18,34 +18,33 @@
 
 //! Service and ServiceFactory implementation. Specialized wrapper over substrate service.
 
-use badger::{self};
-use badger::{badger_import_queue, run_honey_badger,  Config as BadgerConfig};
+use badger::{self, badger_import_queue, run_honey_badger, Config as BadgerConfig};
+use badger_primitives::PublicKeyWrap;
 use badger_primitives::SignatureWrap;
-use badger_primitives::{
-  PublicKeyWrap,//PublicKeySetWrap, PublicKeyShareWrap, , SecretKeyShareWrap, SecretKeyWrap,
-};
-use client::{self, };//LongestChain};
-//use futures::prelude::*;
-//use futures03::compat;
+use client::{self}; //LongestChain};
+                    //use futures::prelude::*;
+                    //use futures03::compat;
 use futures03::compat::Future01CompatExt;
 use futures03::future::FutureExt;
 use futures03::future::TryFutureExt;
 use hb_node_executor;
 use hb_node_primitives::Block;
-use hb_node_runtime::{GenesisConfig, };//RuntimeApi};
-//use primitives::Pair;
-use std::path::PathBuf;
+use hb_node_runtime::GenesisConfig; //RuntimeApi};
+                                    //use primitives::Pair;
 use keygen::{self};
+use std::path::PathBuf;
 use std::sync::Arc;
 //use std::time::Duration;
 use substrate_service::{
-  config::Configuration, error::Error as ServiceError, AbstractService, //ServiceBuilder,
+  config::Configuration,
+  error::Error as ServiceError,
+  AbstractService, //ServiceBuilder,
 };
 
 use inherents::InherentDataProviders;
 //use network::config::DummyFinalityProofRequestBuilder;
 use network::construct_simple_protocol;
-use transaction_pool::{self, };//txpool::Pool as TransactionPool};
+use transaction_pool::{self}; //txpool::Pool as TransactionPool};
 
 //use substrate_service::construct_service_factory;
 use log::info;
@@ -72,16 +71,9 @@ impl Default for NodeConfig
   }
 }
 
-/// Starts a `ServiceBuilder` for a full service.
-///
-/// Use this macro if you don't actually need the full service, but just the builder in order to
-/// be able to perform chain operations.
-///
-
-
 macro_rules! new_full_start {
   ($config:expr) => {{
-    let  inherent_data_providers = inherents::InherentDataProviders::new();
+    let inherent_data_providers = inherents::InherentDataProviders::new();
     type RpcExtension = jsonrpc_core::IoHandler<substrate_rpc::Metadata>;
     let builder = substrate_service::ServiceBuilder::new_full::<
       hb_node_primitives::Block,
@@ -93,12 +85,14 @@ macro_rules! new_full_start {
       Ok(client::LongestChain::new(backend.clone()))
     })?
     .with_transaction_pool(|config, client| {
-		Ok(transaction_pool::txpool::Pool::new(config, transaction_pool::FullChainApi::new(client)))
-
+      Ok(transaction_pool::txpool::Pool::new(
+        config,
+        transaction_pool::FullChainApi::new(client),
+      ))
     })?
-    .with_import_queue(|_config, client,  _select_chain, _transaction_pool| {
+    .with_import_queue(|_config, client, _select_chain, _transaction_pool| {
       #[allow(deprecated)]
-     // let fprb = Box::new(DummyFinalityProofRequestBuilder::default()) as Box<_>;
+      // let fprb = Box::new(DummyFinalityProofRequestBuilder::default()) as Box<_>;
       let block_import = client.clone();
       //let justification_import = block_import.clone();
       badger_import_queue::<_, _, PublicKeyWrap, SignatureWrap>(
@@ -110,9 +104,9 @@ macro_rules! new_full_start {
       )
       .map_err(Into::into)
     })?
-	.with_rpc_extensions(|client, pool| ->RpcExtension{
-			hb_node_rpc::create(client, pool)
-		})?;
+    .with_rpc_extensions(|client, pool, _backend| -> RpcExtension {
+      hb_node_rpc::create(client, pool)
+    })?;
 
     (builder, inherent_data_providers)
   }};
@@ -129,7 +123,7 @@ macro_rules! new_full {
     let node_name = $config.name.clone();
 
     let (builder, inherent_data_providers) = new_full_start!($config);
-    let back=builder.backend().clone();
+    let back = builder.backend().clone();
     let service = builder
       .with_network_protocol(|_| Ok(crate::service::NodeProtocol::new()))?
       .with_opt_finality_proof_provider(|_client, _| Ok(None))?
@@ -159,26 +153,30 @@ macro_rules! new_full {
       t_pool,
       BadgerConfig::from_json_file_with_name(nconf, &node_name).unwrap(),
       service.network(),
-      service.on_exit().clone().compat().map(|_| {info!("OnExit"); () } ),
+      service.on_exit().clone().compat().map(|_| {
+        info!("OnExit");
+        ()
+      }),
       Arc::new(Mutex::new(service.client().clone())), //block_import?
       //service.config().custom.inherent_data_providers.clone(),
       inherent_data_providers.clone(),
       select_chain,
-	  service.keystore(),
+      service.keystore(),
     )?;
-	
+
     service.spawn_task(badger.unit_error().boxed().compat());
 
-			let key_gen = keygen::run_key_gen(
-				service.network().local_peer_id(),
-        (2,4),3,
-				service.keystore(),
-				service.client(),
-				service.network(),
-        back
-			)?;
-      let svc=    futures03::future::select(service.on_exit().clone().compat(),key_gen);
-			service.spawn_task(Box::new(svc.unit_error().boxed().compat().map(|_|  () )) );
+    let key_gen = keygen::run_key_gen(
+      service.network().local_peer_id(),
+      (2, 4),
+      3,
+      service.keystore(),
+      service.client(),
+      service.network(),
+      back,
+    )?;
+    let svc = futures03::future::select(service.on_exit().clone().compat(), key_gen);
+    service.spawn_task(Box::new(svc.unit_error().boxed().compat().map(|_| ())));
 
     Ok((service, inherent_data_providers))
   }};
