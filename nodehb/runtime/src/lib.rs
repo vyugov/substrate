@@ -27,8 +27,9 @@ use support::{
 //use primitives::u32_trait::{_1, _2, _3, _4};
 use hb_node_primitives::{
 	AccountId, AccountIndex, Balance, BlockNumber, Hash, Index,
-	Moment, Signature,ContractExecResult,
+	Moment, Signature,
 };
+use contracts_rpc_runtime_api::ContractExecResult;
 use substrate_badger_rapi::app::Public as BadgerId;
 pub use contracts;
 pub use contracts::Gas;
@@ -43,7 +44,7 @@ use sr_primitives::{ApplyResult,  generic, create_runtime_str,impl_opaque_keys,k
 use sr_primitives::transaction_validity::TransactionValidity;
 use sr_primitives::weights::Weight;
 use sr_primitives::traits::{
-	BlakeTwo256, Block as BlockT,  NumberFor, StaticLookup, ConvertInto
+	BlakeTwo256, Block as BlockT,  NumberFor, StaticLookup,
 };
 use version::RuntimeVersion;
 use elections::VoteIndex;
@@ -61,7 +62,7 @@ pub use support::StorageValue;
 
 /// Implementations of some helper traits passed into runtime modules as associated types.
 pub mod impls;
-use impls::{ WeightToFee}; //CurrencyToVoteHandler
+use impls::{CurrencyToVoteHandler, Author, LinearWeightToFee, TargetedFeeAdjustment};
 
 /// Constant values used within the runtime.
 pub mod constants;
@@ -96,13 +97,13 @@ pub fn native_version() -> NativeVersion {
 
 type NegativeImbalance = <Balances as Currency<AccountId>>::NegativeImbalance;
 
-	pub type SessionHandlers = (Badger,);
+pub type SessionHandlers = (Badger,);
 
-	impl_opaque_keys! {
-		pub struct SessionKeys {
-			pub hbbft: BadgerId,
-		}
+impl_opaque_keys! {
+	pub struct SessionKeys {
+		pub hbbft: BadgerId,
 	}
+}
 
 
 parameter_types! {
@@ -110,7 +111,7 @@ parameter_types! {
 	pub const MaximumBlockWeight: Weight = 1_000_000_000;
 	pub const AvailableBlockRatio: Perbill = Perbill::from_percent(75);
 	pub const MaximumBlockLength: u32 = 5 * 1024 * 1024;
-		pub const Version: RuntimeVersion = VERSION;
+	pub const Version: RuntimeVersion = VERSION;
 }
 
 impl system::Trait for Runtime {
@@ -141,6 +142,7 @@ impl contracts::Trait for Runtime {
 	type ComputeDispatchFee = contracts::DefaultDispatchFeeComputor<Runtime>;
 	type TrieIdGenerator = contracts::TrieIdFromParentCounter<Runtime>;
 	type GasPayment = ();
+	type RentPayment = ();
 	type SignedClaimHandicap = contracts::DefaultSignedClaimHandicap;
 	type TombstoneDeposit = TombstoneDeposit;
 	type StorageSizeOffset = contracts::DefaultStorageSizeOffset;
@@ -159,7 +161,6 @@ impl contracts::Trait for Runtime {
 	type MaxValueSize = contracts::DefaultMaxValueSize;
 	type BlockGasLimit = contracts::DefaultBlockGasLimit;
 	type Time = Timestamp;
-	type RentPayment = ();
 }
 
 
@@ -185,8 +186,6 @@ parameter_types! {
 	pub const ExistentialDeposit: Balance = 1 * CENTS;
 	pub const TransferFee: Balance = 1 * CENTS;
 	pub const CreationFee: Balance = 1 * CENTS;
-	pub const TransactionBaseFee: Balance = 1 * CENTS;
-	pub const TransactionByteFee: Balance = 10 * MILLICENTS;
 }
 
 impl balances::Trait for Runtime {
@@ -326,13 +325,22 @@ construct_runtime!(
 	}
 );
 
+parameter_types! {
+	pub const TransactionBaseFee: Balance = 1 * CENTS;
+	pub const TransactionByteFee: Balance = 10 * MILLICENTS;
+	// setting this to zero will disable the weight fee.
+	pub const WeightFeeCoefficient: Balance = 1_000;
+	// for a sane configuration, this should always be less than `AvailableBlockRatio`.
+	pub const TargetBlockFullness: Perbill = Perbill::from_percent(25);
+}
+
 impl transaction_payment::Trait for Runtime {
-	type Currency = balances::Module<Runtime>;
+	type Currency = Balances;
 	type OnTransactionPayment = ();
 	type TransactionBaseFee = TransactionBaseFee;
 	type TransactionByteFee = TransactionByteFee;
-	type WeightToFee = ConvertInto;
-	type FeeMultiplierUpdate = ();
+	type WeightToFee = LinearWeightToFee<WeightFeeCoefficient>;
+	type FeeMultiplierUpdate = TargetedFeeAdjustment<TargetBlockFullness>;
 }
 
 /// The address format for describing accounts.
@@ -427,13 +435,13 @@ impl_runtime_apis! {
 		}
 	}
 
-	impl hb_node_primitives::AccountNonceApi<Block> for Runtime {
+	impl system_rpc_runtime_api::AccountNonceApi<Block, AccountId, Index> for Runtime {
 		fn account_nonce(account: AccountId) -> Index {
 			System::account_nonce(account)
 		}
 	}
 
-	impl hb_node_primitives::ContractsApi<Block> for Runtime {
+	impl contracts_rpc_runtime_api::ContractsApi<Block, AccountId, Balance> for Runtime {
 		fn call(
 			origin: AccountId,
 			dest: AccountId,
@@ -456,8 +464,22 @@ impl_runtime_apis! {
 				Err(_) => ContractExecResult::Error,
 			}
 		}
-	}
 
+		fn get_storage(
+			address: AccountId,
+			key: [u8; 32],
+		) -> contracts_rpc_runtime_api::GetStorageResult {
+			Contracts::get_storage(address, key).map_err(|rpc_err| {
+				use contracts::GetStorageError;
+				use contracts_rpc_runtime_api::{GetStorageError as RpcGetStorageError};
+				/// Map the contract error into the RPC layer error.
+				match rpc_err {
+					GetStorageError::ContractDoesntExist => RpcGetStorageError::ContractDoesntExist,
+					GetStorageError::IsTombstone => RpcGetStorageError::IsTombstone,
+				}
+			})
+		}
+	}
     impl substrate_badger_rapi::HbbftApi<Block> for Runtime
 	{
  fn do_nothing()

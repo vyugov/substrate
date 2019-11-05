@@ -1,29 +1,7 @@
-[[bin]]
-name = "substrate"
-path = "nodehb/src/main.rs"
-#path = "node/src/main.rs"
-
-[package]
-name = "substrate"
-version = "2.0.0"
-authors = ["Parity Technologies <admin@parity.io>"]
-build = "build.rs"
-edition = "2018"
-
-[dependencies]
-#cli = { package = "node-cli", path = "node/cli" }
-hbcli = { package = "hbnode-cli", path = "nodehb/hbcli" }
-futures = "0.1.29"
-ctrlc = { version = "3.1.3", features = ["termination"] }
-
-[build-dependencies]
-vergen = "3.0.4"
-
 [workspace]
 members = [
-	    "dbg",
-        "nodehb", 
-        "nodehb/hbcli",
+	"dbg",
+	"nodehb/hbcli",
 	"core/application-crypto",
 	"core/chain-spec",
 	"core/chain-spec/derive",
@@ -96,9 +74,9 @@ members = [
 	"srml/finality-tracker",
 	"srml/generic-asset",
 	"srml/grandpa",
-        "srml/hbbft",
+	"srml/hbbft",
 	"srml/im-online",
-        "srml/keygen",
+	"srml/keygen",
 	"srml/authority-discovery",
 	"srml/indices",
 	"srml/membership",
@@ -118,6 +96,7 @@ members = [
 	"srml/transaction-payment",
 	"srml/transaction-payment/rpc",
 	"srml/utility",
+	"srml/evm",
 	"node/cli",
 	"node/executor",
 	"node/primitives",
@@ -125,16 +104,10 @@ members = [
 	"node/rpc-client",
 	"node/runtime",
 	"node/testing",
-	"node-template",
-	"subkey",
+	# "node-template",
+	# "subkey",
 	"test-utils/chain-spec-builder",
 ]
-
-[badges]
-travis-ci = { repository = "paritytech/substrate", branch = "master" }
-maintenance = { status = "actively-developed" }
-is-it-maintained-issue-resolution = { repository = "paritytech/substrate" }
-is-it-maintained-open-issues = { repository = "paritytech/substrate" }
 
 [profile.release]
 # Substrate runtime requires unwinding.

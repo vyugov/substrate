@@ -38,7 +38,7 @@ pub mod gossip;
 use crate::Error;
 
 mod peerid;
-pub use peerid::PeerIdW;g
+pub use peerid::PeerIdW;
 
 // #[cfg(test)]
 // mod tests;
