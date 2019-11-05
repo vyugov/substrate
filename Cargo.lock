@@ -3271,8 +3271,8 @@ dependencies = [
 
 [[package]]
 name = "multi-party-ecdsa"
-version = "0.2.4"
-source = "git+https://github.com/kigawas/multi-party-ecdsa?branch=keygen-clippy#eb5ecf994c5015d2795815ee5cd8781005bcef69"
+version = "0.2.5"
+source = "git+https://github.com/kigawas/multi-party-ecdsa?branch=fix-nightly#fb54889841385af65a930cd8d9e8aa1f7c28bcc9"
 dependencies = [
  "centipede 0.2.1 (git+https://github.com/KZen-networks/centipede?tag=v0.2.1)",
  "curv 0.2.2 (git+https://github.com/KZen-networks/curv?tag=v0.2.2)",
@@ -6468,7 +6468,7 @@ dependencies = [
  "futures 0.1.29 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures-preview 0.3.0-alpha.19 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
- "multi-party-ecdsa 0.2.4 (git+https://github.com/kigawas/multi-party-ecdsa?branch=keygen-clippy)",
+ "multi-party-ecdsa 0.2.5 (git+https://github.com/kigawas/multi-party-ecdsa?branch=fix-nightly)",
  "parity-multihash 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "parity-scale-codec 1.0.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "parking_lot 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -6675,7 +6675,7 @@ dependencies = [
  "lazy_static 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "libsecp256k1 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
- "multi-party-ecdsa 0.2.4 (git+https://github.com/kigawas/multi-party-ecdsa?branch=keygen-clippy)",
+ "multi-party-ecdsa 0.2.5 (git+https://github.com/kigawas/multi-party-ecdsa?branch=fix-nightly)",
  "num-traits 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "pairing 0.14.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "parity-scale-codec 1.0.6 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -8764,7 +8764,7 @@ dependencies = [
 "checksum mio-extras 2.0.5 (registry+https://github.com/rust-lang/crates.io-index)" = "46e73a04c2fa6250b8d802134d56d554a9ec2922bf977777c805ea5def61ce40"
 "checksum mio-uds 0.6.7 (registry+https://github.com/rust-lang/crates.io-index)" = "966257a94e196b11bb43aca423754d87429960a768de9414f3691d6957abf125"
 "checksum miow 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "8c1f2f3b1cf331de6896aabf6e9d55dca90356cc9960cca7eaaf408a355ae919"
-"checksum multi-party-ecdsa 0.2.4 (git+https://github.com/kigawas/multi-party-ecdsa?branch=keygen-clippy)" = "<none>"
+"checksum multi-party-ecdsa 0.2.5 (git+https://github.com/kigawas/multi-party-ecdsa?branch=fix-nightly)" = "<none>"
 "checksum multistream-select 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)" = "f989d40aab0ed0d83c1cdb4856b5790e980b96548d1a921f280e985eb049f38d"
 "checksum multistream-select 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)" = "e8f3cb4c93f2d79811fc11fa01faab99d8b7b8cbe024b602c27434ff2b08a59d"
 "checksum names 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)" = "ef320dab323286b50fb5cdda23f61c796a72a89998ab565ca32525c5c556f2da"
