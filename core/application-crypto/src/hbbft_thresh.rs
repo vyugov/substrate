@@ -16,7 +16,7 @@
 
 //! Sr25519 crypto types.
 
-use crate::{RuntimePublic, KeyTypeId};
+use crate::{KeyTypeId, RuntimePublic};
 
 pub use primitives::hbbft_thresh::*;
 
@@ -27,12 +27,12 @@ mod app {
 	impl crate::traits::BoundToRuntimeAppPublic for Public {
 		type Public = Self;
 	}
-
 }
 
 pub use app::Public as AppPublic;
 pub use app::Signature as AppSignature;
-#[cfg(feature="std")]
+
+#[cfg(feature = "full_crypto")]
 pub use app::Pair as AppPair;
 
 impl RuntimePublic for Public {
@@ -54,4 +54,3 @@ impl RuntimePublic for Public {
 		runtime_io::hb_node_verify(&signature, msg.as_ref(), self)
 	}
 }
-

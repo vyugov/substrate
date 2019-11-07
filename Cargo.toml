@@ -1,6 +1,6 @@
 [workspace]
 members = [
-	"dbg",
+	# "dbg",
 	"nodehb/hbcli",
 	"core/application-crypto",
 	"core/chain-spec",

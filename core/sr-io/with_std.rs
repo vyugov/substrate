@@ -214,7 +214,7 @@ impl OtherApi for () {
 
 impl CryptoApi for () {
 
-    fn hb_node_public_keys(id: KeyTypeId) -> Vec<hbbft_thresh::Public> {
+	fn hb_node_public_keys(id: KeyTypeId) -> Vec<hbbft_thresh::Public> {
 		with_externalities(|ext| {
 			ext.extension::<KeystoreExt>()
 				.expect("No `keystore` associated for the current context!")
@@ -232,11 +232,10 @@ impl CryptoApi for () {
 				.expect("No `keystore` associated for the current context!")
 				.write()
 				.hb_node_generate_new(id, seed)
-				.expect("`ed25519_generate` failed")
-		}).expect("`ed25519_generate` cannot be called outside of an Externalities-provided environment.")
-
+				.expect("`hb node generated` failed")
+		}).expect("`hb node generated` cannot be called outside of an Externalities-provided environment.")
 	}
-	
+
 	fn hb_node_sign(
 		id: KeyTypeId,
 		pubkey: &hbbft_thresh::Public,
@@ -256,7 +255,7 @@ impl CryptoApi for () {
 	fn hb_node_verify(sig: &hbbft_thresh::Signature, msg: &[u8], pubkey: &hbbft_thresh::Public) -> bool {
 		hbbft_thresh::Pair::verify(sig, msg, pubkey)
 	}
-	
+
 	fn ed25519_public_keys(id: KeyTypeId) -> Vec<ed25519::Public> {
 		with_externalities(|ext| {
 			ext.extension::<KeystoreExt>()

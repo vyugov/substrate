@@ -62,7 +62,7 @@ pub mod sr25519;
 pub mod hbbft_thresh;
 
 ///ecdsa keygen
-pub mod ecdsa_keygen;
+// pub mod ecdsa_keygen;
 pub mod ecdsa;
 pub mod hash;
 mod hasher;
