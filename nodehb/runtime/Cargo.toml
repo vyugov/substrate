@@ -46,13 +46,10 @@ randomness-collective-flip = { package = "srml-randomness-collective-flip", path
 transaction-payment = { package = "srml-transaction-payment", path = "../../srml/transaction-payment", default-features = false }
 
 [build-dependencies]
-wasm-builder-runner = { package = "substrate-wasm-builder-runner", version = "1.0.2", path = "../../core/utils/wasm-builder-runner" }
+wasm-builder-runner = { package = "substrate-wasm-builder-runner", version = "1.0.4", path = "../../core/utils/wasm-builder-runner" }
 
 [features]
 default = ["std"]
-no_std = [
-
-]
 std = [
 	"codec/std",
 	"primitives/std",
