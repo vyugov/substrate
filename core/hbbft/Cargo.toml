@@ -5,7 +5,7 @@ authors = ["Not me"]
 edition = "2018"
 
 [dependencies]
-futures-timer = "0.3.0"
+futures-timer = "1.0.3"
 bytes = "0.4.12"
 unsigned-varint = { version = "0.2.2", features = ["codec"] }
 fork-tree = { path = "../../core/utils/fork-tree" }
@@ -32,7 +32,7 @@ srml-finality-tracker = { path = "../../srml/finality-tracker" }
 badger_primitives = { package = "substrate-badger-primitives", path = "primitives" }
 hex = "0.3.2"
 badger = { package= "hbbft", path="../../../hbbft" }
-bincode = "1.0.1"
+bincode = "1.2.0"
 transaction_pool = { package = "substrate-transaction-pool", path = "../../core/transaction-pool" }
 num = { package = "num-traits", version = "0.2", default-features = false }
 srml-timestamp = { path = "../../srml/timestamp" }

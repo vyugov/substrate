@@ -3,6 +3,7 @@
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 
+use sr_primitives::{ConsensusEngineId, RuntimeDebug};
 
 pub mod app {
 	use sr_primitives::app_crypto::{app_crypto, hbbft_thresh, key_types::HB_NODE};

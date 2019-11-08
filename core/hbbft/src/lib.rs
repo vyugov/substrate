@@ -36,10 +36,8 @@ pub mod communication;
 use crate::communication::Network;
 use badger::crypto::{PublicKey, SecretKey};
 use badger::ConsensusProtocol;
-use badger_primitives::AuthorityPair;
-use badger_primitives::PublicKeySetWrap;
-use badger_primitives::PublicKeyWrap;
-use badger_primitives::SecretKeyShareWrap;
+use badger_primitives::{AuthorityId, AuthorityPair};
+
 use client::backend::Backend;
 use client::blockchain::HeaderBackend;
 use client::error::Error as ClientError;
@@ -47,8 +45,8 @@ use client::runtime_api::ConstructRuntimeApi;
 use client::CallExecutor;
 use client::Client;
 use client::{
-	backend::AuxStore, block_builder::api::BlockBuilder as BlockBuilderApi, blockchain::ProvideCache,
-	error,
+	backend::AuxStore, block_builder::api::BlockBuilder as BlockBuilderApi,
+	blockchain::ProvideCache, error,
 };
 use communication::NetworkBridge;
 use communication::PeerIdW;
@@ -56,7 +54,8 @@ use communication::TransactionSet;
 use communication::QHB;
 use consensus_common::block_import::BlockImport;
 use consensus_common::import_queue::{
-	BasicQueue, BoxBlockImport, BoxFinalityProofImport, BoxJustificationImport, CacheKeyId, Verifier,
+	BasicQueue, BoxBlockImport, BoxFinalityProofImport, BoxJustificationImport, CacheKeyId,
+	Verifier,
 };
 pub use consensus_common::SyncOracle;
 use consensus_common::{self, BlockImportParams, BlockOrigin, ForkChoiceStrategy, SelectChain};
@@ -213,6 +212,7 @@ pub struct Config {
 	pub initial_validators: BTreeMap<PeerIdW, PublicKey>,
 	pub node_indices: BTreeMap<PeerIdW, usize>,
 }
+
 fn secret_share_from_string(st: &str) -> Result<SecretKeyShareWrap, Error> {
 	let data = hex::decode(st)?;
 	match bincode::deserialize(&data) {
@@ -223,8 +223,7 @@ fn secret_share_from_string(st: &str) -> Result<SecretKeyShareWrap, Error> {
 
 impl Config {
 	fn name(&self) -> &str {
-		self
-			.name
+		self.name
 			.as_ref()
 			.map(|s| s.as_str())
 			.unwrap_or("<unknown>")
@@ -444,8 +443,7 @@ where
 	NumberFor<Block>: BlockNumberOps,
 {
 	fn block_number(&self, hash: Block::Hash) -> Result<Option<NumberFor<Block>>, Error> {
-		self
-			.block_number_from_id(&BlockId::Hash(hash))
+		self.block_number_from_id(&BlockId::Hash(hash))
 			.map_err(|e| Error::Blockchain(format!("{:?}", e)))
 	}
 }
@@ -537,8 +535,7 @@ where
 		}
 		info!("BADgER! Ready stream!");
 		let best_block_hash = self.client.info().chain.best_hash;
-		self
-			.transaction_pool
+		self.transaction_pool
 			.prune_tags(&generic::BlockId::hash(best_block_hash), tags, hashes);
 		Poll::Ready(Some(batch))
 	}
@@ -661,7 +658,8 @@ where
 		);
 
 		for pending in batch.iter() {
-			let data: Result<<Block as BlockT>::Extrinsic, _> = Decode::decode(&mut pending.as_slice());
+			let data: Result<<Block as BlockT>::Extrinsic, _> =
+				Decode::decode(&mut pending.as_slice());
 			//   <Transaction<ExHash<A>,<Block as BlockT>::Extrinsic> as Decode>::decode(&mut pending.as_slice());
 			let data = match data {
 				Ok(val) => val,
@@ -713,7 +711,9 @@ where
 							error!("Failed to verify block encoding/decoding");
 						}
 
-						if let Err(err) = evaluation::evaluate_initial(&block, &parent_hash, pnumber) {
+						if let Err(err) =
+							evaluation::evaluate_initial(&block, &parent_hash, pnumber)
+						{
 							error!("Failed to evaluate authored block: {:?}", err);
 						}
 						let (header, body) = block.deconstruct();
@@ -925,16 +925,14 @@ where
 	let pinged = futures03::future::select(with_start, ping);
 	// Make sure that `telemetry_task` doesn't accidentally finish and kill grandpa.
 
-	Ok(
-		futures03::future::select(
-			on_exit.then(|_| {
-				info!("READY");
-				future::ready(())
-			}),
-			pinged,
-		)
-		.then(|_| future::ready(())),
+	Ok(futures03::future::select(
+		on_exit.then(|_| {
+			info!("READY");
+			future::ready(())
+		}),
+		pinged,
 	)
+	.then(|_| future::ready(())))
 	/*let ping_lesser = Interval::new(Duration::from_millis(1000)).for_each(move |_| {
 		info!("ping");
 				let mut chain_head = match ping_sel.best_chain()
