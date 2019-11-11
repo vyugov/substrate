@@ -27,23 +27,21 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-// re-export since this is necessary for `impl_apis` in runtime.
-//pub use substrate_badger_primitives as fg_primitives;
-
-use codec::{self as codec, Decode, Encode, Error,Codec};
+use badger_primitives::AuthorityId;
+use codec::{self as codec, Codec, Decode, Encode, Error};
 use rstd::prelude::*;
 use sr_primitives::{
-  generic::{DigestItem, OpaqueDigestItemId},
-  traits::Zero,
-  Perbill,
+	generic::{DigestItem, OpaqueDigestItemId},
+	traits::Zero,
+	Perbill,
 };
 use srml_support::{
-  decl_event, decl_module, decl_storage, dispatch::Result, storage::StorageMap,
-  storage::StorageValue,
+	decl_event, decl_module, decl_storage, dispatch::Result, storage::StorageMap,
+	storage::StorageValue,
 };
 
 #[cfg(feature = "std")]
-use serde::{Serialize,Deserialize};
+use serde::{Deserialize, Serialize};
 
 use sr_primitives::ConsensusEngineId;
 
@@ -53,10 +51,9 @@ pub const HBBFT_ENGINE_ID: ConsensusEngineId = *b"BDGR";
 //pub use fg_primitives::{AuthorityId, ConsensusLog};
 use system::{ensure_signed, DigestOf};
 
-//#[derive(Decode, Encode, PartialEq, Eq, Clone,Hash)]
-pub type AuthorityId = ([u8; 32],[u8; 16]);
-
-
+impl<T: Trait> sr_primitives::BoundToRuntimeAppPublic for Module<T> {
+	type Public = AuthorityId;
+}
 
 /// An consensus log item for BADGER.
 #[cfg_attr(feature = "std", derive(Serialize, Debug))]
@@ -68,7 +65,7 @@ pub enum ConsensusLog {
 	/// Schedule an authority set removal by voting... If others also vote
 	#[codec(index = "2")]
 	VoteToRemove(AuthorityId),
-    ///completed voting
+	///completed voting
 	#[codec(index = "3")]
 	VoteComplete(Vec<AuthorityId>),
 }
@@ -97,131 +94,108 @@ impl ConsensusLog {
 			_ => None,
 		}
 	}
-
-
 }
-
 
 mod mock;
 
-pub trait Trait: system::Trait
-{
-  /// The event type of this module.
-  type Event: From<Event> + Into<<Self as system::Trait>::Event>;
+pub trait Trait: system::Trait {
+	/// The event type of this module.
+	type Event: From<Event> + Into<<Self as system::Trait>::Event>;
 }
 
-
-
 decl_event!(
-// #[derive(Debug)]
-  pub enum Event
-  {
-    /// New authority set has been applied.
-    NewAuthorities(Vec<AuthorityId>),
-  }
+	// #[derive(Debug)]
+	pub enum Event {
+		/// New authority set has been applied.
+		NewAuthorities(Vec<AuthorityId>),
+	}
 );
 
 decl_storage! {
-  trait Store for Module<T: Trait> as BadgerFinality {
-    /// The current authority set.
-    Authorities get(authorities): Vec<AuthorityId>;
+	trait Store for Module<T: Trait> as BadgerFinality {
+		/// The current authority set.
+		Authorities get(authorities): Vec<AuthorityId>;
 
-    /// The number of changes (both in terms of keys and underlying economic responsibilities)
-    /// in the "set" of Grandpa validators from genesis.
-    CurrentSetId get(current_set_id) build(|_| 0): u64;
-  }
-  add_extra_genesis {
-    config(authorities): Vec<AuthorityId>;
-    build(|config| Module::<T>::initialize_authorities(&config.authorities))
-  }
+		/// The number of changes (both in terms of keys and underlying economic responsibilities)
+		/// in the "set" of Grandpa validators from genesis.
+		CurrentSetId get(current_set_id) build(|_| 0): u64;
+	}
+	add_extra_genesis {
+		config(authorities): Vec<AuthorityId>;
+		build(|config| Module::<T>::initialize_authorities(&config.authorities))
+	}
 }
 
 decl_module! {
-  pub struct Module<T: Trait> for enum Call where origin: T::Origin {
-    fn deposit_event() = default;
+	pub struct Module<T: Trait> for enum Call where origin: T::Origin {
+		fn deposit_event() = default;
 
-    fn on_finalize(block_number: T::BlockNumber) {
+		fn on_finalize(block_number: T::BlockNumber) {
 
-          //TODO: check if I need to add anything.
+ 
+		}
 
-        }
+		fn send_log(origin) -> Result {
+			let who = ensure_signed(origin)?;
+			// Self::deposit_log(ConsensusLog::VoteToAdd(([0;32],[0;16])));
+			Ok(())
+		}
 
-    //	Self::deposit_log(ConsensusLog::Resume(delay));
-	fn send_log(origin) ->Result
-	{
-	let who =	ensure_signed(origin)?;
-    Self::deposit_log(ConsensusLog::VoteToAdd(([0;32],[0;16])));
-	Ok(())
 	}
-		
-  }
 }
 
-impl<T: Trait> Module<T>
-{
-  /// Get the current set of authorities, along with their respective weights.
-  pub fn badger_authorities() -> Vec<AuthorityId>
-  {
-    Authorities::get()
-  }
+impl<T: Trait> Module<T> {
+	/// Get the current set of authorities, along with their respective weights.
+	pub fn badger_authorities() -> Vec<AuthorityId> {
+		Authorities::get()
+	}
 
-  /// vote to add authority
-  pub fn vote_for(authId: AuthorityId)
-  {
-    Self::deposit_log(ConsensusLog::VoteToAdd(authId));
-  }
+	/// vote to add authority
+	pub fn vote_for(authId: AuthorityId) {
+		Self::deposit_log(ConsensusLog::VoteToAdd(authId));
+	}
 
-  /// vote to remove authority
-  fn vote_against(auth_id: AuthorityId)
-  {
-    Self::deposit_log(ConsensusLog::VoteToRemove(auth_id));
-  }
-  
-  /// Deposit one of this module's logs.
-  fn deposit_log(log: ConsensusLog)
-  {
-    let log: DigestItem<T::Hash> = DigestItem::Consensus(HBBFT_ENGINE_ID, log.encode());
-    <system::Module<T>>::deposit_log(log.into());
-  }
+	/// vote to remove authority
+	fn vote_against(auth_id: AuthorityId) {
+		Self::deposit_log(ConsensusLog::VoteToRemove(auth_id));
+	}
 
-  fn initialize_authorities(authorities: &[AuthorityId])
-  {
-    if !authorities.is_empty()
-    {
-      assert!(
-        Authorities::get().is_empty(),
-        "Authorities are already initialized!"
-      );
-      Authorities::put(authorities);
-    }
-  }
+	/// Deposit one of this module's logs.
+	fn deposit_log(log: ConsensusLog) {
+		let log: DigestItem<T::Hash> = DigestItem::Consensus(HBBFT_ENGINE_ID, log.encode());
+		<system::Module<T>>::deposit_log(log.into());
+	}
+
+	fn initialize_authorities(authorities: &[AuthorityId]) {
+		if !authorities.is_empty() {
+			assert!(
+				Authorities::get().is_empty(),
+				"Authorities are already initialized!"
+			);
+			Authorities::put(authorities);
+		}
+	}
 }
 
-impl<T: Trait> Module<T>
-{
-  /// Attempt to extract a GRANDPA log from a generic digest.
-  pub fn badger_log(digest: &DigestOf<T>) -> Option<ConsensusLog>
-  {
-    let id = OpaqueDigestItemId::Consensus(&HBBFT_ENGINE_ID);
-    digest.convert_first(|l| l.try_to::<ConsensusLog>(id))
-  }
+impl<T: Trait> Module<T> {
+	/// Attempt to extract a GRANDPA log from a generic digest.
+	pub fn badger_log(digest: &DigestOf<T>) -> Option<ConsensusLog> {
+		let id = OpaqueDigestItemId::Consensus(&HBBFT_ENGINE_ID);
+		digest.convert_first(|l| l.try_to::<ConsensusLog>(id))
+	}
 
-  /// Attempt to extract a pending set-change signal from a digest.
-  pub fn pending_vote_to_add(digest: &DigestOf<T>) -> Option<AuthorityId>
-  {
-    Self::badger_log(digest).and_then(|signal| signal.try_into_add())
-  }
+	/// Attempt to extract a pending set-change signal from a digest.
+	pub fn pending_vote_to_add(digest: &DigestOf<T>) -> Option<AuthorityId> {
+		Self::badger_log(digest).and_then(|signal| signal.try_into_add())
+	}
 
-  /// Attempt to extract a pending set-change signal from a digest.
-  pub fn pending_vote_to_remove(digest: &DigestOf<T>) -> Option<AuthorityId>
-  {
-    Self::badger_log(digest).and_then(|signal| signal.try_into_remove())
-  }
+	/// Attempt to extract a pending set-change signal from a digest.
+	pub fn pending_vote_to_remove(digest: &DigestOf<T>) -> Option<AuthorityId> {
+		Self::badger_log(digest).and_then(|signal| signal.try_into_remove())
+	}
 
-  /// Attempt to extract a pending set-change signal from a digest.
-  pub fn vote_complete(digest: &DigestOf<T>) -> Option<Vec<AuthorityId>>
-  {
-    Self::badger_log(digest).and_then(|signal| signal.try_into_complete())
-  }
+	/// Attempt to extract a pending set-change signal from a digest.
+	pub fn vote_complete(digest: &DigestOf<T>) -> Option<Vec<AuthorityId>> {
+		Self::badger_log(digest).and_then(|signal| signal.try_into_complete())
+	}
 }
-

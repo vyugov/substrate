@@ -106,10 +106,11 @@ members = [
 	# "subkey",
 	"test-utils/chain-spec-builder",
 	"nodehb/hbcli",
-	# "nodehb/primitives",
+	"nodehb/executor",
+	"nodehb/primitives",
 	# "nodehb/rpc",
 	# "nodehb/rpc-client",
-	# "nodehb/runtime",
+	"nodehb/runtime",
 	# "dbg",
 ]
 

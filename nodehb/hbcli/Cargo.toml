@@ -27,7 +27,7 @@ futures03 = { package = "futures-preview", version = "=0.3.0-alpha.19", features
 # primitives dependencies
 primitives = { package = "substrate-primitives", path = "../../core/primitives" }
 sr-primitives = { path = "../../core/sr-primitives" }
-badger_primitives = { package = "substrate-badger-primitives", path = "../../core/hbbft/primitives" }
+# badger_primitives = { package = "substrate-badger-primitives", path = "../../core/hbbft/primitives" }
 
 # core dependencies
 sr-io = { path = "../../core/sr-io" }
@@ -36,7 +36,7 @@ inherents = { package = "substrate-inherents", path = "../../core/inherents" }
 transaction_pool = { package = "substrate-transaction-pool", path = "../../core/transaction-pool" }
 network = { package = "substrate-network", path = "../../core/network" }
 keyring = { package = "substrate-keyring", path = "../../core/keyring" }
-badger = { package = "substrate-badger-mushroom", path = "../../core/hbbft" }
+# badger = { package = "substrate-badger-mushroom", path = "../../core/hbbft" }
 substrate-rpc = { package = "substrate-rpc", path = "../../core/rpc" }
 substrate-basic-authorship = { path = "../../core/basic-authorship" }
 substrate-service = { path = "../../core/service" }

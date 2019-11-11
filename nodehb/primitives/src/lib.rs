@@ -16,21 +16,13 @@
 
 //! Low-level types used throughout the Substrate code.
 
-#![warn(missing_docs)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use sr_primitives::{
-  generic,
-  traits::{BlakeTwo256, Verify},
-  AnySignature, OpaqueExtrinsic,
+	generic,
+	traits::{BlakeTwo256, Verify},
+	AnySignature, OpaqueExtrinsic,
 };
-
-use codec::{Decode, Encode};
-
-use rstd::prelude::Vec;
-
-#[cfg(feature = "std")]
-use serde::{Deserialize, Serialize};
 
 /// An index to a block.
 pub type BlockNumber = u64;
