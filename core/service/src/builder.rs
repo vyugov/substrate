@@ -805,7 +805,6 @@ ServiceBuilder<
 			remote_backend,
 			dht_event_tx,
 		} = self;
-
 		session::generate_initial_session_keys(
 			client.clone(),
 			config.dev_key_seed.clone().map(|s| vec![s]).unwrap_or_default()

@@ -327,6 +327,10 @@ pub enum DeriveError {
 	SoftKeyInPath,
 }
 
+#[cfg(feature = "std")]
+use rand_chacha::ChaChaRng;
+
+
 #[cfg(feature = "full_crypto")]
 impl TraitPair for Pair {
 	type Public = Public;
@@ -367,8 +371,17 @@ impl TraitPair for Pair {
 	}
 
 	fn from_seed_slice(seed: &[u8]) -> Result<Pair, SecretStringError> {
+		use rand_old::distributions::Standard;
+		use rand_old::SeedableRng;
+		use rand_old::Rng;
+		//let ss:SecretKey =
 		let secret: SecretKey = match seed.len() {
-			SK_SIZE => bincode::deserialize(seed).map_err(|_| SecretStringError::InvalidSeed),
+			SK_SIZE => { 
+				let mut acc: Seed = [0u8; SK_SIZE];
+				acc.copy_from_slice(seed);
+                Ok(ChaChaRng::from_seed(acc).sample(Standard))
+			}
+			//bincode::deserialize(seed).map_err(|_| SecretStringError::InvalidSeed),
 			_ => Err(SecretStringError::InvalidSeedLength),
 		}?;
 		let public = secret.public_key();
