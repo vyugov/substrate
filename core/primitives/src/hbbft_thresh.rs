@@ -18,6 +18,9 @@ use crate::{
 	hashing::blake2_256,
 };
 
+use runtime_interface::pass_by::PassByInner;
+
+
 #[cfg(feature = "std")]
 use crate::crypto::Ss58Codec;
 
@@ -36,7 +39,7 @@ pub const SIG_SIZE: usize = 96;
 #[cfg(feature = "full_crypto")]
 type Seed = [u8; SK_SIZE];
 
-#[derive(Clone, Encode, Decode)]
+#[derive(Clone, Encode, Decode,PassByInner)]
 pub struct Public(pub [u8; PK_SIZE]);
 
 impl PartialOrd for Public {
@@ -66,8 +69,8 @@ impl Default for Public {
 #[cfg(feature = "full_crypto")]
 #[derive(Clone)]
 pub struct Pair {
-	public: PublicKey,
-	secret: SecretKey,
+	pub public: PublicKey,
+	pub secret: SecretKey,
 }
 
 impl AsRef<[u8; PK_SIZE]> for Public {
@@ -106,6 +109,18 @@ impl From<Public> for [u8; PK_SIZE] {
 	fn from(x: Public) -> Self {
 		x.0
 	}
+}
+
+#[cfg(feature = "full_crypto")]
+impl From<threshold_crypto::PublicKey> for Public
+{ 
+  fn from(x:threshold_crypto::PublicKey) ->Self
+  {
+	let arr= bincode::serialize(&x).unwrap();
+	let mut inner = [0u8; PK_SIZE];
+	inner.copy_from_slice(&arr);
+	Public(inner)
+  }
 }
 
 #[cfg(feature = "full_crypto")]
@@ -173,7 +188,7 @@ impl rstd::hash::Hash for Public {
 	}
 }
 
-#[derive(Encode, Decode)]
+#[derive(Encode, Decode,PassByInner)]
 pub struct Signature(pub [u8; SIG_SIZE]);
 
 impl rstd::convert::TryFrom<&[u8]> for Signature {

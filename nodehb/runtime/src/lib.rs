@@ -98,7 +98,7 @@ pub type SessionHandlers = (Badger,);
 
 impl_opaque_keys! {
 	pub struct SessionKeys {
-		pub hbbft: BadgerId,
+		pub hbbft: Badger,
 	}
 }
 
@@ -406,7 +406,7 @@ impl_runtime_apis! {
 
 	impl substrate_session::SessionKeys<Block> for Runtime {
 		fn generate_session_keys(seed: Option<Vec<u8>>) -> Vec<u8> {
-			let seed = seed.as_ref().map(|s| rstd::str::from_utf8(&s).expect("Seed is an utf8 string"));
+			//let seed = seed.as_ref().map(|s| rstd::str::from_utf8(&s).expect("Seed is an utf8 string"));
 			//Vec::new()
 			SessionKeys::generate(seed)
 		}

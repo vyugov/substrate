@@ -29,7 +29,7 @@
 
 // re-export since this is necessary for `impl_apis` in runtime.
 //pub use substrate_badger_primitives as fg_primitives;
-
+use badger_primitives::AuthorityId;
 use codec::{self as codec, Decode, Encode, Error,Codec};
 use rstd::prelude::*;
 use sr_primitives::{
@@ -54,7 +54,7 @@ pub const HBBFT_ENGINE_ID: ConsensusEngineId = *b"BDGR";
 use system::{ensure_signed, DigestOf};
 
 //#[derive(Decode, Encode, PartialEq, Eq, Clone,Hash)]
-pub type AuthorityId = ([u8; 32],[u8; 16]);
+//pub type AuthorityId = ([u8; 32],[u8; 16]);
 
 
 
@@ -150,11 +150,15 @@ decl_module! {
 	fn send_log(origin) ->Result
 	{
 	let who =	ensure_signed(origin)?;
-    Self::deposit_log(ConsensusLog::VoteToAdd(([0;32],[0;16])));
+    Self::deposit_log(ConsensusLog::VoteToAdd((AuthorityId::default())));
 	Ok(())
 	}
 		
   }
+}
+
+impl<T: Trait> sr_primitives::BoundToRuntimeAppPublic for Module<T> {
+	type Public = AuthorityId;
 }
 
 impl<T: Trait> Module<T>

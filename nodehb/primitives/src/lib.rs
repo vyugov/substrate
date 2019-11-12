@@ -21,8 +21,8 @@
 
 use sr_primitives::{
   generic,
-  traits::{BlakeTwo256, Verify},
-  AnySignature, OpaqueExtrinsic,
+  traits::{BlakeTwo256, Verify,IdentifyAccount},
+   OpaqueExtrinsic,MultiSignature
 };
 
 use codec::{Decode, Encode};
@@ -34,13 +34,12 @@ use serde::{Deserialize, Serialize};
 
 /// An index to a block.
 pub type BlockNumber = u64;
-
 /// Alias to 512-bit hash when used in the context of a transaction signature on the chain.
-pub type Signature = AnySignature;
+pub type Signature = MultiSignature;
 
 /// Some way of identifying an account on the chain. We intentionally make it equivalent
 /// to the public key of our transaction signing scheme.
-pub type AccountId = <Signature as Verify>::Signer;
+pub type AccountId = <<Signature as Verify>::Signer as IdentifyAccount>::AccountId;
 
 /// The type for looking up accounts. We don't expect more than 4 billion of them, but you
 /// never know...

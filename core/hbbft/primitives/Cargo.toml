@@ -20,5 +20,5 @@ std = [
 	"sr-primitives/std",
 	"rstd/std",
 	"serde",
-	"app-crypto/std",
+	"app-crypto/std"
 ]

@@ -50,12 +50,17 @@ system = { package = "srml-system", path = "../../srml/system" }
 balances = { package = "srml-balances", path = "../../srml/balances", default-features = false }
 keygen = { package="substrate-keygen", path = "../../core/keygen" }
 transaction-payment = { package = "srml-transaction-payment", path = "../../srml/transaction-payment" }
+offchain = { package = "substrate-offchain", path = "../../core/offchain" }
+chain-spec = { package = "substrate-chain-spec", path = "../../core/chain-spec" }
+contracts = { package = "srml-contracts", path = "../../srml/contracts" }
 
 # node-specific dependencies
 hb-node-runtime = { path = "../runtime" }
 hb-node-rpc = { path = "../rpc" }
 hb-node-primitives = { path = "../primitives" }
 hb-node-executor = { path = "../executor" }
+parking_lot = "0.9.0"
+client_db = { package = "substrate-client-db", path = "../../core/client/db", default-features = false }
 
 # CLI-specific dependencies
 tokio = { version = "0.1.22", optional = true }

@@ -5,7 +5,12 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::{fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
+use badger::crypto::{
+	PublicKey, PublicKeySet, PublicKeyShare, SecretKey, SecretKeyShare, Signature,
+  };
+use substrate_primitives::crypto::Pair;
 
+use threshold_crypto::serde_impl::SerdeSecret;
 use bincode;
 use futures03::future::Future;
 use futures03::prelude::*;
@@ -34,7 +39,6 @@ use runtime_primitives::{
 
 pub mod communication;
 use crate::communication::Network;
-use badger::crypto::{PublicKey, SecretKey};
 use badger::ConsensusProtocol;
 use badger_primitives::{AuthorityId, AuthorityPair};
 
@@ -142,6 +146,7 @@ where
 			body,
 			finalized: true,
 			justification,
+			allow_missing_state: true,
 			auxiliary: Vec::new(),
 			fork_choice: ForkChoiceStrategy::LongestChain,
 		};
@@ -205,18 +210,18 @@ pub struct Config {
 	/// Some local identifier of the node.
 	pub name: Option<String>,
 	pub num_validators: usize,
-	pub secret_key_share: Option<Arc<SecretKeyShareWrap>>,
+	pub secret_key_share: Option<Arc<SecretKeyShare>>,
 	pub node_id: Arc<AuthorityPair>,
-	pub public_key_set: Arc<PublicKeySetWrap>,
+	pub public_key_set: Arc<PublicKeySet>,
 	pub batch_size: u32,
 	pub initial_validators: BTreeMap<PeerIdW, PublicKey>,
 	pub node_indices: BTreeMap<PeerIdW, usize>,
 }
 
-fn secret_share_from_string(st: &str) -> Result<SecretKeyShareWrap, Error> {
+fn secret_share_from_string(st: &str) -> Result<SecretKeyShare, Error> {
 	let data = hex::decode(st)?;
 	match bincode::deserialize(&data) {
-		Ok(val) => Ok(SecretKeyShareWrap { 0: val }),
+		Ok(val) => Ok( val ),
 		Err(_) => return Err(Error::Badger("secret key share binary invalid".to_string())),
 	}
 }
@@ -288,7 +293,7 @@ impl Config {
 						}
 						_ => return Err("priv key not string".to_string()),
 					};
-					Arc::new((pub_key, sec_key))
+					Arc::new(AuthorityPair::from_seed_slice( &bincode::serialize(&SerdeSecret(&sec_key)).unwrap()).unwrap()) 
 				}
 				_ => return Err("node id not pub/priv object".to_string()),
 			},
@@ -299,7 +304,7 @@ impl Config {
 						Err(_) => return Err("Hex error in public_key_set".to_string()),
 					};
 					match bincode::deserialize(&data) {
-						Ok(val) => Arc::new(PublicKeySetWrap { 0: val }),
+						Ok(val) => Arc::new( val ),
 						Err(_) => return Err("public key set binary invalid".to_string()),
 					}
 				}
@@ -329,13 +334,13 @@ impl Config {
 							Ok(val) => val,
 							Err(_) => return Err("Hex error in pubkey".to_string()),
 						};
-						let pubkey: PublicKeyWrap = match bincode::deserialize(&data) {
+						let pubkey: PublicKey = match bincode::deserialize(&data) {
 							Ok(val) => val,
 							Err(_) => return Err("public key binary invalid".to_string()),
 						};
 
 						//		let cpeer=peer.clone();
-						ret.insert(PeerIdW { 0: peer }, pubkey.0);
+						ret.insert(PeerIdW { 0: peer }, pubkey);
 					}
 					let kv: Vec<_> = ret.keys().cloned().collect();
 					for k in kv {
@@ -732,6 +737,7 @@ where
 							post_digests: vec![],
 							body: Some(body),
 							finalized: true,
+							allow_missing_state:true,
 							auxiliary: Vec::new(),
 							fork_choice: ForkChoiceStrategy::LongestChain,
 						};
@@ -827,6 +833,7 @@ where
 					justification: None,
 					post_digests: vec![],
 					body: Some(body),
+					allow_missing_state:true,
 					finalized: true,
 					auxiliary: Vec::new(),
 					fork_choice: ForkChoiceStrategy::LongestChain,

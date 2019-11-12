@@ -5,17 +5,18 @@ authors = ["Not me"]
 edition = "2018"
 
 [dependencies]
-futures-timer = "1.0.3"
+futures-timer = "0.4.0"
 bytes = "0.4.12"
 unsigned-varint = { version = "0.2.2", features = ["codec"] }
 fork-tree = { path = "../../core/utils/fork-tree" }
 futures03 = { package = "futures-preview", version = "0.3.0-alpha.19", features = ["compat"] }
 log = "0.4"
-parking_lot = "0.8.0"
+parking_lot = "0.9.0"
 tokio-executor = "0.1.7"
 tokio-timer = "0.2.11"
 rand = "0.6"
 hex_fmt = "0.3.0"
+threshold_crypto =  {  git = "https://github.com/poanetwork/threshold_crypto", features = ["codec-support"], default-features = false }
 parity-codec = { package = "parity-scale-codec", version = "1.0.0", features = ["derive"] }
 runtime_primitives = { package = "sr-primitives", path = "../sr-primitives" }
 consensus_common = { package = "substrate-consensus-common", path = "../consensus/common" }
