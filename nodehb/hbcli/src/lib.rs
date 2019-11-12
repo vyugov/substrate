@@ -1,6 +1,8 @@
 #![warn(missing_docs)]
 #![warn(unused_extern_crates)]
 
+//! HBBFT cli
+
 pub mod chain_spec;
 
 #[macro_use]
@@ -16,7 +18,7 @@ mod factory_impl;
 pub use browser::*;
 #[cfg(feature = "cli")]
 pub use cli::*;
-
+use badger::badger_import_queue;
 /// The chain specification option.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ChainSpec {
@@ -24,11 +26,9 @@ pub enum ChainSpec {
 	Development,
 	/// Whatever the current runtime is, with simple Alice/Bob auths.
 	LocalTestnet,
-	/// The Flaming Fir testnet.
-	FlamingFir,
-	/// Whatever the current runtime is with the "global testnet" defaults.
-	StagingTestnet,
+
 }
+
 
 /// Get a chain config from a spec setting.
 impl ChainSpec {

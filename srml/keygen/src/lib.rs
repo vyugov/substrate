@@ -210,7 +210,7 @@ decl_module! {
   let mut b=req_id.encode();
   a.append(&mut b);
     let kind = primitives::offchain::StorageKind::PERSISTENT;
-  runtime_io::local_storage_set(kind,&a,b"new");
+  runtime_io::offchain::local_storage_set(kind,&a,b"new");
     if <Self as Store>::RequestResults::exists(req_id)
     {
       return Err("Duplicate request ID");
@@ -229,7 +229,7 @@ decl_module! {
           let call = Call::set_test();
       T::SubmitTransaction::submit_unsigned(call).map_err(|_| OffchainErr::SubmitTransaction);
       // Only send messages if we are a potential validator.
-      if runtime_io::is_validator() {
+      if runtime_io::offchain::is_validator() {
 //        let mut requests = <ReqIds>::get();
         Self::offchain();
       }
@@ -283,7 +283,7 @@ impl<T: Trait> Module<T>
   pub fn offchain()
   {
     let cl_key = get_complete_list_prefix();
-    let result = runtime_io::local_storage_get(StorageKind::PERSISTENT, &cl_key);
+    let result = runtime_io::offchain::local_storage_get(StorageKind::PERSISTENT, &cl_key);
     if let Some(dat) = result
     {
       let requests: Vec<RequestId> = match Decode::decode(&mut dat.as_ref())
@@ -298,7 +298,7 @@ impl<T: Trait> Module<T>
 
       let _:Vec<RequestId>=requests.iter().filter(|req_id| {
         let key: Vec<u8> = get_key_prefix(**req_id);
-        let result = runtime_io::local_storage_get(StorageKind::PERSISTENT, &key);
+        let result = runtime_io::offchain::local_storage_get(StorageKind::PERSISTENT, &key);
         if let Some(r) = result
         {
           match Self::do_post_result(**req_id, r)

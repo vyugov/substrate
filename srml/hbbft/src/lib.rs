@@ -27,6 +27,8 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+// re-export since this is necessary for `impl_apis` in runtime.
+//pub use substrate_badger_primitives as fg_primitives;
 use badger_primitives::AuthorityId;
 use codec::{self as codec, Codec, Decode, Encode, Error};
 use rstd::prelude::*;
@@ -51,9 +53,8 @@ pub const HBBFT_ENGINE_ID: ConsensusEngineId = *b"BDGR";
 //pub use fg_primitives::{AuthorityId, ConsensusLog};
 use system::{ensure_signed, DigestOf};
 
-impl<T: Trait> sr_primitives::BoundToRuntimeAppPublic for Module<T> {
-	type Public = AuthorityId;
-}
+//#[derive(Decode, Encode, PartialEq, Eq, Clone,Hash)]
+//pub type AuthorityId = ([u8; 32],[u8; 16]);
 
 /// An consensus log item for BADGER.
 #[cfg_attr(feature = "std", derive(Serialize, Debug))]
@@ -132,16 +133,21 @@ decl_module! {
 
 		fn on_finalize(block_number: T::BlockNumber) {
 
- 
+
 		}
 
-		fn send_log(origin) -> Result {
-			let who = ensure_signed(origin)?;
-			// Self::deposit_log(ConsensusLog::VoteToAdd(([0;32],[0;16])));
-			Ok(())
-		}
-
+	//	Self::deposit_log(ConsensusLog::Resume(delay));
+	fn send_log(origin) ->Result
+	{
+	let who =	ensure_signed(origin)?;
+	Self::deposit_log(ConsensusLog::VoteToAdd((AuthorityId::default())));
+	Ok(())
 	}
+	}
+}
+
+impl<T: Trait> sr_primitives::BoundToRuntimeAppPublic for Module<T> {
+	type Public = AuthorityId;
 }
 
 impl<T: Trait> Module<T> {

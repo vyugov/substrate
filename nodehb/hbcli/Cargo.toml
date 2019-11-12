@@ -27,7 +27,7 @@ futures03 = { package = "futures-preview", version = "=0.3.0-alpha.19", features
 # primitives dependencies
 primitives = { package = "substrate-primitives", path = "../../core/primitives" }
 sr-primitives = { path = "../../core/sr-primitives" }
-# badger_primitives = { package = "substrate-badger-primitives", path = "../../core/hbbft/primitives" }
+badger_primitives = { package = "substrate-badger-primitives", path = "../../core/hbbft/primitives" }
 
 # core dependencies
 sr-io = { path = "../../core/sr-io" }
@@ -36,7 +36,7 @@ inherents = { package = "substrate-inherents", path = "../../core/inherents" }
 transaction_pool = { package = "substrate-transaction-pool", path = "../../core/transaction-pool" }
 network = { package = "substrate-network", path = "../../core/network" }
 keyring = { package = "substrate-keyring", path = "../../core/keyring" }
-# badger = { package = "substrate-badger-mushroom", path = "../../core/hbbft" }
+badger = { package = "substrate-badger-mushroom", path = "../../core/hbbft" }
 substrate-rpc = { package = "substrate-rpc", path = "../../core/rpc" }
 substrate-basic-authorship = { path = "../../core/basic-authorship" }
 substrate-service = { path = "../../core/service" }
@@ -50,12 +50,17 @@ system = { package = "srml-system", path = "../../srml/system" }
 balances = { package = "srml-balances", path = "../../srml/balances", default-features = false }
 keygen = { package="substrate-keygen", path = "../../core/keygen" }
 transaction-payment = { package = "srml-transaction-payment", path = "../../srml/transaction-payment" }
+offchain = { package = "substrate-offchain", path = "../../core/offchain" }
+chain-spec = { package = "substrate-chain-spec", path = "../../core/chain-spec" }
+contracts = { package = "srml-contracts", path = "../../srml/contracts" }
 
 # node-specific dependencies
 hb-node-runtime = { path = "../runtime" }
 hb-node-rpc = { path = "../rpc" }
 hb-node-primitives = { path = "../primitives" }
 hb-node-executor = { path = "../executor" }
+parking_lot = "0.9.0"
+client_db = { package = "substrate-client-db", path = "../../core/client/db", default-features = false }
 
 # CLI-specific dependencies
 tokio = { version = "0.1.22", optional = true }

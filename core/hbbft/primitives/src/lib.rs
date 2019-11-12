@@ -18,3 +18,4 @@ pub type AuthorityId = app::Public;
 pub type AuthoritySignature = app::Signature;
 
 pub const HBBFT_ENGINE_ID: ConsensusEngineId = *b"BDGR";
+

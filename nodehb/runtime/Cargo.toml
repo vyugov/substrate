@@ -17,7 +17,7 @@ serde = { version = "1.0", optional = true }
 primitives = { package = "substrate-primitives",  path = "../../core/primitives", default-features = false }
 sr-primitives = { path = "../../core/sr-primitives", default-features = false }
 offchain-primitives = { package = "substrate-offchain-primitives", path = "../../core/offchain/primitives", default-features = false }
-badger-primitives = { package = "substrate-badger-primitives", path = "../../core/hbbft/primitives", default-features = false }
+badger-primitives = { package = "substrate-badger-primitives", path = "../../core/hbbft/primitives", default-features = false}
 hb-node-primitives = { path = "../primitives", default-features = false }
 
 # core dependencies
@@ -84,8 +84,10 @@ std = [
 	"substrate-keyring",
 	"offchain-primitives/std",
 	"substrate-session/std",
-	# "srml-badger/std",
-	# "srml-keygen/std",
+	"srml-badger/std",
+	"srml-keygen/std",
 	"randomness-collective-flip/std",
-	"transaction-payment/std"
+	"transaction-payment/std",
+	"system-rpc-runtime-api/std",
+	"contracts-rpc-runtime-api/std"
 ]
