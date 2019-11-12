@@ -33,7 +33,7 @@ use contracts_rpc_runtime_api::ContractExecResult;
 use hb_node_primitives::{
 	AccountId, AccountIndex, Balance, BlockNumber, Hash, Index, Moment, Signature,
 };
-// pub use srml_keygen::sr25519::AuthorityId as KeygenId;
+pub use srml_keygen::sr25519::AuthorityId as KeygenId;
 
 use client::{
 	block_builder::api::{self as block_builder_api, CheckInherentsResult, InherentData},
@@ -95,6 +95,8 @@ pub fn native_version() -> NativeVersion {
 }
 
 type NegativeImbalance = <Balances as Currency<AccountId>>::NegativeImbalance;
+
+pub type SessionHandlers = (Badger,);
 
 impl_opaque_keys! {
 	pub struct SessionKeys {
@@ -262,13 +264,13 @@ impl srml_badger::Trait for Runtime {
 }
 use system::offchain::TransactionSubmitter;
 
-// type SubmitTransaction = TransactionSubmitter<KeygenId, Runtime, UncheckedExtrinsic>;
-// impl srml_keygen::Trait for Runtime {
-// 	type Event = Event;
-// 	type AuthorityId = KeygenId;
-// 	type Call = Call;
-// 	type SubmitTransaction = SubmitTransaction;
-// }
+type SubmitTransaction = TransactionSubmitter<KeygenId, Runtime, UncheckedExtrinsic>;
+impl srml_keygen::Trait for Runtime {
+	type Event = Event;
+	type AuthorityId = KeygenId;
+	type Call = Call;
+	type SubmitTransaction = SubmitTransaction;
+}
 
 parameter_types! {
 	pub const WindowSize: BlockNumber = DEFAULT_WINDOW_SIZE.into();
@@ -291,7 +293,7 @@ construct_runtime!(
 		Timestamp: timestamp::{Module, Call, Storage, Inherent},
 		Authorship: authorship::{Module, Call, Storage, Inherent},
 		Badger: srml_badger::{Module, Call, Storage, Event},
-		// Keygen: srml_keygen::{Module, Call, Storage, Event,ValidateUnsigned},
+		Keygen: srml_keygen::{Module, Call, Storage, Event,ValidateUnsigned},
 		Indices: indices,
 		Balances: balances,
 		Contracts: contracts,
