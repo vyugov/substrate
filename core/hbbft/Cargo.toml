@@ -16,7 +16,7 @@ tokio-executor = "0.1.7"
 tokio-timer = "0.2.11"
 rand = "0.6"
 hex_fmt = "0.3.0"
-threshold_crypto =  { branch = "master", git = "https://github.com/poanetwork/threshold_crypto", features = ["codec-support"], default-features = false }
+threshold_crypto = {  git = "https://github.com/poanetwork/threshold_crypto", features = ["codec-support"], rev = "624eeee", default-features = false }
 parity-codec = { package = "parity-scale-codec", version = "1.0.6", features = ["derive"] }
 runtime_primitives = { package = "sr-primitives", path = "../sr-primitives" }
 consensus_common = { package = "substrate-consensus-common", path = "../consensus/common" }
