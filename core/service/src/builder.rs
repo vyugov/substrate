@@ -809,7 +809,6 @@ ServiceBuilder<
 			client.clone(),
 			config.dev_key_seed.clone().map(|s| vec![s]).unwrap_or_default()
 		)?;
-
 		let (signal, exit) = exit_future::signal();
 
 		// List of asynchronous tasks to spawn. We collect them, then spawn them all at once.

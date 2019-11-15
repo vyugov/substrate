@@ -1,4 +1,3 @@
-#![warn(missing_docs)]
 #![warn(unused_extern_crates)]
 
 //! HBBFT cli
@@ -18,7 +17,7 @@ mod factory_impl;
 pub use browser::*;
 #[cfg(feature = "cli")]
 pub use cli::*;
-use badger::badger_import_queue;
+//use badger::badger_import_queue;
 /// The chain specification option.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ChainSpec {

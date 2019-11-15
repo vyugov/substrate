@@ -12,16 +12,16 @@
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Substrate.  If not, see <http://www.gnu.org/licenses/>.
+// along with Substrate.  If not, see <http://www.gnu .org/licenses/>.
 
 //! Substrate chain configurations.
 use serde::{Serialize, Deserialize};
 use chain_spec::ChainSpecExtension;
 use hb_node_runtime::Block;
 
-use primitives::{sr25519, Pair,Public, crypto::UncheckedInto};// ed25519, 
+use primitives::{sr25519, Pair,Public, };// ed25519, crypto::UncheckedInto
 use substrate_service;
-use hex_literal::hex;
+//use hex_literal::hex;
 use substrate_telemetry::TelemetryEndpoints;
 //use badger_primitives::AuthorityId as BadgerId;
 
@@ -122,6 +122,7 @@ pub fn staging_testnet_config() -> ChainSpec {
 	)
 }
 
+/// Gets account ID from seed? 
 pub fn get_account_id_from_seed<TPublic: Public>(seed: &str) -> AccountId where
 	AccountPublic: From<<TPublic::Pair as Pair>::Public>
 {

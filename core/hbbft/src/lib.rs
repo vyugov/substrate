@@ -6,11 +6,11 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::{fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
 use badger::crypto::{
-	PublicKey, PublicKeySet, PublicKeyShare, SecretKey, SecretKeyShare, Signature,
+	PublicKey, PublicKeySet,  SecretKey, SecretKeyShare, //Signature,PublicKeyShare
   };
-use substrate_primitives::crypto::Pair;
 
-use threshold_crypto::serde_impl::SerdeSecret;
+use app_crypto::hbbft_thresh::Pair as HBPair;
+//use threshold_crypto::serde_impl::SerdeSecret;
 use bincode;
 use futures03::future::Future;
 use futures03::prelude::*;
@@ -32,6 +32,7 @@ use runtime_primitives::traits::Hash as THash;
 use runtime_primitives::traits::{
 	BlakeTwo256, Block as BlockT, Header, NumberFor, ProvideRuntimeApi,
 };
+
 use runtime_primitives::{
 	generic::{self, BlockId},
 	ApplyError, Justification,
@@ -40,7 +41,8 @@ use runtime_primitives::{
 pub mod communication;
 use crate::communication::Network;
 use badger::ConsensusProtocol;
-use badger_primitives::{AuthorityId, AuthorityPair};
+use badger_primitives::{ AuthorityPair, HBBFT_AUTHORITIES_KEY};//AuthorityId
+use std::iter;
 
 use client::backend::Backend;
 use client::blockchain::HeaderBackend;
@@ -66,7 +68,7 @@ use consensus_common::{self, BlockImportParams, BlockOrigin, ForkChoiceStrategy,
 use inherents::{InherentData, InherentDataProviders};
 use network::PeerId;
 use runtime_primitives::traits::DigestFor;
-use substrate_primitives::{Blake2Hasher, ExecutionContext, H256};
+use substrate_primitives::{Blake2Hasher, ExecutionContext, H256,storage::StorageKey};
 use substrate_telemetry::{telemetry, CONSENSUS_INFO, CONSENSUS_WARN};
 use transaction_pool::txpool::{self, Pool as TransactionPool};
 
@@ -75,7 +77,7 @@ use crate::communication::SendOut;
 pub const INHERENT_IDENTIFIER: InherentIdentifier = *b"snakeshr";
 
 pub type BadgerImportQueue<B> = BasicQueue<B>;
-
+pub mod aux_store;
 pub struct BadgerWorker<C, I, SO, Inbound, B: BlockT, N: Network<B>, A>
 where
 	A: txpool::ChainApi,
@@ -94,10 +96,10 @@ where
 	Sig: Send + Sync,
 	Pub: Send + Sync,
 {
-	client: Arc<C>,
+	_client: Arc<C>,
 	_pub: PhantomData<Pub>,
 	_sig: PhantomData<Sig>,
-	inherent_data_providers: inherents::InherentDataProviders,
+	_inherent_data_providers: inherents::InherentDataProviders,
 }
 
 impl<C, Pub, Sig> BadgerVerifier<C, Pub, Sig>
@@ -105,7 +107,7 @@ where
 	Sig: Send + Sync,
 	Pub: Send + Sync,
 {
-	fn check_inherents<B: BlockT>(
+	fn _check_inherents<B: BlockT>(
 		&self,
 		_block: B,
 		_block_id: BlockId<B>,
@@ -190,8 +192,8 @@ where
 	//initialize_authorities_cache(&*client)?;
 
 	let verifier = BadgerVerifier::<C, Pub, Sig> {
-		client: client.clone(),
-		inherent_data_providers,
+		_client: client.clone(),
+		_inherent_data_providers:inherent_data_providers,
 		_pub: PhantomData,
 		_sig: PhantomData,
 	};
@@ -203,6 +205,42 @@ where
 		finality_proof_import,
 	))
 }
+
+use client::{
+	//blockchain::Backend as BlockchainBackend,
+	error::{ Result as ClientResult},
+	light::fetcher::{ StorageProof},//FetchChecker, RemoteReadRequest,
+};
+
+use badger_primitives::AuthorityList;
+/// Badger authority set getter? .
+pub trait AuthoritySetGetter<Block: BlockT>: Send + Sync {
+	/// Read HBBFT_AUTHORITIES_KEY from storage at given block.
+	fn authorities(&self, block: &BlockId<Block>) -> ClientResult<AuthorityList>;
+	/// Prove storage read of HBBFT_AUTHORITIES_KEY at given block.
+	fn prove_authorities(&self, block: &BlockId<Block>) -> ClientResult<StorageProof>;
+}
+
+/// Client-based implementation of AuthoritySetForFinalityProver.
+impl<B, E, Block: BlockT<Hash=H256>, RA> AuthoritySetGetter<Block> for Client<B, E, Block, RA>
+	where
+		B: Backend<Block, Blake2Hasher> + Send + Sync + 'static,
+		E: CallExecutor<Block, Blake2Hasher> + 'static + Clone + Send + Sync,
+		RA: Send + Sync,
+{
+	fn authorities(&self, block: &BlockId<Block>) -> ClientResult<AuthorityList> {
+		let storage_key = StorageKey(HBBFT_AUTHORITIES_KEY.to_vec());
+		self.storage(block, &storage_key)?
+			.and_then(|encoded| AuthorityList::decode(&mut encoded.0.as_slice()).ok())
+			.map(|versioned| versioned.into())
+			.ok_or(ClientError::InvalidAuthoritiesSet)
+	}
+
+	fn prove_authorities(&self, block: &BlockId<Block>) -> ClientResult<StorageProof> {
+		self.read_proof(block, iter::once(HBBFT_AUTHORITIES_KEY))
+	}
+}
+
 
 /// Configuration for the Badger service.
 #[derive(Clone)]
@@ -227,7 +265,7 @@ fn secret_share_from_string(st: &str) -> Result<SecretKeyShare, Error> {
 }
 
 impl Config {
-	fn name(&self) -> &str {
+	fn _name(&self) -> &str {
 		self.name
 			.as_ref()
 			.map(|s| s.as_str())
@@ -293,7 +331,7 @@ impl Config {
 						}
 						_ => return Err("priv key not string".to_string()),
 					};
-					Arc::new(AuthorityPair::from_seed_slice( &bincode::serialize(&SerdeSecret(&sec_key)).unwrap()).unwrap()) 
+					Arc::new(HBPair{public:pub_key,secret:sec_key}.into()) 
 				}
 				_ => return Err("node id not pub/priv object".to_string()),
 			},
@@ -454,7 +492,7 @@ where
 }
 
 fn global_communication<Block: BlockT<Hash = H256>, B, E, N, RA>(
-	client: &Arc<Client<B, E, Block, RA>>,
+	_client: &Arc<Client<B, E, Block, RA>>,
 	network: NetworkBridge<Block, N>,
 ) -> (
 	impl Stream<Item = <QHB as ConsensusProtocol>::Output>,
@@ -540,8 +578,8 @@ where
 		}
 		info!("BADgER! Ready stream!");
 		let best_block_hash = self.client.info().chain.best_hash;
-		self.transaction_pool
-			.prune_tags(&generic::BlockId::hash(best_block_hash), tags, hashes);
+		futures03::executor::block_on(self.transaction_pool
+			.prune_tags(&generic::BlockId::hash(best_block_hash), tags, hashes)).unwrap();
 		Poll::Ready(Some(batch))
 	}
 }
@@ -724,7 +762,7 @@ where
 						let (header, body) = block.deconstruct();
 
 						let header_num = header.number().clone();
-						let mut parent_hash; //= header.parent_hash().clone();
+						let parent_hash; //= header.parent_hash().clone();
 
 						// sign the pre-sealed hash of the block and then
 						// add it to a digest item.
@@ -883,16 +921,16 @@ where
 	// Delay::new(Duration::from_secs(1)).then(|_| {
 	let ping = Interval::new(Duration::from_millis(11500)).for_each(move |_| {
 		//put inherents here for now
-		let mut chain_head = match ping_sel.best_chain() {
+		let chain_head = match ping_sel.best_chain() {
 			Ok(x) => x,
 			Err(e) => {
 				warn!(target: "formation", "Unable to author block, no best block header: {:?}", e);
 				return future::ready(());
 			}
 		};
-		let mut parent_hash = chain_head.hash();
-		let mut pnumber = *chain_head.number();
-		let mut parent_id = BlockId::hash(parent_hash);
+		let  parent_hash = chain_head.hash();
+		//let  pnumber = *chain_head.number();
+		let  parent_id = BlockId::hash(parent_hash);
 
 		let inherent_data = match inherent_data_providers.create_inherent_data() {
 			Ok(id) => id,

@@ -21,6 +21,7 @@
 #![recursion_limit = "256"]
 
 use badger_primitives::AuthorityId as BadgerId;
+use badger_primitives::AuthorityList as BadgerList;
 pub use contracts;
 pub use contracts::Gas;
 use contracts_rpc_runtime_api::ContractExecResult;
@@ -359,6 +360,12 @@ impl_runtime_apis! {
 
 		fn initialize_block(header: &<Block as BlockT>::Header) {
 			Executive::initialize_block(header)
+		}
+	}
+	
+	impl badger_primitives::BadgerApi<Block> for Runtime {
+		fn badger_authorities() -> BadgerList {
+			Badger::badger_authorities()
 		}
 	}
 

@@ -3,11 +3,15 @@ use rstd::vec::Vec;
 use codec::{Decode, Encode};
 use rstd::cmp::Ordering;
 
-#[cfg(feature = "full_crypto")]
-use core::convert::{TryFrom, TryInto};
+//#[cfg(feature = "full_crypto")]
+//use core::convert::{TryFrom, TryInto};
 
 #[cfg(feature = "std")]
 use substrate_bip39::seed_from_entropy;
+
+
+#[cfg(feature = "std")]
+use log::info;
 
 #[cfg(feature = "std")]
 use bip39::{Language, Mnemonic, MnemonicType};
@@ -15,8 +19,7 @@ use bip39::{Language, Mnemonic, MnemonicType};
 #[cfg(feature = "full_crypto")]
 use crate::{
 	crypto::{DeriveJunction, Pair as TraitPair, SecretStringError},
-	hashing::blake2_256,
-};
+	};
 
 use runtime_interface::pass_by::PassByInner;
 
@@ -32,8 +35,13 @@ use crate::crypto::{CryptoType, Derive, Public as TraitPublic, UncheckedFrom};
 #[cfg(feature = "full_crypto")]
 use threshold_crypto::{serde_impl::SerdeSecret, PublicKey, SecretKey, Signature as RawSignature};
 
+/// Public key size
 pub const PK_SIZE: usize = 48;
+
+/// Secret key... seed? size
 pub const SK_SIZE: usize = 32;
+
+/// Signature size
 pub const SIG_SIZE: usize = 96;
 
 #[cfg(feature = "full_crypto")]
@@ -385,6 +393,7 @@ impl TraitPair for Pair {
 			_ => Err(SecretStringError::InvalidSeedLength),
 		}?;
 		let public = secret.public_key();
+		info!("PUBLIC generated: {:?}",crate::hexdisplay::HexDisplay::from(&bincode::serialize(&public).unwrap()));
 		Ok(Pair { secret, public })
 	}
 

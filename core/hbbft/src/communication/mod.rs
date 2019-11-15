@@ -7,7 +7,7 @@ use runtime_primitives::app_crypto::RuntimeAppPublic;
 use badger::dynamic_honey_badger::DynamicHoneyBadger;
 use badger::queueing_honey_badger::QueueingHoneyBadger;
 use badger::sender_queue::{Message as BMessage, SenderQueue};
-use badger::sync_key_gen::{to_pub_keys, PartOutcome, SyncKeyGen};
+//use badger::sync_key_gen::{to_pub_keys, PartOutcome, SyncKeyGen};
 use badger::{ConsensusProtocol, CpStep, NetworkInfo, Target};
 use futures03::channel::{mpsc, oneshot};
 use futures03::prelude::*;
@@ -18,10 +18,10 @@ use parity_codec::{Decode, Encode};
 use parking_lot::RwLock;
 use rand::{rngs::OsRng, Rng};
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
-use badger::crypto::{
-  PublicKey, PublicKeySet, PublicKeyShare, SecretKey, SecretKeyShare, Signature,
-};
+use serde::{Serialize};//Deserialize
+use badger::crypto::{ SecretKey};
+// PublicKey, PublicKeySet, PublicKeyShare, , SecretKeyShare, Signature,
+//};//
 use substrate_primitives::crypto::Pair;
 use runtime_primitives::app_crypto::hbbft_thresh::Public as bPublic;
 use badger_primitives::AuthorityId;
@@ -43,8 +43,7 @@ use crate::Error;
 mod peerid;
 pub use peerid::PeerIdW;
 
-// #[cfg(test)]
-// mod tests;
+
 
 //use badger::{SourcedMessage as BSM,  TargetedMessage};
 
@@ -77,9 +76,7 @@ pub fn badger_topic<B: BlockT>() -> B::Hash
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 pub enum LocalTarget
 {
-  /// The message must be sent to all remote nodes.
-  // All,
-  /// The message must be sent to the node with the given ID.
+   /// The message must be sent to the node with the given ID.
   Nodes(BTreeSet<PeerIdW>),
   /// The message must be sent to all remote nodes except the passed nodes.
   /// Useful for sending messages to observer nodes that aren't
@@ -114,7 +111,7 @@ impl Into<Target<PeerIdW>> for LocalTarget
 }
 
 #[derive(Eq, PartialEq, Debug, Encode, Decode)]
-struct SourcedMessage<D: ConsensusProtocol>
+pub struct SourcedMessage<D: ConsensusProtocol>
 where
   D::NodeId: Encode + Decode + Clone,
 {
@@ -158,9 +155,9 @@ where
   /// Incoming messages from other nodes that this node has not yet handled.
   // in_queue: VecDeque<SourcedMessage<D>>,
   /// Outgoing messages to other nodes.
-  out_queue: VecDeque<SourcedMessage<D>>,
+  pub out_queue: VecDeque<SourcedMessage<D>>,
   /// The values this node has output so far, with timestamps.
-  outputs: VecDeque<D::Output>,
+  pub outputs: VecDeque<D::Output>,
   _block: PhantomData<B>,
 }
 
@@ -640,7 +637,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
             Action::Discard
           }
         }
-        Ok(GossipMessage::KeygenData(keygen_msg)) => Action::Discard,
+        Ok(GossipMessage::KeygenData(_)) => Action::Discard,//keygen_msg
 
         Err(e) =>
         {

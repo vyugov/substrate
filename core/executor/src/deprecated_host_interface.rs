@@ -27,7 +27,7 @@ use trie::{TrieConfiguration, trie_types::Layout};
 
 use log::{info};//trace
 use wasm_interface::{
-	FunctionContext,  Pointer, WordSize,  PointerType, WritePrimitive, ReadPrimitive,
+	FunctionContext,  Pointer, WordSize,   WritePrimitive, ReadPrimitive,
 	Result as WResult,
 };
 
