@@ -588,12 +588,12 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
               None => None,
             },
             my_id:  rd.config.node_id.public().clone(),
-      
+
             my_sig: rd
                 .config
                 .node_id
                 .sign(&rd.config.node_id.public().clone().encode().to_vec()),
-            
+
           };
           peer_reply = Some(GossipMessage::Greeting(msrep));
           Action::ProcessAndDiscard
@@ -674,8 +674,8 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
           .initial_validators
           .get(&PeerIdW::from(inner.id.clone()))
         {
-          Some(val) => 
-            { 
+          Some(val) =>
+            {
               let pk: runtime_primitives::app_crypto::hbbft_thresh::Public=val.clone().into();
               Some(pk.into())} ,
           None => None,
@@ -685,7 +685,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
             .config
             .node_id
             .sign(&inner.config.node_id.public().clone().encode().to_vec()),
-        
+
       }
     };
 

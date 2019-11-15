@@ -109,6 +109,7 @@ members = [
 	# "subkey",
 	"test-utils/chain-spec-builder",
 	"nodehb/hbcli",
+	# "nodehb/executor",
 	# "nodehb/primitives",
 	# "nodehb/rpc",
 	# "nodehb/rpc-client",

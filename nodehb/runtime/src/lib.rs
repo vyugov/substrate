@@ -20,6 +20,12 @@
 // `construct_runtime!` does a lot of recursion and requires us to increase the limit to 256.
 #![recursion_limit = "256"]
 
+// Make the WASM binary available.
+#[cfg(feature = "std")]
+include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
+
+use rstd::prelude::*;
+
 use badger_primitives::AuthorityId as BadgerId;
 use badger_primitives::AuthorityList as BadgerList;
 pub use contracts;
@@ -28,14 +34,8 @@ use contracts_rpc_runtime_api::ContractExecResult;
 use hb_node_primitives::{
 	AccountId, AccountIndex, Balance, BlockNumber, Hash, Index, Moment, Signature,
 };
-use rstd::prelude::*;
 pub use srml_keygen::sr25519::AuthorityId as KeygenId;
-use support::{
-	construct_runtime, parameter_types,
-	traits::{Currency, Randomness},
-};
 
-pub type AuthorityId = ([u8; 32], [u8; 16]);
 use client::{
 	block_builder::api::{self as block_builder_api, CheckInherentsResult, InherentData},
 	impl_runtime_apis, runtime_api as client_api,
@@ -52,10 +52,16 @@ use version::NativeVersion;
 use version::RuntimeVersion;
 
 pub use balances::Call as BalancesCall;
+
 #[cfg(any(feature = "std", test))]
 pub use sr_primitives::BuildStorage;
+
 pub use sr_primitives::{Perbill, Permill};
-pub use support::StorageValue;
+pub use support::{
+	construct_runtime, parameter_types,
+	traits::{Currency, Randomness},
+	StorageValue,
+};
 pub use timestamp::Call as TimestampCall;
 
 /// Implementations of some helper traits passed into runtime modules as associated types.
@@ -66,14 +72,10 @@ use impls::{Author, CurrencyToVoteHandler, LinearWeightToFee, TargetedFeeAdjustm
 pub mod constants;
 use constants::{currency::*, time::*};
 
-// Make the WASM binary available.
-#[cfg(feature = "std")]
-include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
-
 /// Runtime version.
 pub const VERSION: RuntimeVersion = RuntimeVersion {
-	spec_name: create_runtime_str!("node"),
-	impl_name: create_runtime_str!("substrate-node"),
+	spec_name: create_runtime_str!("hb-node"),
+	impl_name: create_runtime_str!("substrate-hb-node"),
 	authoring_version: 10,
 	// Per convention: if the runtime behavior changes, increment spec_version
 	// and set impl_version to equal spec_version. If only runtime

@@ -34,17 +34,17 @@ use badger_primitives::HBBFT_AUTHORITIES_KEY;
 use codec::{self as codec, Decode, Encode, Error,Codec};
 use rstd::prelude::*;
 use sr_primitives::{
-  generic::{DigestItem, OpaqueDigestItemId},
-  traits::Zero,
-  Perbill,
+	generic::{DigestItem, OpaqueDigestItemId},
+	traits::Zero,
+	Perbill,
 };
 use srml_support::{
-  decl_event, decl_module, decl_storage, dispatch::Result, storage::StorageMap,
-  storage::StorageValue,storage
+	decl_event, decl_module, decl_storage, dispatch::Result, storage::StorageMap,
+	storage::StorageValue, storage
 };
 
 #[cfg(feature = "std")]
-use serde::{Serialize,Deserialize};
+use serde::{Deserialize, Serialize};
 
 use sr_primitives::ConsensusEngineId;
 
@@ -56,8 +56,6 @@ use system::{ensure_signed, DigestOf};
 
 //#[derive(Decode, Encode, PartialEq, Eq, Clone,Hash)]
 //pub type AuthorityId = ([u8; 32],[u8; 16]);
-
-
 
 /// An consensus log item for BADGER.
 #[cfg_attr(feature = "std", derive(Serialize, Debug))]
@@ -73,7 +71,8 @@ pub enum ConsensusLog {
 	#[codec(index = "3")]
   VoteComplete(Vec<AuthorityId>),
   #[codec(index = "4")]
-    NotifyChangedSet(Vec<AuthorityId>),
+  NotifyChangedSet(Vec<AuthorityId>),
+  
 }
 
 impl ConsensusLog {
@@ -100,68 +99,55 @@ impl ConsensusLog {
 			_ => None,
 		}
 	}
-
-
 }
-
 
 mod mock;
 
-pub trait Trait: system::Trait
-{
-  /// The event type of this module.
-  type Event: From<Event> + Into<<Self as system::Trait>::Event>;
+pub trait Trait: system::Trait {
+	/// The event type of this module.
+	type Event: From<Event> + Into<<Self as system::Trait>::Event>;
 }
 
-
-
 decl_event!(
-// #[derive(Debug)]
-  pub enum Event
-  {
-    /// New authority set has been applied.
-    NewAuthorities(Vec<AuthorityId>),
-  }
+	// #[derive(Debug)]
+	pub enum Event {
+		/// New authority set has been applied.
+		NewAuthorities(Vec<AuthorityId>),
+	}
 );
 
 decl_storage! {
-  trait Store for Module<T: Trait> as BadgerFinality {
-    /// The current authority set.
-    //Authorities get(authorities): Vec<AuthorityId>;
+	trait Store for Module<T: Trait> as BadgerFinality {
+		/// The current authority set.
+		Authorities get(authorities): Vec<AuthorityId>;
 
-    /// The number of changes (both in terms of keys and underlying economic responsibilities)
-    /// in the "set" of Grandpa validators from genesis.
-    CurrentSetId get(fn current_set_id) build(|_| u64::default()): u64;
-
-		/// A mapping from grandpa set ID to the index of the *most recent* session for which its members were responsible.
-    SetIdSession get(fn session_for_set): map u64 => Option<u32>;
-    
-  }
-  add_extra_genesis {
-    config(authorities): Vec<AuthorityId>;
-    build(|config| Module::<T>::initialize_authorities(&config.authorities))
-  }
+		/// The number of changes (both in terms of keys and underlying economic responsibilities)
+		/// in the "set" of Grandpa validators from genesis.
+		CurrentSetId get(current_set_id) build(|_| 0): u64;
+	}
+	add_extra_genesis {
+		config(authorities): Vec<AuthorityId>;
+		build(|config| Module::<T>::initialize_authorities(&config.authorities))
+	}
 }
 
 decl_module! {
-  pub struct Module<T: Trait> for enum Call where origin: T::Origin {
-    fn deposit_event() = default;
+	pub struct Module<T: Trait> for enum Call where origin: T::Origin {
+		fn deposit_event() = default;
 
-    fn on_finalize(block_number: T::BlockNumber) {
+		fn on_finalize(block_number: T::BlockNumber) {
 
-          //TODO: check if I need to add anything.
 
-        }
+		}
 
-    //	Self::deposit_log(ConsensusLog::Resume(delay));
+	//	Self::deposit_log(ConsensusLog::Resume(delay));
 	fn send_log(origin) ->Result
 	{
 	let who =	ensure_signed(origin)?;
-    Self::deposit_log(ConsensusLog::VoteToAdd((AuthorityId::default())));
+	Self::deposit_log(ConsensusLog::VoteToAdd((AuthorityId::default())));
 	Ok(())
 	}
-		
-  }
+	}
 }
 
 impl<T: Trait> sr_primitives::BoundToRuntimeAppPublic for Module<T> {
@@ -206,6 +192,13 @@ impl<T: Trait> Module<T>
   {
     Self::deposit_log(ConsensusLog::VoteToRemove(auth_id));
   }
+
+
+  /// vote to completely change authority set
+  fn vote_complete_change(auth_ids: Vec<AuthorityId>)
+  {
+    Self::deposit_log(ConsensusLog::VoteComplete(auth_ids));
+  }
   
   /// Deposit one of this module's logs.
   fn deposit_log(log: ConsensusLog)
@@ -215,34 +208,6 @@ impl<T: Trait> Module<T>
   }
 
 
-}
-
-impl<T: Trait> Module<T>
-{
-  /// Attempt to extract a GRANDPA log from a generic digest.
-  pub fn badger_log(digest: &DigestOf<T>) -> Option<ConsensusLog>
-  {
-    let id = OpaqueDigestItemId::Consensus(&HBBFT_ENGINE_ID);
-    digest.convert_first(|l| l.try_to::<ConsensusLog>(id))
-  }
-
-  /// Attempt to extract a pending set-change signal from a digest.
-  pub fn pending_vote_to_add(digest: &DigestOf<T>) -> Option<AuthorityId>
-  {
-    Self::badger_log(digest).and_then(|signal| signal.try_into_add())
-  }
-
-  /// Attempt to extract a pending set-change signal from a digest.
-  pub fn pending_vote_to_remove(digest: &DigestOf<T>) -> Option<AuthorityId>
-  {
-    Self::badger_log(digest).and_then(|signal| signal.try_into_remove())
-  }
-
-  /// Attempt to extract a pending set-change signal from a digest.
-  pub fn vote_complete(digest: &DigestOf<T>) -> Option<Vec<AuthorityId>>
-  {
-    Self::badger_log(digest).and_then(|signal| signal.try_into_complete())
-  }
 }
 
 
@@ -278,7 +243,7 @@ impl<T: Trait> session::OneSessionHandler<T::AccountId> for Module<T>
 		// if we didn't issue a change, we update the mapping to note that the current
 		// set corresponds to the latest equivalent session (i.e. now).
 		let session_index = <session::Module<T>>::current_index();
-		SetIdSession::insert(current_set_id, &session_index);
+		//SetIdSession::insert(current_set_id, &session_index);
 	}
 
 	fn on_disabled(_i: usize) {

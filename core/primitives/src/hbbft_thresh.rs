@@ -23,7 +23,6 @@ use crate::{
 
 use runtime_interface::pass_by::PassByInner;
 
-
 #[cfg(feature = "std")]
 use crate::crypto::Ss58Codec;
 
@@ -33,21 +32,21 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use crate::crypto::{CryptoType, Derive, Public as TraitPublic, UncheckedFrom};
 
 #[cfg(feature = "full_crypto")]
-use threshold_crypto::{serde_impl::SerdeSecret, PublicKey, SecretKey, Signature as RawSignature};
+use threshold_crypto::{
+	serde_impl::SerdeSecret, PublicKey, SecretKey, Signature as RawSignature,
+};
 
-/// Public key size
+
+
+pub const SEED_SIZE: usize = 32;
 pub const PK_SIZE: usize = 48;
-
-/// Secret key... seed? size
-pub const SK_SIZE: usize = 32;
-
-/// Signature size
 pub const SIG_SIZE: usize = 96;
 
-#[cfg(feature = "full_crypto")]
-type Seed = [u8; SK_SIZE];
 
-#[derive(Clone, Encode, Decode,PassByInner)]
+#[cfg(feature = "full_crypto")]
+type Seed = [u8; SEED_SIZE];
+
+#[derive(Clone, Encode, Decode, PassByInner)]
 pub struct Public(pub [u8; PK_SIZE]);
 
 impl PartialOrd for Public {
@@ -55,6 +54,7 @@ impl PartialOrd for Public {
 		Some(self.cmp(&other))
 	}
 }
+
 impl Ord for Public {
 	fn cmp(&self, other: &Self) -> Ordering {
 		self.0.iter().cmp(other.0.iter())
@@ -120,15 +120,13 @@ impl From<Public> for [u8; PK_SIZE] {
 }
 
 #[cfg(feature = "full_crypto")]
-impl From<threshold_crypto::PublicKey> for Public
-{ 
-  fn from(x:threshold_crypto::PublicKey) ->Self
-  {
-	let arr= bincode::serialize(&x).unwrap();
-	let mut inner = [0u8; PK_SIZE];
-	inner.copy_from_slice(&arr);
-	Public(inner)
-  }
+impl From<threshold_crypto::PublicKey> for Public {
+	fn from(x: threshold_crypto::PublicKey) -> Self {
+		let arr = bincode::serialize(&x).unwrap();
+		let mut inner = [0u8; PK_SIZE];
+		inner.copy_from_slice(&arr);
+		Public(inner)
+	}
 }
 
 #[cfg(feature = "full_crypto")]
@@ -196,7 +194,7 @@ impl rstd::hash::Hash for Public {
 	}
 }
 
-#[derive(Encode, Decode,PassByInner)]
+#[derive(Encode, Decode, PassByInner)]
 pub struct Signature(pub [u8; SIG_SIZE]);
 
 impl rstd::convert::TryFrom<&[u8]> for Signature {
@@ -322,8 +320,8 @@ impl Derive for Public {}
 #[cfg(feature = "full_crypto")]
 fn derive_hard_junction(secret_seed: &Seed, cc: &[u8; 32]) -> Seed {
 	("threshold_crypto", secret_seed, cc).using_encoded(|data| {
-		let mut res = [0u8; SK_SIZE];
-		res.copy_from_slice(blake2_rfc::blake2b::blake2b(SK_SIZE, &[], data).as_bytes());
+		let mut res = [0u8; SEED_SIZE];
+		res.copy_from_slice(blake2_rfc::blake2b::blake2b(SEED_SIZE, &[], data).as_bytes());
 		res
 	})
 }
@@ -337,7 +335,6 @@ pub enum DeriveError {
 
 #[cfg(feature = "std")]
 use rand_chacha::ChaChaRng;
-
 
 #[cfg(feature = "full_crypto")]
 impl TraitPair for Pair {
@@ -369,9 +366,9 @@ impl TraitPair for Pair {
 		.map_err(|_| SecretStringError::InvalidSeed)?; // 64 bytes
 
 		let mut seed = Seed::default();
-		seed.copy_from_slice(&big_seed[0..SK_SIZE]);
+		seed.copy_from_slice(&big_seed[0..SEED_SIZE]);
 
-		Self::from_seed_slice(&big_seed[0..SK_SIZE]).map(|x| (x, seed))
+		Self::from_seed_slice(&big_seed[0..SEED_SIZE]).map(|x| (x, seed))
 	}
 
 	fn from_seed(seed: &Seed) -> Pair {
@@ -380,16 +377,15 @@ impl TraitPair for Pair {
 
 	fn from_seed_slice(seed: &[u8]) -> Result<Pair, SecretStringError> {
 		use rand_old::distributions::Standard;
-		use rand_old::SeedableRng;
 		use rand_old::Rng;
-		//let ss:SecretKey =
+		use rand_old::SeedableRng;
+
 		let secret: SecretKey = match seed.len() {
-			SK_SIZE => { 
-				let mut acc: Seed = [0u8; SK_SIZE];
+			SEED_SIZE => {
+				let mut acc: Seed = [0u8; SEED_SIZE];
 				acc.copy_from_slice(seed);
-                Ok(ChaChaRng::from_seed(acc).sample(Standard))
+				Ok(ChaChaRng::from_seed(acc).sample(Standard))
 			}
-			//bincode::deserialize(seed).map_err(|_| SecretStringError::InvalidSeed),
 			_ => Err(SecretStringError::InvalidSeedLength),
 		}?;
 		let public = secret.public_key();
@@ -402,10 +398,10 @@ impl TraitPair for Pair {
 		path: Iter,
 		seed: Option<Seed>,
 	) -> Result<(Pair, Option<Seed>), Self::DeriveError> {
-		let secret: Vec<u8> = bincode::serialize(&SerdeSecret(&self.secret)).unwrap();
-		assert_eq!(secret.len(), SK_SIZE);
+		let secret = self.to_raw_vec();
+		assert_eq!(secret.len(), SEED_SIZE);
 
-		let mut acc: Seed = [0u8; SK_SIZE];
+		let mut acc = [0u8; SEED_SIZE];
 		acc.copy_from_slice(secret.as_slice());
 
 		for j in path {
@@ -447,7 +443,7 @@ impl TraitPair for Pair {
 	}
 
 	fn to_raw_vec(&self) -> Vec<u8> {
-		bincode::serialize(&SerdeSecret(&self.secret)).expect("Failed serialize")
+		bincode::serialize(&SerdeSecret(&self.secret)).expect("Failed to get raw secret!")
 	}
 }
 
@@ -464,4 +460,37 @@ impl CryptoType for Signature {
 #[cfg(feature = "full_crypto")]
 impl CryptoType for Pair {
 	type Pair = Pair;
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	use rand::{thread_rng, RngCore};
+
+	use crate::crypto::DEV_PHRASE;
+	use hex_literal::hex;
+
+	#[test]
+	fn default_phrase_should_be_used() {
+		assert_eq!(
+			Pair::from_string("//Alice///password", None)
+				.unwrap()
+				.public(),
+			Pair::from_string(&format!("{}//Alice", DEV_PHRASE), Some("password"))
+				.unwrap()
+				.public(),
+		);
+	}
+
+	#[test]
+	fn test_seed() {
+		let mut seed = [0u8; 32];
+		thread_rng().fill_bytes(&mut seed);
+
+		let p1 = Pair::from_seed(&seed);
+		let p2 = Pair::from_seed(&seed);
+
+		assert_eq!(p1.public(), p2.public());
+	}
 }
