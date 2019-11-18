@@ -40,7 +40,6 @@ const CURRENT_VERSION: u32 = 0;
 
 
 #[derive(Debug, Clone, Encode, Decode)]
-
 pub struct AuthoritySet
 {
 	current_authorities: AuthorityList,
@@ -74,7 +73,7 @@ pub struct BadgerPersistentData
 }
 
 /// Load or initialize persistent data from backend.
-pub fn load_persistent_badger<Block: BlockT, B, G>(
+pub fn load_persistent_badger< B, G>(
 	backend: &B,
 	genesis_authorities: G,
 )

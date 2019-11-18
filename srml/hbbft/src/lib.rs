@@ -42,6 +42,7 @@ use srml_support::{
 	decl_event, decl_module, decl_storage, dispatch::Result, storage::StorageMap,
 	storage::StorageValue, storage
 };
+use session::OnSessionEnding;
 
 #[cfg(feature = "std")]
 use serde::{Deserialize, Serialize};
@@ -210,6 +211,23 @@ impl<T: Trait> Module<T>
 
 }
 
+impl<T: Trait> session::ShouldEndSession<T::BlockNumber> for Module<T> {
+	fn should_end_session(now: T::BlockNumber) -> bool {
+		//Self::do_initialize(now);
+          return false; //for now. TODO
+		//Self::should_epoch_change(now)
+	}
+}
+
+type SessionIndex=u32;
+
+impl<T: Trait> OnSessionEnding<T::AccountId> for Module<T> {
+	fn on_session_ending(_ending: SessionIndex, start_session: SessionIndex)
+		-> Option<Vec<T::AccountId>>
+	{
+		None //Self::new_session(start_session - 1) TODO
+	}
+}
 
 
 impl<T: Trait> session::OneSessionHandler<T::AccountId> for Module<T>

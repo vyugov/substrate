@@ -32,6 +32,7 @@ use client::decl_runtime_apis;
 
 
 decl_runtime_apis! {
+	#[api_version(2)]
 	pub trait BadgerApi {
 		/// Get the current GRANDPA authorities and weights. This should not change except
 		/// for when changes are scheduled and the corresponding delay has passed.

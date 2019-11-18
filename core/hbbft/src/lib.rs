@@ -608,6 +608,9 @@ where
 	phb: PhantomData<Block>,
 }
 
+use crate::aux_store::GenesisAuthoritySetProvider;
+
+
 /// Run a HBBFT churn as a task. Provide configuration and a link to a
 /// block import worker that has already been instantiated with `block_import`.
 pub fn run_honey_badger<B, E, Block: BlockT<Hash = H256>, N, RA, SC, X, I, A>(
@@ -915,6 +918,18 @@ where
 	//			warn!("BADGER failed: {:?}", e);
 	//			telemetry!(CONSENSUS_WARN; "afg.badger_failed"; "e" => ?e);
 	//		}) ;
+	let genesis_authorities_provider= &*client.clone();
+	let persistent_data = aux_store::load_persistent_badger(
+		&*client,
+		|| {
+			let authorities = genesis_authorities_provider.get()?;
+			telemetry!(CONSENSUS_INFO; "afg.loading_authorities";
+				"authorities_len" => ?authorities.len()
+			);
+			Ok(authorities)
+		}
+	)?;
+	info!("Badger AUTH {:?}",persistent_data.authority_set.inner);
 
 	let with_start = network_startup.then(move |()| futures03::future::join(sender, receiver));
 	let ping_client = client.clone();
