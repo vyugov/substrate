@@ -41,6 +41,7 @@ serde_bytes = "0.11"
 derive_more = "0.15"
 state_machine = { package = "substrate-state-machine", path = "../state-machine" }
 app-crypto = { package = "substrate-application-crypto", path = "../application-crypto" }
+hex-literal = { version = "0.2.1" }
 
 
 [dev-dependencies]

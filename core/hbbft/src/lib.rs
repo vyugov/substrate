@@ -929,8 +929,13 @@ where
 			Ok(authorities)
 		}
 	)?;
-	info!("Badger AUTH {:?}",persistent_data.authority_set.inner);
+	info!("Badger AUTH {:?}",&persistent_data.authority_set.inner);
+	use hex_literal::*;
+	use substrate_primitives::crypto::Pair;
+	let ap:app_crypto::hbbft_thresh::Public=hex!["946252149ad70604cf41e4b30db13861c919d7ed4e8f9bd049958895c6151fab8a9b0b027ad3372befe22c222e9b733f"].into();
 
+	let secr:SecretKey=bincode::deserialize(keystore.read().key_pair_by_type::<AuthorityPair>(&ap.into(), app_crypto::key_types::HB_NODE).unwrap().to_raw_vec()).unwrap();
+	
 	let with_start = network_startup.then(move |()| futures03::future::join(sender, receiver));
 	let ping_client = client.clone();
 	// Delay::new(Duration::from_secs(1)).then(|_| {

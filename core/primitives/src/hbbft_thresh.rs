@@ -49,6 +49,9 @@ type Seed = [u8; SEED_SIZE];
 #[derive(Clone, Encode, Decode, PassByInner)]
 pub struct Public(pub [u8; PK_SIZE]);
 
+
+
+
 impl PartialOrd for Public {
 	fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
 		Some(self.cmp(&other))
@@ -118,6 +121,13 @@ impl From<Public> for [u8; PK_SIZE] {
 		x.0
 	}
 }
+
+impl From<[u8; PK_SIZE]> for Public  {
+	fn from(x: [u8; PK_SIZE]) -> Self {
+		Public{0:x}
+	}
+}
+
 
 #[cfg(feature = "full_crypto")]
 impl From<threshold_crypto::PublicKey> for Public {
