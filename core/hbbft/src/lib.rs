@@ -623,6 +623,8 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash = H256>, N, RA, SC, X, I, A>(
 	inherent_data_providers: InherentDataProviders,
 	selch: SC,
 	keystore: KeyStorePtr,
+	node_key:Option<String>,
+	dev_seed:Option<String>
 ) -> ::client::error::Result<impl Future<Output = ()> + Send + Unpin>
 where
 	Block::Hash: Ord,
@@ -934,7 +936,8 @@ where
 	use substrate_primitives::crypto::Pair;
 	let ap:app_crypto::hbbft_thresh::Public=hex!["946252149ad70604cf41e4b30db13861c919d7ed4e8f9bd049958895c6151fab8a9b0b027ad3372befe22c222e9b733f"].into();
 
-	let secr:SecretKey=bincode::deserialize(keystore.read().key_pair_by_type::<AuthorityPair>(&ap.into(), app_crypto::key_types::HB_NODE).unwrap().to_raw_vec()).unwrap();
+	let secr:SecretKey=bincode::deserialize(&keystore.read().key_pair_by_type::<AuthorityPair>(&ap.into(), app_crypto::key_types::HB_NODE).unwrap().to_raw_vec()).unwrap();
+	info!("Badger AUTH  private {:?}",&secr);
 	
 	let with_start = network_startup.then(move |()| futures03::future::join(sender, receiver));
 	let ping_client = client.clone();

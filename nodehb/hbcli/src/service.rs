@@ -136,6 +136,8 @@ macro_rules! new_full {
     //use futures::Future;
     let nconf_name = $config.n_conf_file.clone();
     let node_name = $config.name.clone();
+    let node_key = $config.node_key.clone();
+    let dev_seed = $config.dev_key_seed.clone();
     let (
 			is_authority,
 			_force_authoring,
@@ -195,7 +197,9 @@ macro_rules! new_full {
         //service.config().custom.inherent_data_providers.clone(),
         inherent_data_providers.clone(),
         select_chain,
-        service.keystore(),
+		service.keystore(),
+		node_key,
+		dev_seed,
       )?;    
       let key_gen = keygen::run_key_gen(
         service.network().local_peer_id(),
