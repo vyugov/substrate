@@ -8,6 +8,18 @@ use sr_primitives::{ConsensusEngineId, };
 pub mod app {
 	use sr_primitives::app_crypto::{app_crypto, hbbft_thresh, key_types::HB_NODE};
 	app_crypto!(hbbft_thresh, HB_NODE);
+
+	#[cfg(feature = "std")]
+	use threshold_crypto;
+	#[cfg(feature = "std")]
+	impl From<Public> for threshold_crypto::PublicKey
+	{
+		fn from(x:Public) -> threshold_crypto::PublicKey
+		{
+		 let s=std::convert::Into::<hbbft_thresh::Public>::into(x);
+		 s.into()
+		}
+	}
 }
 
 use rstd::vec::Vec;
@@ -24,7 +36,10 @@ pub const HBBFT_AUTHORITIES_KEY: &'static [u8] = b":honey_badger_authorities";
 
 pub type AuthorityList = Vec<AuthorityId>;
 
-pub type SetId = u64;
+pub type SetId = u32;
+
+
+
 
 
 use client::decl_runtime_apis;

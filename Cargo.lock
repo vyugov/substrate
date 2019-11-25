@@ -5352,6 +5352,7 @@ dependencies = [
  "sr-std 2.0.0",
  "substrate-application-crypto 2.0.0",
  "substrate-client 2.0.0",
+ "threshold_crypto 0.3.2 (git+https://github.com/poanetwork/threshold_crypto)",
 ]
 
 [[package]]

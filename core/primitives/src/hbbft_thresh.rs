@@ -140,6 +140,13 @@ impl From<threshold_crypto::PublicKey> for Public {
 }
 
 #[cfg(feature = "full_crypto")]
+impl From<Public> for threshold_crypto::PublicKey {
+	fn from(x: Public) -> threshold_crypto::PublicKey {
+		bincode::deserialize(&x.0).expect("Corrupted public key")
+		}
+}
+
+#[cfg(feature = "full_crypto")]
 impl From<Pair> for Public {
 	fn from(x: Pair) -> Self {
 		x.public()

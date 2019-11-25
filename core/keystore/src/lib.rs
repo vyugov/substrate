@@ -139,6 +139,18 @@ impl Store {
 		Ok(obj)
 	}
 
+	//remove aux data
+	pub fn delete_aux(&self, key_type: KeyTypeId, public: &[u8])-> Result<()> 
+	{
+		let path=self.key_aux_file_path(public, key_type);
+		if path.exists()
+		{
+		 std::fs::remove_file(path)?;
+		}
+
+		Ok(())
+	}
+
 	/// Insert a new key.
 	///
 	/// Places it into the file system store.

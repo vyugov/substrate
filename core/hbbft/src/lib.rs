@@ -247,13 +247,13 @@ impl<B, E, Block: BlockT<Hash=H256>, RA> AuthoritySetGetter<Block> for Client<B,
 pub struct Config {
 	/// Some local identifier of the node.
 	pub name: Option<String>,
-	pub num_validators: usize,
+//pub num_validators: usize,
 	pub secret_key_share: Option<Arc<SecretKeyShare>>,
 	pub node_id: Arc<AuthorityPair>,
 	pub public_key_set: Arc<PublicKeySet>,
 	pub batch_size: u32,
-	pub initial_validators: BTreeMap<PeerIdW, PublicKey>,
-	pub node_indices: BTreeMap<PeerIdW, usize>,
+//	pub initial_validators: BTreeMap<PeerIdW, PublicKey>, replaced by session aspects
+//	pub node_indices: BTreeMap<PeerIdW, usize>, unnecessary
 }
 
 fn secret_share_from_string(st: &str) -> Result<SecretKeyShare, Error> {
@@ -285,17 +285,7 @@ impl Config {
 
 		let ret = Config {
 			name: Some(name.to_string()),
-			num_validators: match &spec["num_validators"] {
-				Number(x) => match x.as_u64() {
-					Some(y) => y as usize,
-					None => return Err("Invalid num_validators 1".to_string()),
-				},
-				Value::String(st) => match st.parse::<usize>() {
-					Ok(v) => v,
-					Err(_) => return Err("Invalid num_validators 2".to_string()),
-				},
-				_ => return Err("Invalid num_validators 3".to_string()),
-			},
+
 			secret_key_share: match &nodedata["secret_key_share"] {
 				Value::String(st) => Some(Arc::new(match secret_share_from_string(&st) {
 					Ok(val) => val,
@@ -360,61 +350,7 @@ impl Config {
 				_ => return Err("Invalid batch_size".to_string()),
 			},
 
-			initial_validators: match &spec["initial_validators"] {
-				Object(dict) => {
-					let mut ret = BTreeMap::<PeerIdW, PublicKey>::new();
-					for (k, v) in dict.iter() {
-						let peer = match PeerId::from_str(k) {
-							Ok(val) => val,
-							Err(_) => return Err("Invalid PeerId".to_string()),
-						};
-						let data = match hex::decode(v.as_str().unwrap()) {
-							Ok(val) => val,
-							Err(_) => return Err("Hex error in pubkey".to_string()),
-						};
-						let pubkey: PublicKey = match bincode::deserialize(&data) {
-							Ok(val) => val,
-							Err(_) => return Err("public key binary invalid".to_string()),
-						};
-
-						//		let cpeer=peer.clone();
-						ret.insert(PeerIdW { 0: peer }, pubkey);
-					}
-					let kv: Vec<_> = ret.keys().cloned().collect();
-					for k in kv {
-						info!("JSON! {:?} {:?}", &k, &ret.get(&k));
-					}
-					ret
-				}
-				_ => return Err("Invalid initial_validators, should be object".to_string()),
-			},
-			node_indices: match &spec["node_indices"] {
-				Object(dict) => {
-					let mut ret = BTreeMap::<PeerIdW, usize>::new();
-					for (k, v) in dict.iter() {
-						let peer = match PeerId::from_str(k) {
-							Ok(val) => val,
-							Err(_) => return Err("Invalid PeerId".to_string()),
-						};
-						let numb = match &v {
-							Number(x) => match x.as_u64() {
-								Some(y) => y as usize,
-								None => return Err("Invalid num_validators 1".to_string()),
-							},
-							Value::String(st) => match st.parse::<usize>() {
-								Ok(v) => v,
-								Err(_) => return Err("Invalid num_validators 2".to_string()),
-							},
-							_ => return Err("Invalid num_validators 3".to_string()),
-						};
-
-						ret.insert(PeerIdW { 0: peer }, numb);
-					}
-
-					ret
-				}
-				_ => return Err("Invalid initial_validators, should be object".to_string()),
-			},
+	
 		};
 		Ok(ret)
 	}
@@ -435,6 +371,7 @@ pub enum Error {
 	Safety(String),
 	/// A timer failed to fire.
 	Timer(tokio_timer::Error),
+
 }
 
 impl From<hex::FromHexError> for Error {
@@ -643,7 +580,19 @@ where
 	RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
 	<Client<B, E, Block, RA> as ProvideRuntimeApi>::Api: BlockBuilderApi<Block>,
 {
-	let (network_bridge, network_startup) = NetworkBridge::new(network, config.clone());
+	let genesis_authorities_provider= &*client.clone();
+	let persistent_data = aux_store::load_persistent_badger(
+		&*client,
+		|| {
+			let authorities = genesis_authorities_provider.get()?;
+			telemetry!(CONSENSUS_INFO; "afg.loading_authorities";
+				"authorities_len" => ?authorities.len()
+			);
+			Ok(authorities)
+		},keystore.clone()
+	)?;
+	info!("Badger AUTH {:?}",&persistent_data.authority_set.inner);
+	let (network_bridge, network_startup) = NetworkBridge::new(network, config.clone(),keystore.clone(),persistent_data);
 
 	//let PersistentData { authority_set, set_state, consensus_changes } = persistent_data;
 
@@ -917,21 +866,11 @@ where
 
 	//.map(|_| ()).map_err(|e|
 	//    {
-	//			warn!("BADGER failed: {:?}", e);
+	//			warn!("BADGER failed: {:?}", e); 
 	//			telemetry!(CONSENSUS_WARN; "afg.badger_failed"; "e" => ?e);
 	//		}) ;
-	let genesis_authorities_provider= &*client.clone();
-	let persistent_data = aux_store::load_persistent_badger(
-		&*client,
-		|| {
-			let authorities = genesis_authorities_provider.get()?;
-			telemetry!(CONSENSUS_INFO; "afg.loading_authorities";
-				"authorities_len" => ?authorities.len()
-			);
-			Ok(authorities)
-		}
-	)?;
-	info!("Badger AUTH {:?}",&persistent_data.authority_set.inner);
+
+	
 	use hex_literal::*;
 	use substrate_primitives::crypto::Pair;
 	let ap:app_crypto::hbbft_thresh::Public=hex!["946252149ad70604cf41e4b30db13861c919d7ed4e8f9bd049958895c6151fab8a9b0b027ad3372befe22c222e9b733f"].into();
