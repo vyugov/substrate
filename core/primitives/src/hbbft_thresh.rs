@@ -354,6 +354,10 @@ pub enum DeriveError {
 use rand_chacha::ChaChaRng;
 
 #[cfg(feature = "full_crypto")]
+use rand_old::{distributions::Standard,Rng,SeedableRng};
+
+
+#[cfg(feature = "full_crypto")]
 impl TraitPair for Pair {
 	type Public = Public;
 	type Seed = Seed;
@@ -385,29 +389,35 @@ impl TraitPair for Pair {
 		let mut seed = Seed::default();
 		seed.copy_from_slice(&big_seed[0..SEED_SIZE]);
 
-		Self::from_seed_slice(&big_seed[0..SEED_SIZE]).map(|x| (x, seed))
+		let sk:SecretKey=ChaChaRng::from_seed(seed.clone()).sample(Standard);
+		let ser=bincode::serialize(&SerdeSecret(&sk)).unwrap();
+		Self::from_seed_slice(&ser).map(|x| (x, seed))
 	}
 
 	fn from_seed(seed: &Seed) -> Pair {
-		Self::from_seed_slice(&seed[..]).expect("seed has valid length; qed")
+		let sk:SecretKey=ChaChaRng::from_seed(seed.clone()).sample(Standard);
+		let ser=bincode::serialize(&SerdeSecret(&sk)).unwrap();
+		Self::from_seed_slice(&ser[..]).expect("seed has valid length; qed")
 	}
 
 	fn from_seed_slice(seed: &[u8]) -> Result<Pair, SecretStringError> {
-		use rand_old::distributions::Standard;
-		use rand_old::Rng;
-		use rand_old::SeedableRng;
+
 
 		let secret: SecretKey = match seed.len() {
 			SEED_SIZE => {
-				let mut acc: Seed = [0u8; SEED_SIZE];
-				acc.copy_from_slice(seed);
-				Ok(ChaChaRng::from_seed(acc).sample(Standard))
+		        //let k:Result<SecretKey>=;
+				match bincode::deserialize(seed)
+				{
+				  Ok(data) =>Ok(data),
+				  
+				Err(_) => Err(SecretStringError::InvalidSeed)
+				}
 			}
 			_ => Err(SecretStringError::InvalidSeedLength),
 		}?;
 		let public = secret.public_key();
 		info!("PUBLIC generated: {:?}",crate::hexdisplay::HexDisplay::from(&bincode::serialize(&public).unwrap()));
-		Ok(Pair { secret, public })
+		Ok(Pair { secret:secret, public })
 	}
 
 	fn derive<Iter: Iterator<Item = DeriveJunction>>(

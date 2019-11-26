@@ -23,7 +23,6 @@ use serde::{Serialize,Deserialize};
 use primitives::{
 	crypto::{KeyTypeId, Pair as PairT, Public, IsWrappedBy, Protected}, traits::BareCryptoStore,
 };
-
 use app_crypto::{AppKey, AppPublic, AppPair, ed25519, sr25519,hbbft_thresh};
 
 use parking_lot::RwLock;
@@ -106,6 +105,7 @@ impl Store {
 	/// Does not place it into the file system store.
 	fn insert_ephemeral_pair<Pair: PairT>(&mut self, pair: &Pair, key_type: KeyTypeId) {
 		let key = (key_type, pair.public().to_raw_vec());
+		//print!("Inserting ephemeral {:?} {:?}",)
 		self.additional.insert(key, pair.to_raw_vec());
 	}
 
@@ -179,6 +179,7 @@ impl Store {
 		let (pair, phrase, _) = Pair::generate_with_phrase(self.password.as_ref().map(|p| &***p));
 		let mut file = File::create(self.key_file_path(pair.public().as_slice(), key_type))?;
 		serde_json::to_writer(&file, &phrase)?;
+		print!("GENFILE");
 		file.flush()?;
 		Ok(pair)
 	}

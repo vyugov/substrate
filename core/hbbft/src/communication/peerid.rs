@@ -24,7 +24,6 @@ impl PartialOrd for PeerIdW
   }
 }
 
-
 /*
 impl From<&PeerId> for &PeerIdW
 {
@@ -39,9 +38,6 @@ impl AsRef<PeerId> for PeerIdW
     &self.0
   }
 }
-
-
-
 
 impl Ord for PeerIdW
 {

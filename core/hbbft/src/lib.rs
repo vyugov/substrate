@@ -248,9 +248,9 @@ pub struct Config {
 	/// Some local identifier of the node.
 	pub name: Option<String>,
 //pub num_validators: usize,
-	pub secret_key_share: Option<Arc<SecretKeyShare>>,
-	pub node_id: Arc<AuthorityPair>,
-	pub public_key_set: Arc<PublicKeySet>,
+//	pub secret_key_share: Option<Arc<SecretKeyShare>>,
+//	pub node_id: Arc<AuthorityPair>,
+//	pub public_key_set: Arc<PublicKeySet>,
 	pub batch_size: u32,
 //	pub initial_validators: BTreeMap<PeerIdW, PublicKey>, replaced by session aspects
 //	pub node_indices: BTreeMap<PeerIdW, usize>, unnecessary
@@ -271,7 +271,7 @@ impl Config {
 			.map(|s| s.as_str())
 			.unwrap_or("<unknown>")
 	}
-	pub fn from_json_file_with_name(path: PathBuf, name: &str) -> Result<Self, String> {
+	/* pub fn from_json_file_with_name(path: PathBuf, name: &str) -> Result<Self, String> {
 		let file = File::open(&path).map_err(|e| format!("Error opening config file: {}", e))?;
 		let spec: serde_json::Value =
 			json::from_reader(file).map_err(|e| format!("Error parsing spec file: {}", e))?;
@@ -353,7 +353,7 @@ impl Config {
 	
 		};
 		Ok(ret)
-	}
+	}*/
 }
 
 /// Errors that can occur while voting in BADGER.
@@ -873,10 +873,10 @@ where
 	
 	use hex_literal::*;
 	use substrate_primitives::crypto::Pair;
-	let ap:app_crypto::hbbft_thresh::Public=hex!["946252149ad70604cf41e4b30db13861c919d7ed4e8f9bd049958895c6151fab8a9b0b027ad3372befe22c222e9b733f"].into();
+//	let ap:app_crypto::hbbft_thresh::Public=hex!["946252149ad70604cf41e4b30db13861c919d7ed4e8f9bd049958895c6151fab8a9b0b027ad3372befe22c222e9b733f"].into();
 
-	let secr:SecretKey=bincode::deserialize(&keystore.read().key_pair_by_type::<AuthorityPair>(&ap.into(), app_crypto::key_types::HB_NODE).unwrap().to_raw_vec()).unwrap();
-	info!("Badger AUTH  private {:?}",&secr);
+//	let secr:SecretKey=bincode::deserialize(&keystore.read().key_pair_by_type::<AuthorityPair>(&ap.into(), app_crypto::key_types::HB_NODE).unwrap().to_raw_vec()).unwrap();
+//	info!("Badger AUTH  private {:?}",&secr);
 	
 	let with_start = network_startup.then(move |()| futures03::future::join(sender, receiver));
 	let ping_client = client.clone();

@@ -21,7 +21,7 @@ use hb_node_runtime::Block;
 
 use primitives::{sr25519, Pair,Public, };// ed25519, crypto::UncheckedInto
 use substrate_service;
-use hex_literal::hex;
+//use hex_literal::hex;
 use substrate_telemetry::TelemetryEndpoints;
 //use badger_primitives::AuthorityId as BadgerId;
 
@@ -159,58 +159,6 @@ pub fn get_from_seed<TPublic: Public>(seed: &str) -> <TPublic::Pair as Pair>::Pu
 }
 
 
-//fn account_key(s: &str) -> AccountId {
-//	get_from_seed::<AccountId>(s)
-//}
-
-//impl Alternative {
-	/// Get an actual chain config from one of the alternatives.
-	/*pub(crate) fn load(self) -> Result<ChainSpec, String> {
-		Ok(match self {
-			Alternative::Development => ChainSpec::from_genesis(
-				"Development",
-				"dev",
-				|| testnet_genesis(vec![
-					account_key("Alice")
-				],
-					account_key("Alice")
-				),
-				vec![],
-				None,
-				None,
-				None,
-				None
-			),
-			Alternative::LocalTestnet => ChainSpec::from_genesis(
-				"Local Testnet",
-				"local_testnet",
-				|| testnet_genesis( vec![
-					account_key("Alice"),
-					account_key("Bob"),
-					account_key("Charlie"),
-					account_key("Dave"),
-					account_key("Eve"),
-					account_key("Ferdie"),
-				],
-					account_key("Alice"),
-				),
-				vec![],
-				None,
-				None,
-				None,
-				None
-			),
-		})
-	}*/
-
-	/*pub(crate) fn from(s: &str) -> Option<Self> {
-		match s {
-			"dev" => Some(Alternative::Development),
-			"" | "local" => Some(Alternative::LocalTestnet),
-			_ => None,
-		}
-	}*/
-//}
 
 pub fn get_authority_keys_from_seed(seed: &str) -> (AccountId,  badger_primitives::AuthorityId) {
 	(

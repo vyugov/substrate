@@ -37,7 +37,6 @@ use hb_node_runtime::{GenesisConfig,RuntimeApi};
 use keygen::{self};
 use sr_primitives::traits::Block as BlockT;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 //use std::time::Duration;
 use substrate_service::{
@@ -134,7 +133,7 @@ macro_rules! new_full {
 		use futures::sync::mpsc;
 		use network::DhtEvent;
     //use futures::Future;
-    let nconf_name = $config.n_conf_file.clone();
+    //let nconf_name = $config.n_conf_file.clone();
     let node_name = $config.name.clone();
     let node_key = $config.node_key.clone();
     let dev_seed = $config.dev_key_seed.clone();
@@ -178,16 +177,20 @@ macro_rules! new_full {
         .select_chain()
         .ok_or(ServiceError::SelectChainRequired)?;
 
-      let nconf = match &nconf_name
-      {
-        Some(name) => PathBuf::from(name),
-        None => PathBuf::from("./nodes.json"),
-      };
-
+     //  let nconf = match &nconf_name
+     // {
+     //   Some(name) => PathBuf::from(name),
+     //   None => PathBuf::from("./nodes.json"),
+     // };
+      let bc=BadgerConfig{
+		  name: Some(node_name.to_string()),
+          batch_size:20,  
+	  };
       let badger = run_honey_badger(
         client,
-        t_pool,
-        BadgerConfig::from_json_file_with_name(nconf, &node_name).unwrap(),
+		t_pool,
+		bc,
+        //BadgerConfig::from_json_file_with_name(nconf, &node_name).unwrap(),
         service.network(),
         service.on_exit().clone().compat().map(|_| {
           info!("OnExit");
