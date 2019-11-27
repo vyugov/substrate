@@ -179,7 +179,7 @@ impl Store {
 		let (pair, phrase, _) = Pair::generate_with_phrase(self.password.as_ref().map(|p| &***p));
 		let mut file = File::create(self.key_file_path(pair.public().as_slice(), key_type))?;
 		serde_json::to_writer(&file, &phrase)?;
-		print!("GENFILE");
+	//	print!("GENFILE {:?} \n",&hex::encode(pair.public().as_slice()));
 		file.flush()?;
 		Ok(pair)
 	}
@@ -228,7 +228,7 @@ impl Store {
 			&phrase,
 			self.password.as_ref().map(|p| &***p),
 		).map_err(|_| Error::InvalidPhrase)?;
-
+				
 		if &pair.public() == public {
 			Ok(pair)
 		} else {

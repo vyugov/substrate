@@ -269,7 +269,7 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
       ap = keystore
         .read()
         .key_pair_by_type::<AuthorityPair>(&aset.self_id.clone().into(), app_crypto::key_types::HB_NODE)
-        .expect("Needs private key to work");
+        .expect("Needs private key to work (bsm:new)");
       is_ob = !aset.current_authorities.contains(&aset.self_id);
       info!("SELFID: {:?} {:?}",&aset.self_id,&ap.public());
     }

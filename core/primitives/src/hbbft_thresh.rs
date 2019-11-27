@@ -397,7 +397,8 @@ impl TraitPair for Pair {
 	fn from_seed(seed: &Seed) -> Pair {
 		let sk:SecretKey=ChaChaRng::from_seed(seed.clone()).sample(Standard);
 		let ser=bincode::serialize(&SerdeSecret(&sk)).unwrap();
-		Self::from_seed_slice(&ser[..]).expect("seed has valid length; qed")
+		info!("FromSeed");
+		Self::from_seed_slice(&ser).expect("seed has valid length; qed")
 	}
 
 	fn from_seed_slice(seed: &[u8]) -> Result<Pair, SecretStringError> {
@@ -423,21 +424,29 @@ impl TraitPair for Pair {
 	fn derive<Iter: Iterator<Item = DeriveJunction>>(
 		&self,
 		path: Iter,
-		seed: Option<Seed>,
+		_seed: Option<Seed>,
 	) -> Result<(Pair, Option<Seed>), Self::DeriveError> {
 		let secret = self.to_raw_vec();
 		assert_eq!(secret.len(), SEED_SIZE);
 
 		let mut acc = [0u8; SEED_SIZE];
 		acc.copy_from_slice(secret.as_slice());
-
+		let mut cnt=0;
 		for j in path {
+			cnt=cnt+1;
 			match j {
 				DeriveJunction::Soft(_) => return Err(DeriveError::SoftKeyInPath),
 				DeriveJunction::Hard(cc) => acc = derive_hard_junction(&acc, &cc),
 			}
 		}
+		if cnt == 0
+		{
+           Ok( (Self::from_seed_slice(&acc).unwrap(), Some(acc)) ) //this is technically incorrect. maybe i need to store seed as well.
+		}
+		else 
+		{
 		Ok((Self::from_seed(&acc), Some(acc)))
+		}
 	}
 
 	fn public(&self) -> Public {

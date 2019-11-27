@@ -258,7 +258,7 @@ pub struct Config {
 //	pub node_indices: BTreeMap<PeerIdW, usize>, unnecessary
 }
 
-fn secret_share_from_string(st: &str) -> Result<SecretKeyShare, Error> {
+fn _secret_share_from_string(st: &str) -> Result<SecretKeyShare, Error> {
 	let data = hex::decode(st)?;
 	match bincode::deserialize(&data) {
 		Ok(val) => Ok( val ),
