@@ -20,10 +20,11 @@ use hex;
 use log::{debug, error, info, trace, warn};
 use parity_codec::{Decode, Encode};
 use parking_lot::Mutex;
-use serde_json as json;
-use serde_json::Value;
-use serde_json::Value::Number;
-use serde_json::Value::Object;
+
+use badger_primitives::HBBFT_ENGINE_ID;
+
+use badger_primitives::ConsensusLog;
+
 
 use consensus_common::evaluation;
 use inherents::InherentIdentifier;
@@ -34,7 +35,7 @@ use runtime_primitives::traits::{
 };
 
 use runtime_primitives::{
-	generic::{self, BlockId},
+	generic::{self, BlockId,OpaqueDigestItemId},
 	ApplyError, Justification,
 };
 
@@ -78,6 +79,7 @@ pub const INHERENT_IDENTIFIER: InherentIdentifier = *b"snakeshr";
 
 pub type BadgerImportQueue<B> = BasicQueue<B>;
 pub mod aux_store;
+pub mod rpc;
 pub struct BadgerWorker<C, I, SO, Inbound, B: BlockT, N: Network<B>, A>
 where
 	A: txpool::ChainApi,
@@ -814,6 +816,25 @@ where
 
 				let header_num = header.number().clone();
 				let mut parent_hash = header.parent_hash().clone();
+				let id = OpaqueDigestItemId::Consensus(&HBBFT_ENGINE_ID);
+
+				/*let filter_log = |log: ConsensusLog<NumberFor<B>>| match log {
+					ConsensusLog::ScheduledChange(change) => Some(change),
+					_ => None, convert_f
+				};*/
+			
+				// find the consensus digests with the right ID which converts to
+				// the right kind of consensus log.
+				let badger_logs:Vec<_>=header.digest().logs().iter().map(
+					|x| x.try_to(id)).filter( |x:&Option<ConsensusLog>| x.is_some()).map(|x| x.unwrap()).collect();
+				for log in badger_logs
+				{
+					//TODO!
+					/*match log
+					{
+						ConsensusLog
+					}*/
+				}
 
 				// sign the pre-sealed hash of the block and then
 				// add it to a digest item.
@@ -857,6 +878,7 @@ where
 							"hash" => ?eh, "err" => ?e);
 					}
 				}
+				
 			}
 		}
 		info!("[[[[[[[--]]]]]]]");

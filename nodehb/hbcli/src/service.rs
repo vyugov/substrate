@@ -116,8 +116,8 @@ macro_rules! new_full_start {
         .map_err(Into::into)
 			
 			})?
-			.with_rpc_extensions(|client, pool, _backend| -> RpcExtension {
-				hb_node_rpc::create(client, pool)
+			.with_rpc_extensions_key(|client, pool, _backend,ks| -> RpcExtension {
+				hb_node_rpc::create(client, pool,ks)
 			})?;
 
 		(builder,  inherent_data_providers)
@@ -305,8 +305,8 @@ pub fn new_light<C: Send + Default + 'static>(config: NodeConfiguration<C>)
 		})?
 		.with_network_protocol(|_| Ok(NodeProtocol::new()))?
     .with_opt_finality_proof_provider(|_client, _| Ok(None))?  //may need to add it
-		.with_rpc_extensions(|client, pool, _backend| -> RpcExtension {
-			hb_node_rpc::create(client, pool)
+		.with_rpc_extensions_key(|client, pool, _backend,ks| -> RpcExtension {
+			hb_node_rpc::create(client, pool,ks)
 		})?
 		.build()?;
 
