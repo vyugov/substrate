@@ -91,7 +91,7 @@ decl_storage! {
 		build(|config| Module::<T>::initialize_authorities(&config.authorities,&BTreeMap::new()))
 	}
 }
-
+use runtime_io::misc::print_utf8;
  decl_module! {
 	pub struct Module<T: Trait> for enum Call where origin: T::Origin {
 		fn deposit_event() = default;
@@ -102,6 +102,7 @@ decl_storage! {
 		}
 	  fn submit_account_binding(origin,binding: SignedAccountBinding<T::AccountId>) -> Result
 	  {
+		print_utf8(b"RUNEXTRINSIC");
 	   let who=ensure_signed(origin)?;
 	   let signature_valid = binding.data.using_encoded(|encoded_data| {
 		binding.data.self_pub_key.verify(&encoded_data, &binding.sig)
@@ -109,10 +110,13 @@ decl_storage! {
 	   if !signature_valid {return Err("Invalid signature on binder".into());}
 	   if who != binding.data.bound_account
 	   {
+		print_utf8(b"ERROR: Invalid account trying to use binder");
 		return Err("Invalid account trying to use binder".into());
 	   }
 		 if Self::check_either_present(&who,&binding.data.self_pub_key)
 		 {
+			print_utf8(b"ERROR: Account or node already bound");
+		
 			return Err("Account or node already bound".into());
 		 }
 		 let mut auth_map:BTreeMap<T::AccountId,AuthorityId>=storage::unhashed::take_or_default::<BTreeMap<T::AccountId,AuthorityId>>(HBBFT_AUTHORITIES_MAP_KEY).into();
@@ -121,12 +125,14 @@ decl_storage! {
 			HBBFT_AUTHORITIES_MAP_KEY,
 			&auth_map,
 		);
+		print_utf8(b"Success binding");
 	   //binding.data.self_pub_key.ver
 	   Ok(())
 	  }
 	//	Self::deposit_log(ConsensusLog::Resume(delay));
 	fn send_log(_origin) ->Result
 	{
+		print_utf8(b"RUNEXTR");
 	//let who =	ensure_signed(origin)?;
 	//session::Module<Runtime>;
 	<session::Module<T>>::queued_keys();
