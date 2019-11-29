@@ -3,11 +3,11 @@ use std::{
 	fmt::Debug,
 	marker::Unpin,
 	pin::Pin,
-	sync::Arc,
+	//sync::Arc,
 	time::{Duration, Instant},
 };
 
-use codec::{Decode, Encode};
+//use codec::{Decode, Encode};
 
 use futures03::compat::{Compat, Stream01CompatExt};
 use futures03::prelude::{Stream, TryStream};

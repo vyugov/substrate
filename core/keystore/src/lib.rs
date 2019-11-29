@@ -139,7 +139,7 @@ impl Store {
 		Ok(obj)
 	}
 
-	//remove aux data
+	///removes aux data
 	pub fn delete_aux(&self, key_type: KeyTypeId, public: &[u8])-> Result<()> 
 	{
 		let path=self.key_aux_file_path(public, key_type);
