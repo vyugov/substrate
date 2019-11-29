@@ -311,7 +311,8 @@ impl Store {
 		buf
 	}
 	
-	fn request_exists(&self,request_id: &[u8],key_type: KeyTypeId) -> bool
+	/// Check if request exists
+	pub fn request_exists(&self,request_id: &[u8],key_type: KeyTypeId) -> bool
 	{
 		self.key_request_file_path(request_id,key_type).exists()
 	}

@@ -26,7 +26,7 @@ include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
 use rstd::prelude::*;
 
-use badger_primitives::AuthorityId as BadgerId;
+//use badger_primitives::AuthorityId as BadgerId;
 use badger_primitives::AuthorityList as BadgerList;
 pub use contracts;
 pub use contracts::Gas;

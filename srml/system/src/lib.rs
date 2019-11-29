@@ -901,9 +901,7 @@ impl<T: Trait> Debug for CheckNonce<T> {
 		Ok(())
 	}
 }
-use runtime_io::misc::print_utf8;
 
-pub use support::runtime_print as rprint;
 
 impl<T: Trait> SignedExtension for CheckNonce<T> {
 	type AccountId = T::AccountId;
@@ -920,15 +918,12 @@ impl<T: Trait> SignedExtension for CheckNonce<T> {
 		_info: DispatchInfo,
 		_len: usize,
 	) -> Result<(), ApplyError> {
-		rprint!("System/pre_dispatch");
 		#[cfg(feature = "std")]
-		print!("pre_dispatch");
+		print!("pre_dispatch {:?}\n",self.0);
 		let expected = <AccountNonce<T>>::get(who);
 		if self.0 != expected {
 			return Err(
 				if self.0 < expected {
-					rprint!("Stale transaction: {:?} {:?}",&self.0,&expected);
-					
 					InvalidTransaction::Stale
 				} else {
 					InvalidTransaction::Future
@@ -948,13 +943,8 @@ impl<T: Trait> SignedExtension for CheckNonce<T> {
 		_len: usize,
 	) -> TransactionValidity {
 		// check index
-		rprint!("System/validate");
-		#[cfg(feature = "std")]
-		print!("pre_validate");
 		let expected = <AccountNonce<T>>::get(who);
 		if self.0 < expected {
-			#[cfg(feature = "std")]
-			print!("Validate Stale transaction: {:?} {:?}",&self.0,&expected);
 			return InvalidTransaction::Stale.into()
 		}
 
