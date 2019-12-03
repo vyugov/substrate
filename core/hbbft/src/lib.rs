@@ -864,6 +864,7 @@ where
 	let ping_client = client.clone();
 	// Delay::new(Duration::from_secs(1)).then(|_| {
 	let ping = Interval::new(Duration::from_millis(11500)).for_each(move |_| {
+		
 		//put inherents here for now
 		let chain_head = match ping_sel.best_chain() {
 			Ok(x) => x,

@@ -183,12 +183,204 @@ pub struct KeyGenState
   pub keygen: SyncKeyGen<NodeId>,
   pub part: Option<Part>,
   pub threshold: usize,
-  pub remaining_parts: BTreeSet<NodeId>,
+  pub expected_parts: VecDeque<NodeId>,
+  pub expected_acks: VecDeque<(NodeId,VecDeque<NodeId>)>,
+  pub buffered_messages: Vec<(NodeId,SyncKeyGenMessage)>,
   pub is_done: bool,
   //pub ack: Option<(NodeId,AckOutcome)>,
   //pub step:KeyGenStep,
   //pub keyset:PublicKeySet,
   //pub secret_share: Option<SecretKeyShare>,
+}
+
+impl KeyGenState
+{
+
+  pub fn clean_queues(&mut self)
+  {
+    if !self.expected_acks.is_empty()
+    {
+      let rf=&mut self.expected_acks[0];
+      let mut exp_src=&mut rf.0;
+      let mut eacks=&mut rf.1;
+      while eacks.is_empty()
+      {
+       self.expected_acks.pop_front();
+       if self.expected_acks.is_empty()
+       {
+         self.is_done=true;
+         return;
+       }
+        exp_src=&mut self.expected_acks[0].0;
+        eacks =&mut self.expected_acks[0].1;
+      }
+    }
+  }
+  pub fn is_next_sender(&self,sender:&NodeId,) ->bool
+  {
+    
+    if !self.expected_parts.is_empty()
+    {
+      return self.expected_parts[0]==*sender;
+    }
+    if !self.expected_acks.is_empty()
+    {
+      let  (exp_src,_)=&self.expected_acks[0];
+      return *exp_src==*sender;
+    }
+    return false;
+  }
+  pub fn is_next_message(&self,sender:&NodeId, msg:&SyncKeyGenMessage) -> bool
+  {
+    if !self.is_next_sender(sender)
+    {
+      return false;
+    }
+    match msg
+    {
+     SyncKeyGenMessage::Part(_) =>
+       {
+         if !self.expected_parts.is_empty()
+         {
+          return self.expected_parts[0]==*sender;
+         }
+         else
+         {
+           return false;
+         }        
+       },
+       SyncKeyGenMessage::Ack(src,_) =>
+      {
+        if !self.expected_acks.is_empty()
+        {
+         return self.expected_acks[0].0==*sender && !self.expected_acks[0].1.is_empty() && self.expected_acks[0].1[0]==*src;
+        }
+        else
+        {
+          return false;
+        }
+      } 
+    }
+  }
+  pub fn process_part(&mut self,sender:&NodeId, part:Part) -> Vec<SyncKeyGenMessage>
+  {
+    let mut rng = rand::rngs::OsRng::new().expect("Could not open OS random number generator.");
+    let outcome =  match self.keygen.handle_part(sender, part, &mut rng)
+    {
+      Ok(outcome) => outcome,
+      Err(e) =>
+      {
+        warn!("Failed processing part from {:?} {:?}",sender,e);
+        return Vec::new();
+      }
+    };
+    let mut ret:Vec<SyncKeyGenMessage>=Vec::new();
+    match outcome
+    {
+      PartOutcome::Valid(Some(ack)) =>
+      {
+        self.expected_parts.pop_front();
+        ret.push(SyncKeyGenMessage::Ack(sender.clone(),ack)); 
+      }
+      PartOutcome::Invalid(fault) => 
+      {
+        warn!("Faulty Part from {:?} :{:?}",sender,fault);
+      },
+      PartOutcome::Valid(None) =>
+      {
+        info!("We might be an observer");
+        self.expected_parts.pop_front();
+      }
+    }
+     ret
+  }
+
+  pub fn process_ack(&mut self,sender:&NodeId,_src:&NodeId,ack:Ack)
+  {
+    //let mut rng = rand::rngs::OsRng::new().expect("Could not open OS random number generator.");
+    let ack_res = match self.keygen.handle_ack(sender, ack.clone())
+    {
+      Ok(outcome) => outcome,
+      Err(e) =>
+      {
+       info!("Invalid Ack from {:?} : {:?}",sender,e);
+       return;
+      }
+    };
+    match ack_res
+    {
+    AckOutcome::Valid =>
+    {}
+     AckOutcome::Invalid(fault) =>
+      {
+    info!("Could not process Ack: {:?}",fault);
+    return;
+     },
+    }
+   self.expected_acks[0].1.pop_front();
+   if self.expected_acks[0].1.is_empty()
+   {
+     self.expected_acks.pop_front();
+     if self.expected_acks.is_empty()
+      {
+        self.is_done=true;
+      }
+   }
+  }
+  pub fn maybe_buffer(&mut self, sender:&NodeId,msg:SyncKeyGenMessage)
+  {
+    if let SyncKeyGenMessage::Part(_) = msg
+    {
+      if self.expected_parts.is_empty()
+      {
+        return;
+      }
+    } 
+
+    self.buffered_messages.push((sender.clone(),msg));
+  }
+  /// process incoming message and return generated acks, if any
+ pub fn process_message(&mut self,sender:&NodeId, msg:SyncKeyGenMessage) -> Vec<SyncKeyGenMessage>
+ {
+   self.clean_queues();
+   //check if we are done;
+   let mut ret:Vec<SyncKeyGenMessage>=Vec::new();
+   if self.expected_acks.is_empty() ||self.is_done
+   {
+     self.is_done=true;
+     return Vec::new();
+   }
+   if !self.is_next_message(sender, &msg)
+   {
+    self.maybe_buffer(sender,msg);
+    return Vec::new();
+   }
+   let mut spl=sender.clone();
+   let mut nmsg=msg;
+   let mut unproc=true;
+   
+   while unproc
+   {
+  match nmsg 
+  {
+    SyncKeyGenMessage::Part(parted) => ret.append(&mut self.process_part(&spl,parted)),
+    SyncKeyGenMessage::Ack(src,ack) => self.process_ack(&spl, &src,ack)
+  };
+  let index = self.buffered_messages.iter().position(|(snd,msg)| self.is_next_message(snd,msg)  );
+  match index
+  {
+    Some(i) => { 
+                let (aspl,anmsg) = self.buffered_messages.remove(i);
+                spl=aspl;
+                nmsg=anmsg;
+                 unproc=true;},
+    None => {unproc=false; break;}
+  }
+
+   }
+   info!("Processed keygen, still expecting {:?} Parts and {:?} base Acks",self.expected_parts.len(),self.expected_acks.len());
+   ret
+ }
 }
 
 //#[derive(Encode,Decode)]
@@ -245,11 +437,11 @@ pub struct BadgerAuxCrypto
   pub set_id: u32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug,Clone)]
 pub enum SyncKeyGenMessage
 {
   Part(Part),
-  Ack(Ack),
+  Ack(NodeId,Ack),
 }
 
 pub struct BadgerContainer<Block: BlockT, N: Network<Block>>
@@ -295,35 +487,61 @@ N:Network<B>
   fn update_validators<Be>(&self,new_validators:BTreeMap<NodeId,AuthorityId>,backend:&Be)
   where Be: AuxStore, 
   {
-    let mut lock=self.val.inner.write();
-    let mut secr=None;
-    let mut kset=None;
-    match lock.state
+    let mut nex_set;
+    let  aux:BadgerAuxCrypto;
+    let mut self_id;
     {
-    BadgerState::Badger(ref mut node) => 
-    {
-     secr=node.algo.network_info().secret_key_share();
-     kset=node.algo.network_info().public_key_set();
-     
-     }
-    }
-    {
-      if lock.cached_origin.is_none()
+      let mut lock=self.val.inner.write();
+      lock.load_origin();
       {
-        let pair: AuthorityPair;
-        {
-          pair = lock
-            .keystore
-            .read()
-            .key_pair_by_type::<AuthorityPair>(&lock.config.my_auth_id.clone().into(), app_crypto::key_types::HB_NODE)
-            .expect("Needs private key to work");
-        }
-        lock.cached_origin = Some(pair);
+    nex_set=lock.persistent.authority_set.inner.read().set_id+1;
+    self_id=lock.persistent.authority_set.inner.read().self_id.clone();
       }
-    }
+        match lock.state
+        {
+        BadgerState::Badger(ref mut node) => 
+        {
+         let secr=node.algo.inner().netinfo().secret_key_share().clone();
+         let ikset=node.algo.inner().netinfo().public_key_set();
+         
+         let kset=Some(ikset.clone());
+          aux=BadgerAuxCrypto{
+          secret_share: match secr {
+           Some(s) => Some(SerdeSecret(s.clone())),
+           None =>None
+          },
+         key_set: ikset.clone(),
+         set_id: (nex_set) as u32, 
+        };
+       
+         },
+         _ =>{
+           warn!("Not in BADGER state, odd.  Bailing");
+           return;
+         }
+        };
+    
+  }
+  {
+    let  lock=self.val.inner.write();
+    lock
+    .keystore
+    .write()
+    .insert_aux_by_type(app_crypto::key_types::HB_NODE, &self_id.encode(), &aux).expect("Couldn't save keys");
+  }
+
+{
+  let mut lock=self.val.inner.write();
+
+    lock.config.keyset = Some(aux.key_set);
+    lock.config.secret_share =  match aux.secret_share {
+      Some(s) => Some(s.0.clone()),
+      None =>None
+     };
+
     let mut aset=lock.persistent.authority_set.inner.write();
     aset.current_authorities=new_validators.iter().map(|(_,v)| v.clone()).collect();
-    aset.set_id=aset.set_id+1;
+    aset.set_id=nex_set;
     match aux_store::update_authority_set(&aset, |insert| backend.insert_aux(insert, &[]),)
     {
       Ok(_) =>{},
@@ -332,27 +550,7 @@ N:Network<B>
         warn!("Couldn't write to disk, potentially inconsistent state {:?}",e);
       }
     };
-    let aux=BadgerAuxCrypto{
-      secret_share:  self.config.secret_share Some(SerdeSecret(sec.clone())) match shr
-      {
-          Some(ref sec) => {
-            info!("Gensec {:?}",sec.public_key_share());
-            Some(SerdeSecret(sec.clone()))},
 
-          None =>None
-      },
-     key_set: kset.clone(),
-     set_id: cset_id as u32, 
-    };
-
-    self.config.keyset = Some(kset);
-    self.config.secret_share = shr;
-    {
-    self
-     .keystore
-     .write()
-     .insert_aux_by_type(app_crypto::key_types::HB_NODE, &self.persistent.authority_set.inner.read().self_id.encode(), &aux).expect("Couldn't save keys");
-    }
 
     
     let topic = badger_topic::<B>();
@@ -367,6 +565,8 @@ N:Network<B>
     };
     let packet_data = GossipMessage::Session(packet).encode();
     self.network.register_gossip_message(topic, packet_data);
+
+  }
   }
 }
 
@@ -407,6 +607,22 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
     }
   }
 
+  #[inline]
+  pub fn load_origin(&mut self)
+  {
+    if self.cached_origin.is_none()
+    {
+      let pair: AuthorityPair;
+      {
+        pair = self
+          .keystore
+          .read()
+          .key_pair_by_type::<AuthorityPair>(&self.config.my_auth_id.clone().into(), app_crypto::key_types::HB_NODE)
+          .expect("Needs private key to work");
+      }
+      self.cached_origin = Some(pair);
+    }
+  }
   pub fn queue_transaction(&mut self, tx: Vec<u8>) -> Result<(), Error>
   {
     if self.queued_transactions.len() >= MAX_QUEUE_LEN
@@ -439,16 +655,7 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
 
   pub fn proceed_to_badger(&mut self) -> Vec<(LocalTarget, GossipMessage)>
   {
-    if self.cached_origin.is_none()
-    {
-      self.cached_origin = Some(
-        self
-          .keystore
-          .read()
-          .key_pair_by_type::<AuthorityPair>(&self.config.my_auth_id.clone().into(), app_crypto::key_types::HB_NODE)
-          .expect("Needs private key to work"),
-      );
-    }
+    self.load_origin();
 
     let node: BadgerNode<B, QHB> = BadgerNode::<B, QHB>::new(
       self.config.batch_size as usize,
@@ -474,30 +681,10 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
     Vec::new()
   }
 
-  fn processed_part(&mut self, partid: &NodeId)
-  {
-    match &mut self.state
-    {
-      BadgerState::KeyGen(ref mut state) =>
-      {
-        state.remaining_parts.remove(partid);
-      }
-      _ =>
-      {}
-    }
-  }
   pub fn proceed_to_keygen(&mut self) -> Vec<(LocalTarget, GossipMessage)>
   {
-    if self.cached_origin.is_none()
-    {
-      self.cached_origin = Some(
-        self
-          .keystore
-          .read()
-          .key_pair_by_type::<AuthorityPair>(&self.config.my_auth_id.clone().into(), app_crypto::key_types::HB_NODE)
-          .expect("Needs private key to work"),
-      );
-    }
+
+      self.load_origin();
 
     //check if we already have the necessary keys
     let aset = self.persistent.authority_set.inner.read().clone();
@@ -577,87 +764,40 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
         &mut rng,
       )
       .expect("Failed to create SyncKeyGen! ");
-      let  state = KeyGenState {
+      let mut template_pre:Vec<NodeId>=val_pub_keys.iter().map(|(k,_)| k.clone()).collect();
+      template_pre.sort();
+      let template:VecDeque<_>=template_pre.into_iter().collect();
+      let mut  state = KeyGenState {
         is_observer: self.config.is_observer,
         keygen: skg,
         part: None,
         threshold: thresh as usize,
-        remaining_parts: val_pub_keys.keys().cloned().collect(),
+        buffered_messages: Vec::new(),
+        expected_parts: template.clone(),
+        expected_acks: template.iter().map(|x| (x.clone(),template.clone())).collect(),
         is_done: false,
       };
+      let mut ret=vec![];
+      if let Some(parted)=part
+      {
+        let pid=self.config.my_peer_id.clone().into();
+        let mut acks=state.process_message(&pid,  SyncKeyGenMessage::Part(parted));
+        if acks.len()>0
+        {
+          acks.append(&mut state.process_message(&pid, acks[0].clone()));
+        }
+       ret=acks.into_iter().map(|msg|
+      {
+        (LocalTarget::AllExcept(BTreeSet::new()), GossipMessage::KeygenData(BadgeredMessage::new(self.cached_origin.as_ref().unwrap().clone(),
+        &bincode::serialize(&msg).expect("Serialize error in inital keygen processing") )))
+      }).collect();
+      }
+     
+      
       self.state = BadgerState::KeyGen(state);
 
-      return match part
-      {
-        Some(parted) =>
-        {
-          let akk;
-          if let BadgerState::KeyGen(ref mut state) = &mut self.state
-          {
-            akk = state
-              .keygen
-              .handle_part(&self.config.my_peer_id.clone().into(), parted.clone(), &mut rng)
-              .expect("Failed handling our own part");
-              info!("Handled part ");
-          }
-          else
-          {
-            return Vec::new();
-          }
-          let akk2 = match akk
-          {
-            PartOutcome::Valid(Some(ack)) =>
-            {
-              let ack_res;
-              self.processed_part(&PeerIdW {
-                0: self.config.my_peer_id.clone(),
-              });
-
-              if let BadgerState::KeyGen(ref mut state) = &mut self.state
-              {
-                ack_res = state
-                  .keygen
-                  .handle_ack(&self.config.my_peer_id.clone().into(), ack.clone())
-                  .expect("Failed handing our own ack");
-              }
-              else
-              {
-                return Vec::new();
-              }
-
-              match ack_res
-              {
-                AckOutcome::Valid =>
-                {}
-                AckOutcome::Invalid(fault) => panic!("Invalid own Ack: {:?}", fault),
-              }
-
-              GossipMessage::KeygenData(BadgeredMessage::new(
-                self.cached_origin.as_ref().unwrap().clone(),
-                &bincode::serialize(&SyncKeyGenMessage::Ack(ack)).expect("Serial error"),
-              ))
-            }
-            PartOutcome::Invalid(fault) => panic!("Invalid Own Part: {:?}", fault),
-            PartOutcome::Valid(None) =>
-            {
-              panic!("We are not an observer, so we should send Ack.");
-            }
-          };
-          //broadcast local Part and Ack
-
-          vec![
-            (
-              LocalTarget::AllExcept(BTreeSet::new()),
-              GossipMessage::KeygenData(BadgeredMessage::new(
-                self.cached_origin.as_ref().unwrap().clone(),
-                &bincode::serialize(&SyncKeyGenMessage::Part(parted)).expect("Serial error"),
-              )),
-            ),
-            (LocalTarget::AllExcept(BTreeSet::new()), akk2),
-          ]
-        }
-        None => Vec::new(),
-      };
+       ret
+      
     }
     else
     {
@@ -767,111 +907,48 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
               return (SAction::Discard, Vec::new());
             }
           };
-          match k_message
+          let acks= step.process_message(&orid, k_message);
+          if step.is_done
           {
-            SyncKeyGenMessage::Part(part) =>
-            {
-              info!("New PART");
-              let mut rng = OsRng::new().unwrap();
-              match step.keygen.handle_part(&orid, part.clone(), &mut rng)
+            info!("Initial keygen ready, generating... ");
+            info!("Pub keys: {:?}",step.keygen.public_keys());
+            let (kset, shr) = step.keygen.generate().expect("Initial key generation failed!");
+           
+            let aux=BadgerAuxCrypto{
+              secret_share: match shr
               {
-                Ok(outcome) => match outcome
-                {
-                  PartOutcome::Valid(Some(ack)) =>
-                  {
-                    // send ack out: TODO
-                    self.processed_part(&orid);
-                    (
-                      SAction::PropagateOnce,
-                      vec![(
-                        LocalTarget::AllExcept(BTreeSet::new()),
-                        GossipMessage::KeygenData(BadgeredMessage::new(
-                          self.cached_origin.as_ref().unwrap().clone(),
-                          &bincode::serialize(&SyncKeyGenMessage::Ack(ack.clone())).expect("Serialize Ack error"),
-                        )),
-                      )],
-                    )
-                  }
-                  PartOutcome::Invalid(fault) =>
-                  {
-                    panic!("Invalid Part: {:?}", fault);
-                  }
-                  PartOutcome::Valid(None) =>
-                  {
-                    info!("We are an observer, or this part is duplicate {:?}", &part);
-                    (SAction::PropagateOnce, Vec::new())
-                  }
-                },
-                Err(e) =>
-                {
-                  info!("Error handling message {:?}", e);
-                  return (SAction::Discard, Vec::new());
-                }
-              }
-            }
-            SyncKeyGenMessage::Ack(ack) =>
-            {
-              info!("New ACK");
-              if step.remaining_parts.len() > 0
-              {
-                info!("Still need some parts? ");
-              }
-              match step.keygen.handle_ack(&orid, ack.clone()).expect("Failed handing ack")
-              {
-                AckOutcome::Valid =>
-                {
-                  if step.keygen.count_complete() == num_auth
-                  {
-                    info!("Initial keygen ready, generating... ");
-                    info!("Pub keys: {:?}",step.keygen.public_keys());
-                    let (kset, shr) = step.keygen.generate().expect("Initial key generation failed!");
-                   
-                    let aux=BadgerAuxCrypto{
-                      secret_share: match shr
-                      {
-                          Some(ref sec) => {
-                            info!("Gensec {:?}",sec.public_key_share());
-                            Some(SerdeSecret(sec.clone()))},
+                  Some(ref sec) => {
+                    info!("Gensec {:?}",sec.public_key_share());
+                    Some(SerdeSecret(sec.clone()))},
 
-                          None =>None
-                      },
-                     key_set: kset.clone(),
-                     set_id: cset_id as u32, 
-                    };
+                  None =>None
+              },
+             key_set: kset.clone(),
+             set_id: cset_id as u32, 
+            };
 
-                    self.config.keyset = Some(kset);
-                    self.config.secret_share = shr;
-                    {
-                    self
-                     .keystore
-                     .write()
-                     .insert_aux_by_type(app_crypto::key_types::HB_NODE, &self.persistent.authority_set.inner.read().self_id.encode(), &aux).expect("Couldn't save keys");
-                    }
-                  
-                    (SAction::PropagateOnce, self.proceed_to_badger())
-                  }
-                  else
-                  {
-                    return (SAction::Discard, Vec::new());
-                  }
-                  //consumed message
-                  //
-                }
-                AckOutcome::Invalid(fault) =>
-                {
-                  info!("Invalid  Ack: {:?}", fault);
-                  if fault == AckFault::MissingPart
-                  {
-                    return (SAction::QueueRetry(1), Vec::new());
-                  }
-                  else
-                  {
-                    return (SAction::Discard, Vec::new());
-                  }
-                }
-              }
+            self.config.keyset = Some(kset);
+            self.config.secret_share = shr;
+            {
+            self
+             .keystore
+             .write()
+             .insert_aux_by_type(app_crypto::key_types::HB_NODE, &self.persistent.authority_set.inner.read().self_id.encode(), &aux).expect("Couldn't save keys");
             }
+          
+            (SAction::PropagateOnce, self.proceed_to_badger())
           }
+          else
+          {
+            let ret=acks.into_iter().map(|msg|
+              {
+                (LocalTarget::AllExcept(BTreeSet::new()), GossipMessage::KeygenData(BadgeredMessage::new(self.cached_origin.as_ref().unwrap().clone(),
+                &bincode::serialize(&msg).expect("Serialize error in  keygen processing") )))
+              }).collect();
+              (SAction::PropagateOnce, ret)
+          }
+
+         
         }
         else
         {
@@ -1515,7 +1592,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
       }
       if let BadgerState::Badger(ref mut node) = &mut locked.state
       {
-        do_flush=(node.out_queue.len() > 0);
+        do_flush=node.out_queue.len() > 0;
       }
     }
     //send messages out
@@ -1570,19 +1647,8 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
     let packet = {
       let mut inner = self.inner.write();
       inner.peers.new_peer(who.clone());
-      if inner.cached_origin.is_none()
-      {
-        let pair: AuthorityPair;
-        {
-          pair = inner
-            .keystore
-            .read()
-            .key_pair_by_type::<AuthorityPair>(&inner.config.my_auth_id.clone().into(), app_crypto::key_types::HB_NODE)
-            .expect("Needs private key to work");
-        }
+      inner.load_origin();
 
-        inner.cached_origin = Some(pair);
-      }
 
       let ses_mes = SessionData { ///TODO: mitigate sending of invalid peerid
         ses_id: inner.persistent.authority_set.inner.read().set_id,
