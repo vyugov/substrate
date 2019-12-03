@@ -22,9 +22,11 @@ use parity_codec::{Decode, Encode};
 use parking_lot::Mutex;
 
 use badger_primitives::HBBFT_ENGINE_ID;
+use badger_primitives::BadgerPreRuntime;
 
 use badger_primitives::ConsensusLog;
-
+use badger::dynamic_honey_badger::Change;
+use badger::dynamic_honey_badger::ChangeState;
 
 use consensus_common::evaluation;
 use inherents::InherentIdentifier;
@@ -68,7 +70,8 @@ use consensus_common::{self, BlockImportParams, BlockOrigin, ForkChoiceStrategy,
 use inherents::{InherentData, InherentDataProviders};
 //use network::PeerId;
 use runtime_primitives::traits::DigestFor;
-use substrate_primitives::{Blake2Hasher, ExecutionContext, H256,storage::StorageKey};
+use runtime_primitives::generic::DigestItem;
+use substrate_primitives::{Blake2Hasher, ExecutionContext, H256,storage::StorageKey,};
 use substrate_telemetry::{telemetry, CONSENSUS_INFO, CONSENSUS_WARN};
 use transaction_pool::txpool::{self, Pool as TransactionPool};
 
@@ -248,10 +251,6 @@ impl<B, E, Block: BlockT<Hash=H256>, RA> AuthoritySetGetter<Block> for Client<B,
 pub struct Config {
 	/// Some local identifier of the node.
 	pub name: Option<String>,
-//pub num_validators: usize,
-//	pub secret_key_share: Option<Arc<SecretKeyShare>>,
-//	pub node_id: Arc<AuthorityPair>,
-//	pub public_key_set: Arc<PublicKeySet>,
 	pub batch_size: u32,
 //	pub initial_validators: BTreeMap<PeerIdW, PublicKey>, replaced by session aspects
 //	pub node_indices: BTreeMap<PeerIdW, usize>, unnecessary
@@ -272,89 +271,7 @@ impl Config {
 			.map(|s| s.as_str())
 			.unwrap_or("<unknown>")
 	}
-	/* pub fn from_json_file_with_name(path: PathBuf, name: &str) -> Result<Self, String> {
-		let file = File::open(&path).map_err(|e| format!("Error opening config file: {}", e))?;
-		let spec: serde_json::Value =
-			json::from_reader(file).map_err(|e| format!("Error parsing spec file: {}", e))?;
-		let nodedata = match &spec["nodes"] {
-			Object(map) => match map.get(name) {
-				Some(dat) => dat,
-				None => return Err("Could not find node name".to_string()),
-			},
-			_ => return Err("Nodes object should be present".to_string()),
-		};
-
-		let ret = Config {
-			name: Some(name.to_string()),
-
-			secret_key_share: match &nodedata["secret_key_share"] {
-				Value::String(st) => Some(Arc::new(match secret_share_from_string(&st) {
-					Ok(val) => val,
-					Err(_) => return Err("secret_key_share".to_string()),
-				})),
-				_ => None,
-			},
-			node_id: match &nodedata["node_id"] {
-				Object(nid) => {
-					let pub_key: PublicKey = match &nid["pub"] {
-						Value::String(st) => {
-							let data = match hex::decode(st) {
-								Ok(val) => val,
-								Err(_) => return Err("Hex error in pub".to_string()),
-							};
-							match bincode::deserialize(&data) {
-								Ok(val) => val,
-								Err(_) => return Err("public key binary invalid".to_string()),
-							}
-						}
-						_ => return Err("pub key not string".to_string()),
-					};
-					let sec_key: SecretKey = match &nid["priv"] {
-						Value::String(st) => {
-							let data = match hex::decode(st) {
-								Ok(val) => val,
-								Err(_) => return Err("Hex error in priv".to_string()),
-							};
-							match bincode::deserialize(&data) {
-								Ok(val) => val,
-								Err(_) => return Err("secret key binary invalid".to_string()),
-							}
-						}
-						_ => return Err("priv key not string".to_string()),
-					};
-					Arc::new(HBPair{public:pub_key,secret:sec_key}.into()) 
-				}
-				_ => return Err("node id not pub/priv object".to_string()),
-			},
-			public_key_set: match &spec["public_key_set"] {
-				Value::String(st) => {
-					let data = match hex::decode(st) {
-						Ok(val) => val,
-						Err(_) => return Err("Hex error in public_key_set".to_string()),
-					};
-					match bincode::deserialize(&data) {
-						Ok(val) => Arc::new( val ),
-						Err(_) => return Err("public key set binary invalid".to_string()),
-					}
-				}
-				_ => return Err("pub key set not string".to_string()),
-			},
-			batch_size: match &spec["batch_size"] {
-				Number(x) => match x.as_u64() {
-					Some(y) => y as u32,
-					None => return Err("Invalid batch_size".to_string()),
-				},
-				Value::String(st) => match st.parse::<u32>() {
-					Ok(val) => val,
-					Err(_) => return Err("batch_size parsing error".to_string()),
-				},
-				_ => return Err("Invalid batch_size".to_string()),
-			},
-
 	
-		};
-		Ok(ret)
-	}*/
 }
 
 /// Errors that can occur while voting in BADGER.
@@ -428,6 +345,7 @@ where
 			.map_err(|e| Error::Blockchain(format!("{:?}", e)))
 	}
 }
+use communication::BadgerHandler;
 
 fn global_communication<Block: BlockT<Hash = H256>, B, E, N, RA>(
 	_client: &Arc<Client<B, E, Block, RA>>,
@@ -435,6 +353,7 @@ fn global_communication<Block: BlockT<Hash = H256>, B, E, N, RA>(
 ) -> (
 	impl Stream<Item = <QHB as ConsensusProtocol>::Output>,
 	impl SendOut,
+	impl BadgerHandler
 )
 where
 	B: Backend<Block, Blake2Hasher>,
@@ -446,7 +365,7 @@ where
 	let is_voter = network.is_validator();
 
 	// verification stream
-	let (global_in, global_out) = network.global_communication(
+	let (global_in, global_out,handler) = network.global_communication(
 		//	voters.clone(),
 		is_voter,
 	);
@@ -458,7 +377,7 @@ where
 			global_in,
 	);*/ //later
 
-	(global_in, global_out)
+	(global_in, global_out,handler)
 }
 
 /// Parameters used to run Honeyed Badger.
@@ -593,12 +512,14 @@ where
 		},keystore.clone()
 	)?;
 	info!("Badger AUTH {:?}",&persistent_data.authority_set.inner);
+
+	let auth_ref:Arc<parking_lot::RwLock<aux_store::AuthoritySet>>=persistent_data.authority_set.inner.clone();
 	let (network_bridge, network_startup) = NetworkBridge::new(network, config.clone(),keystore.clone(),persistent_data);
 
 	//let PersistentData { authority_set, set_state, consensus_changes } = persistent_data;
 
 	//	register_finality_tracker_inherent_data_provider(client.clone(), &inherent_data_providers)?;
-	let (blk_out, tx_in) = global_communication(&client, network_bridge);
+	let (blk_out, tx_in,handler ) = global_communication(&client, network_bridge);
 	let txcopy = Arc::new(parking_lot::RwLock::new(tx_in));
 	let tx_in_arc = txcopy.clone();
 
@@ -623,12 +544,34 @@ where
 	let ping_sel = selch.clone();
 	let receiver = blk_out.for_each(move |batch| {
 		info!("[[[[[[[");
-		let inherent_digests = generic::Digest { logs: vec![] };
+		let mut inherent_digests = generic::Digest { logs: vec![] };
+		//
 		info!(
 			"Processing batch with epoch {:?} of {:?} transactions into blocks",
 			batch.epoch(),
-			batch.len()
+			batch.len(),			
 		);
+		match batch.change()
+		{
+			ChangeState::None => {},
+			ChangeState::InProgress(Change::NodeChange(pubkeymap)) => 
+			{
+			 //change in progress, broadcast messages have to be sent to new node as well
+			 handler.notify_node_set(pubkeymap.iter().map(|(v,_)| v.clone().into() ).collect() )
+			},
+			ChangeState::InProgress(Change::EncryptionSchedule(_)) => {},//don't care?
+			ChangeState::Complete(Change::NodeChange(pubkeymap)) => {
+				let digest=BadgerPreRuntime::ValidatorsChanged(pubkeymap.iter().map(|(_,v)| v.clone().into() ).collect());
+				let logs=vec![DigestItem::PreRuntime(HBBFT_ENGINE_ID, digest.encode())];
+				inherent_digests.logs=logs;
+				//update internals before block is created?
+				handler.update_validators(pubkeymap.iter().
+			    map(| (c,v)| (c.clone().into(),v.clone().into()) ).collect() ,&*cclient);
+			},
+			ChangeState::Complete(Change::EncryptionSchedule(_)) => {},//don't care?
+			
+		
+		}
 		let chain_head = match selch.best_chain() {
 			Ok(x) => x,
 			Err(e) => {
@@ -829,10 +772,28 @@ where
 				for log in badger_logs
 				{
 					//TODO!
-					/*match log
+					match log
 					{
-						ConsensusLog
-					}*/
+						ConsensusLog::VoteChangeSet(my_id,changeset) =>
+						{
+						if auth_ref.read().self_id==my_id
+						 {
+						   info!("Log detected, VOTING");
+						   match handler.vote_for_validators(changeset,&*cclient)
+						   {
+							   Ok(_) =>{},
+							   Err(e) =>{
+								   info!("VoteErr: {:?}",e);
+							   }
+						   }
+						 }
+						},
+						ConsensusLog::NotifyChangedSet(newset) =>
+						{
+							info!("Notified of new set {:?}",&newset);
+						}
+
+					}
 				}
 
 				// sign the pre-sealed hash of the block and then

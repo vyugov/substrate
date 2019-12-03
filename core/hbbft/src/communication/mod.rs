@@ -13,7 +13,7 @@ use std::sync::Arc;
 //use badger::dynamic_honey_badger::KeyGenMessage::Ack;
 use crate::aux_store::BadgerPersistentData;
 use badger::crypto::{PublicKey, PublicKeySet,  SecretKey, SecretKeyShare, };//PublicKeyShare, Signature
-use badger::{ConsensusProtocol, CpStep, NetworkInfo, Target};
+use badger::{ConsensusProtocol, CpStep, NetworkInfo, Target, dynamic_honey_badger::Change};
 use futures03::channel::{mpsc, oneshot};
 use futures03::prelude::*;
 use futures03::{task::Context, task::Poll};
@@ -23,6 +23,7 @@ use parity_codec::{Decode, Encode};
 use parking_lot::RwLock;
 use rand::{rngs::OsRng, Rng};
 use serde::de::DeserializeOwned;
+use badger::honey_badger::EncryptionSchedule;
 use serde::{Deserialize, Serialize};
 //
 //};//
@@ -97,7 +98,7 @@ impl From<Target<NodeId>> for LocalTarget
     {
       // Target::All => LocalTarget::All,
       Target::Nodes(n) => LocalTarget::Nodes(n),
-      Target::AllExcept(set) => LocalTarget::AllExcept(set), //Target::AllExcept(set)=>LocalTarget::AllExcept(set.iter().map(|n| *n).collect())
+      Target::AllExcept(set) => LocalTarget::AllExcept(set), 
     }
   }
 }
@@ -251,7 +252,123 @@ pub enum SyncKeyGenMessage
   Ack(Ack),
 }
 
+pub struct BadgerContainer<Block: BlockT, N: Network<Block>>
+{
+  pub val:Arc<BadgerGossipValidator<Block>>,
+  pub network:N
 
+}
+use client::backend::AuxStore;
+use crate::aux_store;
+impl<B,N> BadgerHandler for BadgerContainer<B,N>
+where B:BlockT,
+N:Network<B>
+{
+  fn vote_for_validators<Be>(&self,auths: Vec<AuthorityId>,backend:&Be)->Result<(),Error>
+  where Be: AuxStore, 
+  {
+    let  lock=self.val.inner.read();
+    let  aset=lock.persistent.authority_set.inner.read();
+    let opt=aux_store::AuthoritySet
+    {
+       current_authorities: auths.clone(),
+       self_id: aset.self_id.clone(),
+       set_id: aset.set_id,
+    };
+    match aux_store::update_vote(&Some(opt),|insert| backend.insert_aux(insert, &[]), |delete| backend.insert_aux(&[], delete),)
+    {
+      Ok(_) =>{},
+      Err(e) => {
+        warn!("Couldn't save vote to disk {:?}, might not be important",e);
+      }
+    }
+    self.val.do_vote_validators(auths,&self.network)
+  }
+  fn vote_change_encryption_schedule(&self,e: EncryptionSchedule)->Result<(),Error>
+  {
+    self.val.do_vote_change_enc_schedule(e,&self.network)
+  }
+  fn notify_node_set(&self,_v:Vec<NodeId>)
+  {
+
+  }
+  fn update_validators<Be>(&self,new_validators:BTreeMap<NodeId,AuthorityId>,backend:&Be)
+  where Be: AuxStore, 
+  {
+    let mut lock=self.val.inner.write();
+    let mut secr=None;
+    let mut kset=None;
+    match lock.state
+    {
+    BadgerState::Badger(ref mut node) => 
+    {
+     secr=node.algo.network_info().secret_key_share();
+     kset=node.algo.network_info().public_key_set();
+     
+     }
+    }
+    {
+      if lock.cached_origin.is_none()
+      {
+        let pair: AuthorityPair;
+        {
+          pair = lock
+            .keystore
+            .read()
+            .key_pair_by_type::<AuthorityPair>(&lock.config.my_auth_id.clone().into(), app_crypto::key_types::HB_NODE)
+            .expect("Needs private key to work");
+        }
+        lock.cached_origin = Some(pair);
+      }
+    }
+    let mut aset=lock.persistent.authority_set.inner.write();
+    aset.current_authorities=new_validators.iter().map(|(_,v)| v.clone()).collect();
+    aset.set_id=aset.set_id+1;
+    match aux_store::update_authority_set(&aset, |insert| backend.insert_aux(insert, &[]),)
+    {
+      Ok(_) =>{},
+      Err(e)=>
+      {
+        warn!("Couldn't write to disk, potentially inconsistent state {:?}",e);
+      }
+    };
+    let aux=BadgerAuxCrypto{
+      secret_share:  self.config.secret_share Some(SerdeSecret(sec.clone())) match shr
+      {
+          Some(ref sec) => {
+            info!("Gensec {:?}",sec.public_key_share());
+            Some(SerdeSecret(sec.clone()))},
+
+          None =>None
+      },
+     key_set: kset.clone(),
+     set_id: cset_id as u32, 
+    };
+
+    self.config.keyset = Some(kset);
+    self.config.secret_share = shr;
+    {
+    self
+     .keystore
+     .write()
+     .insert_aux_by_type(app_crypto::key_types::HB_NODE, &self.persistent.authority_set.inner.read().self_id.encode(), &aux).expect("Couldn't save keys");
+    }
+
+    
+    let topic = badger_topic::<B>();
+    let packet = {
+      let ses_mes = SessionData { 
+        ses_id: aset.set_id,
+        session_key: lock.cached_origin.as_ref().unwrap().public(),
+        peer_id: lock.config.my_peer_id.clone().into(),
+      };
+      let sgn = lock.cached_origin.as_ref().unwrap().sign(&ses_mes.encode());
+      SessionMessage { ses: ses_mes, sgn: sgn }
+    };
+    let packet_data = GossipMessage::Session(packet).encode();
+    self.network.register_gossip_message(topic, packet_data);
+  }
+}
 
 impl<B: BlockT> BadgerStateMachine<B, QHB>
 {
@@ -344,6 +461,16 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
       &self.peers,
     );
     self.state = BadgerState::Badger(node);
+    let bypass:Vec<_>=self.queued_transactions.drain(..).collect();
+    for tx in  bypass.into_iter()
+    {
+     match  self.push_transaction(tx)
+     {
+       Ok(_) =>{},
+       Err(e) =>
+       {info!("Error pushing queued {:?}",e);}
+     }
+    }
     Vec::new()
   }
 
@@ -817,6 +944,80 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
       }
     }
   }
+  pub fn vote_change_encryption_schedule(&mut self, e:EncryptionSchedule)->Result<(),&'static str>
+  {
+    match self.state
+    {
+      BadgerState::Badger(ref mut badger) =>
+      {
+        info!("BadGER: voting to change encrypt schedule ");
+    
+          match badger.vote_change_encryption_schedule(e)
+          {
+            Ok(_) =>
+            {
+              debug!("BadGER: voted");
+             return Ok(());
+            }
+            Err(e) =>
+            {
+              info!("Error handling badger vote {:?}", e);
+              return Err(e);
+            }
+          }
+     
+      }
+      _ =>
+      {
+        warn!("Invalid state for voting");
+        return Err("Invalid state".into());
+      }
+    }
+  }
+  pub fn vote_for_validators(&mut self, auths: Vec<AuthorityId>)->Result<(),&'static str>
+  {
+    let mut map:BTreeMap<PeerIdW,PublicKey>=BTreeMap::new();
+    for au in auths.into_iter()
+    {
+       if let Some(pid)=self.peers.inverse.get(&au)
+       {
+       map.insert(pid.clone().into(),au.into());
+       }
+       else
+       {
+         info!("No nodeId for {:?}",au);
+         return Err("Missing NodeId".into());
+       }
+    }
+    match self.state
+    {
+      BadgerState::Badger(ref mut badger) =>
+      {
+        info!("BadGER: voting to change authority set ");
+    
+          match badger.vote_for_validators(map)
+          {
+            Ok(_) =>
+            {
+              debug!("BadGER: voted");
+             return Ok(());
+            }
+            Err(e) =>
+            {
+              info!("Error handling badger vote {:?}", e);
+              return Err(e);
+            }
+          }
+     
+      }
+      _ =>
+      {
+        warn!("Invalid state for voting");
+        return Err("Invalid state".into());
+      }
+    }
+  }
+
   pub fn process_message(
     &mut self, _who: &PeerId, mut data: &[u8],
   ) -> (SAction, Vec<(LocalTarget, GossipMessage)>, Option<GossipMessage>)
@@ -931,9 +1132,9 @@ impl<B: BlockT, D: ConsensusProtocol<NodeId = NodeId>> BadgerNode<B, D> where D:
 pub type BadgerNodeStepResult<D> = CpStep<D>;
 pub type TransactionSet = Vec<Vec<u8>>; //agnostic?
 
-impl<B: BlockT, D: ConsensusProtocol<NodeId = NodeId>> BadgerNode<B, D>
-where
-  D::Message: Serialize + DeserializeOwned,
+impl<B: BlockT> BadgerNode<B, QHB>
+//where
+//  D::Message: Serialize + DeserializeOwned,
 {
   pub fn new(
     batch_size: usize, sks: Option<SecretKeyShare>, validator_set: AuthorityList, pkset: PublicKeySet,
@@ -966,7 +1167,7 @@ where
       .collect();
      vset.sort();
   
-    let ni = NetworkInfo::<D::NodeId>::new(self_id.clone().into(), sks, (pkset).clone(), vset);
+    let ni = NetworkInfo::<NodeId>::new(self_id.clone().into(), sks, (pkset).clone(), vset);
     //let num_faulty = hbbft::util::max_faulty(indices.len());
     /*let peer_ids: Vec<_> = ni
     .all_ids()
@@ -1019,35 +1220,69 @@ where
     };
     node
   }
+  fn process_step(&mut self,step: badger::sender_queue::Step<DynamicHoneyBadger<Vec<BadgerTransaction>, NodeId>>) ->Result<(), &'static str> 
+  {
+    let out_msgs: Vec<_> = step
+    .messages
+    .into_iter()
+    .map(|mmsg| {
+      debug!("BaDGER!! Hundling  {:?} ", &mmsg.message);
+      let ser_msg = bincode::serialize(&mmsg.message).expect("serialize");
+      (mmsg.target, ser_msg)
+    })
+    .collect();
+  self.outputs.extend(step.output.into_iter());
+  debug!("BaDGER!! OK message, outputs: {} ",  self.outputs.len());
+  for (target, message) in out_msgs
+  {
+    self.out_queue.push_back(SourcedMessage {
+      sender_id: self.node_id.clone(),
+      target: target.into(),
+      message,
+    });
+  }
 
-  pub fn handle_message(&mut self, who: &NodeId, msg: D::Message) -> Result<(), &'static str>
+  Ok(())
+  }
+  pub fn vote_change_encryption_schedule(&mut self,e:EncryptionSchedule)-> Result<(), &'static str> 
+  {
+    match self.algo.vote_for(Change::EncryptionSchedule(e),&mut self.main_rng)
+    {
+      Ok(step) =>
+      {
+        return self.process_step(step);
+      },
+      Err(e) =>
+      {
+        info!("Error voting: {:?}",e);
+        return Err("Error voting");
+      }
+    }
+  }
+  pub fn vote_for_validators(&mut self,new_vals:BTreeMap<PeerIdW,PublicKey>)-> Result<(), &'static str> 
+  {
+    match self.algo.vote_for(Change::NodeChange(Arc::new(new_vals)),&mut self.main_rng)
+    {
+      Ok(step) =>
+      {
+        return self.process_step(step);
+      },
+      Err(e) =>
+      {
+        info!("Error voting: {:?}",e);
+        return Err("Error voting");
+      }
+    }
+    
+  }
+  pub fn handle_message(&mut self, who: &NodeId, msg: <QHB as ConsensusProtocol>::Message) -> Result<(), &'static str>
   {
     debug!("BaDGER!! Handling message from {:?} {:?}", who, &msg);
     match self.algo.handle_message(who, msg, &mut self.main_rng)
     {
       Ok(step) =>
       {
-        let out_msgs: Vec<_> = step
-          .messages
-          .into_iter()
-          .map(|mmsg| {
-            debug!("BaDGER!! Hundling  {:?} ", &mmsg.message);
-            let ser_msg = bincode::serialize(&mmsg.message).expect("serialize");
-            (mmsg.target, ser_msg)
-          })
-          .collect();
-        self.outputs.extend(step.output.into_iter());
-        debug!("BaDGER!! OK message from {:?}, {} ", who, self.outputs.len());
-        for (target, message) in out_msgs
-        {
-          self.out_queue.push_back(SourcedMessage {
-            sender_id: self.node_id.clone(),
-            target: target.into(),
-            message,
-          });
-        }
-
-        Ok(())
+        return self.process_step(step);
       }
       Err(_) => return Err("Cannot handle message"),
     }
@@ -1243,27 +1478,11 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
         {
           Ok(step) =>
           {
-            info!("Push OK");
-            let out_msgs: Vec<_> = step
-              .messages
-              .into_iter()
-              .map(|mmsg| {
-                info!("BaDGER!! Flushing {:?} ", &mmsg.message);
-                let ser_msg = bincode::serialize(&mmsg.message).expect("serialize");
-                (mmsg.target, ser_msg)
-              })
-              .collect();
-
-            node.outputs.extend(step.output.into_iter());
-            let cloneid = node.node_id.clone();
-            for (target, message) in out_msgs
+            match node.process_step(step)
             {
-              node.out_queue.push_back(SourcedMessage {
-                sender_id: cloneid.clone(),
-                target: target.into(),
-                message,
-              });
-            }
+              Ok(_) =>{},
+              Err(e) =>return Err(Error::Badger(e.to_string())),
+            };
 
             node.out_queue.len() > 0
           }
@@ -1279,6 +1498,63 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
 
     Ok(())
   }
+  pub fn do_vote_validators<N: Network<Block>>(&self, auths: Vec<AuthorityId>,net:&N) -> Result<(), Error>
+  {
+    if !self.is_validator()
+    {
+      info!("Non-validator cannot vote");
+      return Err(Error::Badger("Non-validator".to_string()));
+    }
+    let mut do_flush = false;
+    {
+      let mut locked = self.inner.write();
+      match locked.vote_for_validators(auths)
+      {
+        Ok(_) =>{},
+        Err(e) => {return Err(Error::Badger(e.to_string())); }
+      }
+      if let BadgerState::Badger(ref mut node) = &mut locked.state
+      {
+        do_flush=(node.out_queue.len() > 0);
+      }
+    }
+    //send messages out
+    if do_flush
+    {
+      self.flush_message_either(&mut Vec::new(), Some(net), &mut None);
+    }
+
+    Ok(())
+  }
+  pub fn do_vote_change_enc_schedule<N: Network<Block>>(&self,e:EncryptionSchedule,net:&N)-> Result<(), Error> 
+  {
+    if !self.is_validator()
+    {
+      info!("Non-validator cannot vote");
+      return Err(Error::Badger("Non-validator".to_string()));
+    }
+    let mut do_flush = false;
+    {
+      let mut locked = self.inner.write();
+      match locked.vote_change_encryption_schedule(e)
+      {
+        Ok(_) =>{},
+        Err(e) => {return Err(Error::Badger(e.to_string())); }
+      }
+      if let BadgerState::Badger(ref mut node) = &mut locked.state
+      {
+        do_flush= node.out_queue.len() > 0;
+      }
+    }
+    //send messages out
+    if do_flush
+    {
+      self.flush_message_either(&mut Vec::new(), Some(net), &mut None);
+    }
+
+    Ok(())
+  }
+
 }
 use gossip::PeerConsensusState;
 
@@ -1308,7 +1584,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
         inner.cached_origin = Some(pair);
       }
 
-      let ses_mes = SessionData {
+      let ses_mes = SessionData { ///TODO: mitigate sending of invalid peerid
         ses_id: inner.persistent.authority_set.inner.read().set_id,
         session_key: inner.cached_origin.as_ref().unwrap().public(),
         peer_id: inner.config.my_peer_id.clone().into(),
@@ -1438,12 +1714,17 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
       match GossipMessage::decode(&mut data)
       {
         Err(_) => true,
-        Ok(GossipMessage::Session(_)) => false,
+        Ok(GossipMessage::Session(ses_data)) => 
+        {
+          ses_data.ses.ses_id>=self.inner.read().persistent.authority_set.inner.read().set_id
+        }
         Ok(_) => true,
       }
     })
   }
 }
+
+
 
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 struct ShutUp;
@@ -1592,7 +1873,7 @@ impl Stream for NetworkStream
   }
 }
 
-/// Bridge between the underlying network service, gossiping consensus messages and Grandpa
+/// Bridge between the underlying network service, gossiping consensus messages and Badger
 pub struct NetworkBridge<B: BlockT, N: Network<B>>
 {
   service: N,
@@ -1637,13 +1918,18 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N>
   /// Set up the global communication streams. blocks out transaction in. Maybe reverse of grandpa...
   pub fn global_communication(
     &self, is_voter: bool,
-  ) -> (impl Stream<Item = <QHB as ConsensusProtocol>::Output>, impl SendOut)
+  ) -> (impl Stream<Item = <QHB as ConsensusProtocol>::Output>, impl SendOut, impl BadgerHandler)
   {
     let incoming = incoming_global::<B, N>(self.node.clone());
 
     let outgoing = TransactionFeed::<B, N>::new(self.service.clone(), is_voter, self.node.clone());
+    let handler= BadgerContainer{
 
-    (incoming, outgoing)
+      val:self.node.clone(),
+      network:self.service.clone()
+
+    };
+    (incoming, outgoing,handler)
   }
 }
 
@@ -1663,6 +1949,15 @@ impl<B: BlockT, N: Network<B>> Clone for NetworkBridge<B, N>
       node: Arc::clone(&self.node),
     }
   }
+}
+
+pub trait BadgerHandler
+{
+  fn vote_for_validators<Be: AuxStore>(&self, auths: Vec<AuthorityId>,backend:&Be)->Result<(),Error>;
+  fn vote_change_encryption_schedule(&self, e:EncryptionSchedule)->Result<(),Error>;
+  fn notify_node_set(&self,vc: Vec<NodeId>); // probably not too important, though ve might want to make sure nodea are connected
+
+  fn update_validators<Be: AuxStore>(&self,new_validators:BTreeMap<NodeId,AuthorityId>,backend:&Be);
 }
 
 pub struct BadgerStream<Block: BlockT>

@@ -206,7 +206,7 @@ macro_rules! new_full {
       )?;    
       let key_gen = keygen::run_key_gen(
         service.network().local_peer_id(),
-        (2, 4),
+        (2, 5),
         3,
         service.keystore(),
         service.client(),
