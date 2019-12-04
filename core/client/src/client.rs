@@ -925,6 +925,7 @@ impl<B, E, Block, RA> Client<B, E, Block, RA> where
 		// the block is lower than our last finalized block so it must revert
 		// finality, refusing import.
 		if *import_headers.post().number() <= info.finalized_number {
+			info!("");
 			return Err(error::Error::NotInFinalizedChain);
 		}
 
