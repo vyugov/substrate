@@ -251,6 +251,10 @@ impl KeyGenState
        },
        SyncKeyGenMessage::Ack(src,_) =>
       {
+        if !self.expected_parts.is_empty()
+        {
+          return false;
+        }
         if !self.expected_acks.is_empty()
         {
          return self.expected_acks[0].0==*sender && !self.expected_acks[0].1.is_empty() && self.expected_acks[0].1[0]==*src;
@@ -781,11 +785,13 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
       if let Some(parted)=part
       {
         let pid=self.config.my_peer_id.clone().into();
-        let mut acks=state.process_message(&pid,  SyncKeyGenMessage::Part(parted));
+        let mut acks=state.process_message(&pid,  SyncKeyGenMessage::Part(parted.clone()));
+        info!("Generated {:?} ACKS",acks.len());
         if acks.len()>0
         {
           acks.append(&mut state.process_message(&pid, acks[0].clone()));
         }
+        acks.push(SyncKeyGenMessage::Part(parted.clone()));
        ret=acks.into_iter().map(|msg|
       {
         (LocalTarget::AllExcept(BTreeSet::new()), GossipMessage::KeygenData(BadgeredMessage::new(self.cached_origin.as_ref().unwrap().clone(),
@@ -795,7 +801,7 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
      
       
       self.state = BadgerState::KeyGen(state);
-
+       info!("Returning {:?} values",ret.len());
        ret
       
     }
@@ -953,6 +959,11 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
         else
         {
           info!("Keygen data received while out of keygen");
+          if let BadgerState::AwaitingValidators = &mut self.state
+          {
+            // should buffer here?
+            return (SAction::QueueRetry(1), Vec::new());
+          }
           // propagate once?
           return (SAction::PropagateOnce, Vec::new());
         }
