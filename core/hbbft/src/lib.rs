@@ -769,16 +769,21 @@ where
 				// the right kind of consensus log.
 				let badger_logs:Vec<_>=header.digest().logs().iter().map(
 					|x| x.try_to(id)).filter( |x:&Option<ConsensusLog>| x.is_some()).map(|x| x.unwrap()).collect();
+				let  sid;	
+				{
+					sid=auth_ref.read().self_id.clone();
+				}
 				for log in badger_logs
 				{
+					
 					//TODO!
 					match log
 					{
 						ConsensusLog::VoteChangeSet(my_id,changeset) =>
 						{
-						if auth_ref.read().self_id==my_id
+						if sid==my_id
 						 {
-						   info!("Log detected, VOTING");
+						   info!("Log detected, VOTING {:?}",&changeset);
 						   match handler.vote_for_validators(changeset,&*cclient)
 						   {
 							   Ok(_) =>{},
@@ -786,6 +791,7 @@ where
 								   info!("VoteErr: {:?}",e);
 							   }
 						   }
+                           info!("VOTEDED");
 						 }
 						},
 						ConsensusLog::NotifyChangedSet(newset) =>
@@ -864,7 +870,7 @@ where
 	let ping_client = client.clone();
 	// Delay::new(Duration::from_secs(1)).then(|_| {
 	let ping = Interval::new(Duration::from_millis(11500)).for_each(move |_| {
-		
+
 		//put inherents here for now
 		let chain_head = match ping_sel.best_chain() {
 			Ok(x) => x,

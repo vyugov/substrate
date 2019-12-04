@@ -463,6 +463,7 @@ N:Network<B>
   fn vote_for_validators<Be>(&self,auths: Vec<AuthorityId>,backend:&Be)->Result<(),Error>
   where Be: AuxStore, 
   {
+    {
     let  lock=self.val.inner.read();
     let  aset=lock.persistent.authority_set.inner.read();
     let opt=aux_store::AuthoritySet
@@ -478,6 +479,8 @@ N:Network<B>
         warn!("Couldn't save vote to disk {:?}, might not be important",e);
       }
     }
+  }
+
     self.val.do_vote_validators(auths,&self.network)
   }
   fn vote_change_encryption_schedule(&self,e: EncryptionSchedule)->Result<(),Error>
@@ -1595,7 +1598,9 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
     }
     let mut do_flush = false;
     {
+      info!("DO_VOTE_PRELOCK");
       let mut locked = self.inner.write();
+      info!("DO_VOTE_LOCK");
       match locked.vote_for_validators(auths)
       {
         Ok(_) =>{},
@@ -1606,6 +1611,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
         do_flush=node.out_queue.len() > 0;
       }
     }
+    info!("DO_VOTE");
     //send messages out
     if do_flush
     {

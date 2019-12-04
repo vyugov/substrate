@@ -115,7 +115,7 @@ decl_module! {
 	fn remove_account_binding(origin) -> Result
 	{
 		let who=ensure_signed(origin)?;
-		let mut auth_map:BTreeMap<T::AccountId,AuthorityId>=storage::unhashed::take_or_default::<BTreeMap<T::AccountId,AuthorityId>>(HBBFT_AUTHORITIES_MAP_KEY).into();
+		let mut auth_map:BTreeMap<T::AccountId,AuthorityId>=storage::unhashed::get_or_default::<BTreeMap<T::AccountId,AuthorityId>>(HBBFT_AUTHORITIES_MAP_KEY).into();
 		match auth_map.remove(&who)	
 		{
 			Some(_) => {
@@ -146,8 +146,10 @@ decl_module! {
      // print_utf8(b"ERROR: Account or node already bound");
       return Err("Account or node already bound".into());
      }
-     let mut auth_map:BTreeMap<T::AccountId,AuthorityId>=storage::unhashed::take_or_default::<BTreeMap<T::AccountId,AuthorityId>>(HBBFT_AUTHORITIES_MAP_KEY).into();
-     auth_map.insert(binding.data.bound_account,binding.data.self_pub_key);
+	 let mut auth_map:BTreeMap<T::AccountId,AuthorityId>=storage::unhashed::take_or_default::<BTreeMap<T::AccountId,AuthorityId>>(HBBFT_AUTHORITIES_MAP_KEY).into();
+	 #[cfg(feature = "std")]
+	 print!("EXECUTED vote to bind {:?} ",&binding.data.bound_account,);
+	 auth_map.insert(binding.data.bound_account,binding.data.self_pub_key);
      storage::unhashed::put(
       HBBFT_AUTHORITIES_MAP_KEY,
       &auth_map,
@@ -174,15 +176,22 @@ decl_module! {
 	pub fn vote_to_add(origin, new_auth_id: T::AccountId)->Result
 	{
 		let who=ensure_signed(origin)?;
+		#[cfg(feature = "std")]
+		print!("EXECUTE vote to add{:?}",new_auth_id);
 		Self::update_vote_set(&who,vec![new_auth_id],|c_auths,new_ids|
 			{
 				if new_ids.len()>1
 				{
+					///panic!("Invalid ids provided");
+					#[cfg(feature = "std")]
+					print!("ERROR: Invalid ids provided");
 					return Err("Invalid ids provided");
 				}
 				let new_auth=new_ids[0];
 				if c_auths.iter().find(|x| *x==new_auth).is_some()
 				{
+					#[cfg(feature = "std")]
+					print!("Account voted for already validator");
 					return Err("Account voted for already validator".into()); 
 				}
 				c_auths.push(new_auth.clone());
@@ -255,7 +264,7 @@ impl<T: Trait> Module<T>
 	{
 		if let Some(our_authid)= Self::is_account_authority(&who)
 		{
-		   let auth_map:BTreeMap<T::AccountId,AuthorityId>=storage::unhashed::take_or_default::<BTreeMap<T::AccountId,AuthorityId>>(HBBFT_AUTHORITIES_MAP_KEY).into();
+		   let     auth_map:BTreeMap<T::AccountId,AuthorityId>=storage::unhashed::get_or_default::<BTreeMap<T::AccountId,AuthorityId>>(HBBFT_AUTHORITIES_MAP_KEY).into();
 		   let mut new_auths:Vec<&AuthorityId>=Vec::new();
 		   for id in new_auth_ids.iter()
 		   {
@@ -265,6 +274,10 @@ impl<T: Trait> Module<T>
 			}   
 			else
 			{
+				#[cfg(feature = "std")]
+				print!("One of the accounts does not have bound authority {:?}",id);
+				#[cfg(feature = "std")]
+			    print!("No authority! {:?}",&auth_map);
 				return Err("One of the accounts does not have bound authority".into());
 			}
 		   }
@@ -287,12 +300,14 @@ impl<T: Trait> Module<T>
 		   }
 		   else
 		   {
+			#[cfg(feature = "std")]
+			print!("Account not validator");
 			return Err("Account not validator".into());   
 		   }
 	}
    pub fn is_account_authority(acc: &T::AccountId) ->Option<AuthorityId>
    {
-	let  auth_map:BTreeMap<T::AccountId,AuthorityId>=storage::unhashed::take_or_default::<BTreeMap<T::AccountId,AuthorityId>>(HBBFT_AUTHORITIES_MAP_KEY).into();
+	let  auth_map:BTreeMap<T::AccountId,AuthorityId>=storage::unhashed::get_or_default::<BTreeMap<T::AccountId,AuthorityId>>(HBBFT_AUTHORITIES_MAP_KEY).into();
 	if let Some(authid)=auth_map.get(acc)
 	{
 		let auth_list: Vec<AuthorityId> = storage::unhashed::get_or_default::<Vec<AuthorityId>>(HBBFT_AUTHORITIES_KEY).into();
