@@ -201,7 +201,7 @@ impl KeyGenState
     if !self.expected_acks.is_empty()
     {
       let rf=&mut self.expected_acks[0];
-      let mut exp_src=&mut rf.0;
+     // let mut exp_src=&mut rf.0;
       let mut eacks=&mut rf.1;
       while eacks.is_empty()
       {
@@ -211,7 +211,7 @@ impl KeyGenState
          self.is_done=true;
          return;
        }
-        exp_src=&mut self.expected_acks[0].0;
+        //exp_src=&mut self.expected_acks[0].0;
         eacks =&mut self.expected_acks[0].1;
       }
     }
@@ -494,9 +494,9 @@ N:Network<B>
   fn update_validators<Be>(&self,new_validators:BTreeMap<NodeId,AuthorityId>,backend:&Be)
   where Be: AuxStore, 
   {
-    let mut nex_set;
+    let  nex_set;
     let  aux:BadgerAuxCrypto;
-    let mut self_id;
+    let  self_id;
     {
       let mut lock=self.val.inner.write();
       lock.load_origin();
@@ -511,7 +511,7 @@ N:Network<B>
          let secr=node.algo.inner().netinfo().secret_key_share().clone();
          let ikset=node.algo.inner().netinfo().public_key_set();
          
-         let kset=Some(ikset.clone());
+        // let kset=Some(ikset.clone());
           aux=BadgerAuxCrypto{
           secret_share: match secr {
            Some(s) => Some(SerdeSecret(s.clone())),
