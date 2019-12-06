@@ -889,7 +889,7 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
             return (SAction::Discard,Vec::new());
           }
         };*/
-        let num_auth = self.persistent.authority_set.inner.read().current_authorities.len();
+       // let num_auth = self.persistent.authority_set.inner.read().current_authorities.len();
         /*
         Got data from key generation. If we are still waiting for peers, cache it for the moment.
         If we are done with keygen and are in badger state... hmm, this is gossip. Ignore and propagate?
@@ -982,7 +982,8 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
             return (SAction::QueueRetry(0), Vec::new());
           }
         };
-        if !self
+        //we actually need to process observer state updates if we want to use SendQueue
+        /*if !self
           .persistent
           .authority_set
           .inner
@@ -992,7 +993,7 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
         {
           info!("Got Badger message from non-authority, discarding");
           return (SAction::Discard, Vec::new());
-        }
+        }*/
         match self.state
         {
           BadgerState::Badger(ref mut badger) =>
@@ -1117,6 +1118,7 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
     {
       Ok(message) =>
       {
+        info!("GOt message from {:?} :{:?}",_who,&message);
         if !message.verify()
         {
           warn!("Invalid message signature in {:?}", &message);
@@ -1219,7 +1221,7 @@ impl<B: BlockT> BadgerNode<B, QHB>
 }
 
 impl<B: BlockT, D: ConsensusProtocol<NodeId = NodeId>> BadgerNode<B, D> where D::Message: Serialize + DeserializeOwned {}
-
+use std::thread;
 pub type BadgerNodeStepResult<D> = CpStep<D>;
 pub type TransactionSet = Vec<Vec<u8>>; //agnostic?
 
@@ -1407,6 +1409,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
     context_val: &mut Option<&mut dyn ValidatorContext<Block>>,
   )
   {
+    info!("BaDGER!! Enter flush {:?}",thread::current().id());
     // let topic = badger_topic::<Block>();
     let sid: PeerId;
     let pair: AuthorityPair;
@@ -1466,7 +1469,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
           for to_id in node_set.iter()
           {
             debug!("BaDGER!! Id_net {:?}", &to_id);
-
+            info!("Sending message node {:?} to {:?}",&msg,&to_id,);
             if av_list.contains(&to_id.0)
             {
               self.send_message_either(&to_id.0, vdata.clone(), context_net, context_val);
@@ -1498,6 +1501,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
                 { peers.inverse.get(x).expect("All auths should be known") } }
               )
             .collect();
+            info!("Excluding {:?}",&exclude);
           for pid in peers
             .connected_peer_list()
             .iter()
@@ -1506,6 +1510,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
             let tmp = pid.clone();
             if tmp != sid
             {
+              info!("Sending message {:?} to {:?}",&msg,&tmp,);
               self.send_message_either(pid, vdata.clone(), context_net, context_val);
             }
             vallist.retain(|&x| *x != tmp);
@@ -1525,7 +1530,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
         }
       }
     }
-    debug!("BaDGER!! Exit flush");
+    info!("BaDGER!! Exit flush {:?}",thread::current().id());
   }
   /// Create a new gossip-validator.
   pub fn new(keystore: KeyStorePtr, self_peer: PeerId, batch_size: u64, persist: BadgerPersistentData) -> Self
@@ -1691,7 +1696,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
     &self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, data: &[u8],
   ) -> network_gossip::ValidationResult<Block::Hash>
   {
-    info!("Enter validate");
+    info!("Enter validate {:?}",who);
     let topic = badger_topic::<Block>();
     let (actions, mut accumulated_output) = self.inner.write().process_and_replay(who, data);
 
