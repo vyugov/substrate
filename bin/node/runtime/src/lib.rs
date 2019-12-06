@@ -507,6 +507,13 @@ impl system::offchain::CreateTransaction<Runtime, UncheckedExtrinsic> for Runtim
 	}
 }
 
+impl htlc::Trait for Runtime {
+	type Time = Timestamp;
+	type AssetId = u32;
+	type Balance = u128;
+	type Event = Event;
+}
+
 construct_runtime!(
 	pub enum Runtime where
 		Block = Block,
@@ -538,6 +545,7 @@ construct_runtime!(
 		Offences: offences::{Module, Call, Storage, Event},
 		RandomnessCollectiveFlip: randomness_collective_flip::{Module, Call, Storage},
 		Nicks: nicks::{Module, Call, Storage, Event<T>},
+		Htlc: htlc::{Module, Call, Storage, Event<T>},
 	}
 );
 

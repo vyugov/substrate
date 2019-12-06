@@ -1,7 +1,7 @@
 [workspace]
 members = [
-	"bin/node-template",
-	"bin/node-template/runtime",
+	# "bin/node-template",
+	# "bin/node-template/runtime",
 	"bin/node/cli",
 	"bin/node/executor",
 	"bin/node/primitives",
@@ -141,6 +141,10 @@ members = [
 	"utils/frame/rpc/support",
 	"utils/frame/rpc/system",
 	"utils/wasm-builder",
+	"frame/htlc",
+	"frame/mpc",
+	"client/mpc",
+	"primitives/mpc",
 ]
 
 [profile.release]
