@@ -62,6 +62,7 @@ sc-service = { path = "../../../client/service", default-features = false }
 sc-telemetry = { package = "sc-telemetry", path = "../../../client/telemetry" }
 authority-discovery = { package = "sc-authority-discovery", path = "../../../client/authority-discovery"}
 consensus-common = { package = "sp-consensus", path = "../../../primitives/consensus/common" }
+mpc = { package = "sc-mpc", path = "../../../client/mpc" }
 
 # frame dependencies
 indices = { package = "pallet-indices", path = "../../../frame/indices" }

@@ -10,13 +10,13 @@ codec = { package = "parity-scale-codec", version = "1.1.0", default-features = 
 rstd = { package = "sp-std", path = "../../primitives/sr-std", default-features = false }
 runtime-io = { package = "sp-io", path = "../../primitives/sr-io", default-features = false }
 sp-runtime = { path = "../../primitives/sr-primitives", default-features = false }
+primitives = { package = "sp-core", path = "../../primitives/core" }
 support = { package = "frame-support", path = "../support", default-features = false }
 system = { package = "frame-system", path = "../system", default-features = false }
 sp-mpc = { path = "../../primitives/mpc", default-features = false }
 
 
 [dev-dependencies]
-primitives = { package = "sp-core", path = "../../primitives/core" }
 timestamp = { package = "pallet-timestamp", path = "../timestamp" }
 
 [features]

@@ -23,6 +23,7 @@ use std::sync::Arc;
 use babe;
 use client::{self, LongestChain};
 use grandpa::{self, FinalityProofProvider as GrandpaFinalityProofProvider};
+use mpc::run_task;
 use node_executor;
 use node_primitives::Block;
 use node_runtime::{GenesisConfig, RuntimeApi};
@@ -168,6 +169,10 @@ macro_rules! new_full {
 			};
 
 			let client = service.client();
+
+			let mpc = run_task(client.clone(), service.network())?;
+			service.spawn_essential_task(mpc);
+
 			let select_chain = service.select_chain()
 				.ok_or(sc_service::Error::SelectChainRequired)?;
 

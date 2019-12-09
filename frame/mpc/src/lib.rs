@@ -2,8 +2,9 @@
 #![allow(clippy::type_complexity)]
 use codec::{Decode, Encode};
 
+use primitives::offchain::StorageKind;
 use rstd::prelude::*;
-use runtime_io::hashing::sha2_256;
+use runtime_io::offchain::local_storage_get;
 use sp_mpc::{ConsensusLog, MPC_ENGINE_ID};
 use sp_runtime::{
 	generic::DigestItem,
@@ -11,7 +12,7 @@ use sp_runtime::{
 	RuntimeDebug,
 };
 use support::{
-	decl_event, decl_module, decl_storage, dispatch::Result, ensure, traits::Time, Parameter,
+	debug, decl_event, decl_module, decl_storage, dispatch::Result, ensure, traits::Time, Parameter,
 };
 use system::ensure_signed;
 
@@ -20,7 +21,9 @@ pub trait Trait: system::Trait {
 }
 
 decl_storage! {
-	trait Store for Module<T: Trait> as Mpc {}
+	trait Store for Module<T: Trait> as Mpc {
+		Results get(fn result_of): map u64 => Vec<u8>;
+	}
 }
 
 decl_module! {
@@ -30,6 +33,14 @@ decl_module! {
 		fn send_log(origin) {
 			ensure_signed(origin)?;
 			Self::_send_log();
+		}
+
+		fn offchain_worker(_block_number: T::BlockNumber) {
+			debug::RuntimeLogger::init();
+			if let Some(value) = local_storage_get(StorageKind::PERSISTENT, &[1u8]) {
+				<Results>::insert(1, value);
+				debug::warn!("insert ok");
+			}
 		}
 	}
 }

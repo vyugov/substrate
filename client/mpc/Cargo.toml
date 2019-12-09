@@ -5,5 +5,18 @@ authors = ["Parity Technologies <admin@parity.io>"]
 edition = "2018"
 
 [dependencies]
+futures01 = { package = "futures", version = "0.1" }
+futures = { version = "0.3.1", features = ["compat"]}
+log = "0.4"
+
+
 primitives = { package = "sp-core",  path = "../../primitives/core" }
+runtime-io = { package = "sp-io",  path = "../../primitives/sr-io" }
+sp-runtime = { package = "sp-runtime", path = "../../primitives/sr-primitives"}
+sp-blockchain = { path = "../../primitives/blockchain" }
+network = { package = "sc-network", path = "../network" }
 app-crypto = { package = "sc-application-crypto",  path = "../../primitives/application-crypto"}
+sp-mpc = { package = "sp-mpc", path = "../../primitives/mpc" }
+
+client-api = { package = "sc-client-api", path = "../api" }
+client = { package = "sc-client", path = "../" }
