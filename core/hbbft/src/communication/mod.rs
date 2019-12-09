@@ -1469,6 +1469,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
     let pair: AuthorityPair;
     let mut drain: Vec<_> = Vec::new();
     {
+      info!("Lock inner");
       let mut locked = self.inner.write();
       sid = locked.config.my_peer_id.clone();
       pair = locked.cached_origin.clone().unwrap();
@@ -1486,12 +1487,17 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
           })
           .collect();
       }
+      info!("UnLock inner");
+      
     }
     drain.append(additional);
     {
       let mut ldict = self.pending_messages.write();
+      let plist;
+      {
       let inner = self.inner.read();
-      let plist = inner.peers.connected_peer_list();
+       plist = inner.peers.connected_peer_list();
+      }
       for (k, v) in ldict.iter_mut()
       {
         if v.len() == 0
@@ -1502,7 +1508,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
         {
           for msg in v.drain(..)
           {
-            debug!("BaDGER!! RESending to {:?}", &k);
+            info!("BaDGER!! RESending to {:?}", &k);
             self.send_message_either(&k.0, msg, context_net, context_val);
           }
         }
@@ -1542,12 +1548,13 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
         LocalTarget::AllExcept(exclude) =>
         {
           debug!("BaDGER!! AllExcept  {}", exclude.len());
-          let locked = self.inner.write();
-          info!("Allex lock success");
           let clist;
           let mut vallist: Vec<_>;
 
           {
+            let locked = self.inner.write();
+          info!("Allex lock success");
+          
           let peers = &locked.peers;
           vallist = locked
             .persistent
@@ -1559,16 +1566,15 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
             .map(|x| {
               if *x == locked.config.my_auth_id
               {
-                &locked.config.my_peer_id
+                locked.config.my_peer_id.clone()
               }
               else
               {
-                peers.inverse.get(x).expect("All auths should be known")
+                peers.inverse.get(x).expect("All auths should be known").clone()
               }
             })
             .collect();
-            clist=peers
-            .connected_peer_list();
+            clist=peers.connected_peer_list();
           }
           info!("Excluding {:?}", &exclude);
           for pid in clist
@@ -1582,7 +1588,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
               self.send_message_either(pid, vdata.clone(), context_net, context_val);
               info!("Sent");
             }
-            vallist.retain(|&x| *x != tmp);
+            vallist.retain(|x| *x != tmp);
           }
 
           if vallist.len() > 0
