@@ -3,7 +3,7 @@
 use codec::{Decode, Encode};
 
 use rstd::prelude::*;
-use runtime_io::hashing::sha2_256;
+use runtime_io::storage::get;
 use sp_mpc::{ConsensusLog, MPC_ENGINE_ID};
 use sp_runtime::{
 	generic::DigestItem,
