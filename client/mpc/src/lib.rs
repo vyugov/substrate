@@ -23,7 +23,7 @@ use sp_mpc::{ConsensusLog, MPC_ENGINE_ID};
 
 pub fn run_task<B, E, Block, RA>(
 	client: Arc<Client<B, E, Block, RA>>,
-	backend: Arc<B>,
+	// backend: Arc<B>,
 ) -> ClientResult<impl futures01::Future<Item = (), Error = ()>>
 //ClientResult<impl Future<Output = ()> + Send + 'static>
 where
