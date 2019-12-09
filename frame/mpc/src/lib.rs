@@ -4,7 +4,9 @@ use codec::{Decode, Encode};
 
 use rstd::prelude::*;
 use runtime_io::hashing::sha2_256;
+use sp_mpc::{ConsensusLog, MPC_ENGINE_ID};
 use sp_runtime::{
+	generic::DigestItem,
 	traits::{Member, One, SimpleArithmetic, StaticLookup, Zero},
 	RuntimeDebug,
 };
@@ -25,6 +27,10 @@ decl_module! {
 	pub struct Module<T: Trait> for enum Call where origin: T::Origin {
 		fn deposit_event() = default;
 
+		fn send_log(origin) {
+			ensure_signed(origin)?;
+			Self::_send_log();
+		}
 	}
 }
 
@@ -36,3 +42,14 @@ decl_event!(
 		SomethingStored(u32, AccountId),
 	}
 );
+
+impl<T: Trait> Module<T> {
+	fn _send_log() {
+		Self::_deposit_log(ConsensusLog::RequestForKeygen(1, [0u8].to_vec()));
+	}
+
+	fn _deposit_log(log: ConsensusLog) {
+		let log: DigestItem<T::Hash> = DigestItem::Consensus(MPC_ENGINE_ID, log.encode());
+		<system::Module<T>>::deposit_log(log.into());
+	}
+}
