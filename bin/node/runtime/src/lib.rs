@@ -514,6 +514,10 @@ impl htlc::Trait for Runtime {
 	type Event = Event;
 }
 
+impl mpc::Trait for Runtime {
+	type Event = Event;
+}
+
 construct_runtime!(
 	pub enum Runtime where
 		Block = Block,
@@ -546,6 +550,7 @@ construct_runtime!(
 		RandomnessCollectiveFlip: randomness_collective_flip::{Module, Call, Storage},
 		Nicks: nicks::{Module, Call, Storage, Event<T>},
 		Htlc: htlc::{Module, Call, Storage, Event<T>},
+		Mpc: mpc::{Module, Call, Storage, Event<T>},
 	}
 );
 

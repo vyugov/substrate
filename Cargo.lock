@@ -3158,6 +3158,7 @@ dependencies = [
  "pallet-im-online 0.1.0",
  "pallet-indices 2.0.0",
  "pallet-membership 2.0.0",
+ "pallet-mpc 2.0.0",
  "pallet-nicks 2.0.0",
  "pallet-offences 1.0.0",
  "pallet-randomness-collective-flip 2.0.0",
@@ -5330,6 +5331,7 @@ dependencies = [
  "sp-core 2.0.0",
  "sp-io 2.0.0",
  "sp-mpc 2.0.0",
+ "sp-offchain 2.0.0",
  "sp-runtime 2.0.0",
 ]
 

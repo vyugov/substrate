@@ -1,10 +1,11 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![allow(clippy::type_complexity)]
+
 use codec::{Decode, Encode};
 
-use primitives::offchain::StorageKind;
+// use primitives::offchain::StorageKind;
 use rstd::prelude::*;
-use runtime_io::offchain::local_storage_get;
+use runtime_io::storage::{get as local_storage_get};
 use sp_mpc::{ConsensusLog, MPC_ENGINE_ID};
 use sp_runtime::{
 	generic::DigestItem,
@@ -37,9 +38,11 @@ decl_module! {
 
 		fn offchain_worker(_block_number: T::BlockNumber) {
 			debug::RuntimeLogger::init();
-			if let Some(value) = local_storage_get(StorageKind::PERSISTENT, &[1u8]) {
+			if let Some(value) = local_storage_get(&[1u8]) {
 				<Results>::insert(1, value);
 				debug::warn!("insert ok");
+			} else {
+				debug::warn!("nothing");
 			}
 		}
 	}

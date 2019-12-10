@@ -170,7 +170,7 @@ macro_rules! new_full {
 
 			let client = service.client();
 
-			let mpc = run_task(client.clone())?;
+			let mpc = run_task(service.client(), service.backend())?;
 			service.spawn_essential_task(mpc);
 
 			let select_chain = service.select_chain()

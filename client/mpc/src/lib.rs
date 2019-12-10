@@ -11,11 +11,12 @@ use log::{debug, error, info};
 
 use client::Client;
 use client_api::{backend::Backend, BlockchainEvents, CallExecutor, ExecutionStrategy};
-use runtime_io::offchain::local_storage_set;
+// use runtime_io::offchain::local_storage_set;
 
-use primitives::offchain::StorageKind;
+use primitives::offchain::{StorageKind, OffchainStorage};
 use primitives::{Blake2Hasher, H256};
 use sp_blockchain::{HeaderBackend, Result as ClientResult};
+use sp_offchain::STORAGE_PREFIX;
 use sp_runtime::generic::OpaqueDigestItemId;
 use sp_runtime::traits::{Block as BlockT, Header};
 
@@ -23,7 +24,7 @@ use sp_mpc::{ConsensusLog, MPC_ENGINE_ID};
 
 pub fn run_task<B, E, Block, RA>(
 	client: Arc<Client<B, E, Block, RA>>,
-	// backend: Arc<B>,
+	backend: Arc<B>,
 ) -> ClientResult<impl futures01::Future<Item = (), Error = ()>>
 //ClientResult<impl Future<Output = ()> + Send + 'static>
 where
@@ -57,8 +58,12 @@ where
 
 			if let Some((id, data)) = args {
 				// LOCAL?
-				local_storage_set(StorageKind::PERSISTENT, &[1u8], &data);
-				info!("set storage ok");
+				// let backend = client.backend();
+				if let Some(mut offchain_storage) = backend.offchain_storage() {
+					offchain_storage.set(STORAGE_PREFIX, &[1u8], &data);
+					info!("set storage ok");
+ 				}
+				// local_storage_set(StorageKind::PERSISTENT, &[1u8], &data);
 			}
 			futures::future::ready(())
 		});

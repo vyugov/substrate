@@ -2,18 +2,18 @@
 
 use codec::{Codec, Decode, Encode};
 use rstd::vec::Vec;
-use sp_runtime::ConsensusEngineId;
+use sp_runtime::{ConsensusEngineId, RuntimeDebug};
 
 pub const MPC_ENGINE_ID: ConsensusEngineId = *b"MPCE";
 
-#[derive(Decode, Encode)]
+#[derive(Decode, Encode, RuntimeDebug)]
 pub enum ConsensusLog {
 	#[codec(index = "1")]
 	RequestForKeygen(u64, Vec<u8>),
 }
 
-sp_api::decl_runtime_apis! {
-	pub trait MpcApi {
-		fn test();
-	}
-}
+// sp_api::decl_runtime_apis! {
+// 	pub trait MpcApi {
+// 		fn test();
+// 	}
+// }

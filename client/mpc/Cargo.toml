@@ -12,6 +12,7 @@ log = "0.4"
 primitives = { package = "sp-core",  path = "../../primitives/core" }
 runtime-io = { package = "sp-io",  path = "../../primitives/sr-io" }
 sp-runtime = { package = "sp-runtime", path = "../../primitives/runtime"}
+sp-offchain = { package = "sp-offchain", path = "../../primitives/offchain"}
 sp-blockchain = { path = "../../primitives/blockchain" }
 network = { package = "sc-network", path = "../network" }
 app-crypto = { package = "sc-application-crypto",  path = "../../primitives/application-crypto"}
