@@ -150,6 +150,7 @@ macro_rules! new_full {
 		let (dht_event_tx, dht_event_rx) =
 			mpsc::channel::<DhtEvent>(10_000);
 
+		let backend = builder.backend().clone();
 		let service = builder.with_network_protocol(|_| Ok(crate::service::NodeProtocol::new()))?
 			.with_finality_proof_provider(|client, backend|
 				Ok(Arc::new(grandpa::FinalityProofProvider::new(backend, client)) as _)
@@ -170,7 +171,7 @@ macro_rules! new_full {
 
 			let client = service.client();
 
-			let mpc = run_task(service.client(), service.backend())?;
+			let mpc = run_task(service.client(), backend)?;
 			service.spawn_essential_task(mpc);
 
 			let select_chain = service.select_chain()
