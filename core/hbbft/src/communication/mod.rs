@@ -1,7 +1,7 @@
 use badger::dynamic_honey_badger::DynamicHoneyBadger;
 use badger::queueing_honey_badger::QueueingHoneyBadger;
 use badger::sender_queue::{Message as BMessage, SenderQueue};
-use badger::sync_key_gen::{Ack, AckFault, AckOutcome, Part, PartOutcome, PubKeyMap, SyncKeyGen};
+use badger::sync_key_gen::{Ack, AckOutcome, Part, PartOutcome, PubKeyMap, SyncKeyGen};//AckFault
 use keystore::KeyStorePtr;
 //use runtime_primitives::app_crypto::RuntimeAppPublic;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -361,9 +361,9 @@ impl KeyGenState
     }
     let mut spl = sender.clone();
     let mut nmsg = msg;
-    let mut unproc = true;
+    //let mut unproc = true;
 
-    while unproc
+loop
     {
       match nmsg
       {
@@ -381,11 +381,11 @@ impl KeyGenState
           let (aspl, anmsg) = self.buffered_messages.remove(i);
           spl = aspl;
           nmsg = anmsg;
-          unproc = true;
+          //unproc = true;
         }
         None =>
         {
-          unproc = false;
+         // unproc = false;
           break;
         }
       }

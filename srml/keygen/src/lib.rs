@@ -227,7 +227,15 @@ decl_module! {
     fn offchain_worker(_now: T::BlockNumber) {
        print("Offchain OFFCHAIN");
           let call = Call::set_test();
-      T::SubmitTransaction::submit_unsigned(call).map_err(|_| OffchainErr::SubmitTransaction);
+      match T::SubmitTransaction::submit_unsigned(call).map_err(|_| OffchainErr::SubmitTransaction) 
+      {
+        Ok(_)=>{},
+        Err(e)=>{
+          #[cfg(feature = "std")]
+          print!("Send transaction error: {:?}\n",e);
+        }
+      }
+    
       // Only send messages if we are a potential validator.
       if runtime_io::offchain::is_validator() {
 //        let mut requests = <ReqIds>::get();

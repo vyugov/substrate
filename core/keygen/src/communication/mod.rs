@@ -58,9 +58,9 @@ where
 	}
 }
 
-pub(crate) fn hash_topic<B: BlockT>(hash: u64) -> B::Hash {
-	<<B::Header as HeaderT>::Hashing as HashT>::hash(&hash.to_be_bytes())
-}
+//pub(crate) fn hash_topic<B: BlockT>(hash: u64) -> B::Hash {
+//	<<B::Header as HeaderT>::Hashing as HashT>::hash(&hash.to_be_bytes())
+//}
 
 pub(crate) fn string_topic<B: BlockT>(input: &str) -> B::Hash {
 	<<B::Header as HeaderT>::Hashing as HashT>::hash(input.as_bytes())

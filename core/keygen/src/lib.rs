@@ -7,7 +7,7 @@ use std::{
   marker::Unpin,
   pin::Pin,
   sync::Arc,
-  time::{Duration, Instant},
+ // time::{Duration, Instant},
 };
 
 use mpe_primitives::ConsensusLog;
@@ -56,7 +56,7 @@ mod signer;
 
 use communication::{
   gossip::{GossipMessage, MessageWithSender},
-  message::{ConfirmPeersMessage, KeyGenMessage, PeerIndex, SignMessage},
+  message::{ConfirmPeersMessage, KeyGenMessage, PeerIndex, },//SignMessage
   Network, NetworkBridge,
 };
 use periodic_stream::PeriodicStream;
@@ -187,11 +187,14 @@ use mpe_primitives::{get_data_prefix,get_key_prefix,get_complete_list_prefix,Req
 impl<B, E, Block: BlockT, N: Network<Block>, RA,Storage> Environment<B, E, Block, N, RA,Storage>
 where Storage:OffchainStorage
 {
+  #[allow(dead_code)]
 	pub fn set_request_data(&self,request_id:RequestId,request_data:&[u8])
 	{
 		let  key:Vec<u8>=get_data_prefix(request_id);
 		self.local_storage_set(StorageKind::PERSISTENT, &key, request_data)
-	}
+  }
+
+  #[allow(dead_code)]
     pub fn set_request_complete(&self,request_id:RequestId) ->Result<(),&'static str>
 	{
 		let  key:Vec<u8>=get_complete_list_prefix();
@@ -209,7 +212,9 @@ where Storage:OffchainStorage
 		reqs.dedup();
         self.local_storage_set(StorageKind::PERSISTENT,&key,&reqs.encode());
 		Ok(())
-	}
+  }
+
+  #[allow(dead_code)]
 	pub fn set_request_public_key<PK>(&self,request_id:RequestId,public_key:&PK) ->Result<(),&'static str>
 	where PK:  Public
 	{
@@ -223,7 +228,9 @@ where Storage:OffchainStorage
 
 		Ok(())
 
-	}
+  }
+
+  #[allow(dead_code)]
 	pub fn set_request_failure(&self,request_id:RequestId) ->Result<(),&'static str>
 	{
 		let  key:Vec<u8>=get_key_prefix(request_id);
@@ -239,13 +246,15 @@ where Storage:OffchainStorage
 		Ok(())
 
 	}
-
+ #[allow(dead_code)]
 	pub fn local_storage_set(&self, kind: StorageKind, key: &[u8], value: &[u8]) {
 		match kind {
 			StorageKind::PERSISTENT => self.offchain.write().set(STORAGE_PREFIX, key, value),
 			StorageKind::LOCAL => {},
 		}
-	}
+  }
+  
+  #[allow(dead_code)]
 	pub fn local_storage_get(&self,  key: &[u8]) -> Option<Vec<u8>>
 	{
 			self.offchain.read().get(STORAGE_PREFIX, key)

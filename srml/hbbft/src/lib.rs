@@ -138,12 +138,18 @@ decl_module! {
      if !signature_valid {return Err("Invalid signature on binder".into());}
      if who != binding.data.bound_account
      {
-    //print_utf8(b"ERROR: Invalid account trying to use binder");
+	//print_utf8(b"ERROR: Invalid account trying to use binder");
+	#[cfg(feature = "std")]
+	 print!("EA: invalid account {:?} ",&binding.data.bound_account,);
+	
     return Err("Invalid account trying to use binder".into());
      }
      if Self::check_either_present(&who,&binding.data.self_pub_key)
      {
-     // print_utf8(b"ERROR: Account or node already bound");
+	 // print_utf8(b"ERROR: Account or node already bound");
+	 #[cfg(feature = "std")]
+	 print!("EA: already bound {:?} ",&binding.data.bound_account,);
+	
       return Err("Account or node already bound".into());
      }
 	 let mut auth_map:BTreeMap<T::AccountId,AuthorityId>=storage::unhashed::take_or_default::<BTreeMap<T::AccountId,AuthorityId>>(HBBFT_AUTHORITIES_MAP_KEY).into();
@@ -204,20 +210,32 @@ decl_module! {
 		pub fn vote_to_remove(origin, new_auth_id: T::AccountId)->Result
 		{
 			let who=ensure_signed(origin)?;
+			#[cfg(feature = "std")]
+			print!("EA: vote_to_remove");
 			Self::update_vote_set(&who,vec![new_auth_id],|c_auths,new_ids|
 				{
+					#[cfg(feature = "std")]
+					print!("EA: in_update");
 					if new_ids.len()>1
 					{
+						#[cfg(feature = "std")]
+						print!("EA: Not in val set {:?}",&c_auths);
 						return Err("Invalid ids provided");
 					}
 					let new_auth=new_ids[0];
 					let pos = match c_auths.iter().position(|x| *x == *new_auth)
 					{
 						Some(ps) =>ps,
-						None => { return Err("Account voted against already not in validator set".into()) } 
+						None => {
+							#[cfg(feature = "std")]
+							print!("EA: Not in val set {:?}",&c_auths);
+							return Err("Account voted against already not in validator set".into()) } 
 					};
 					if c_auths.len()<=4
 					{
+						#[cfg(feature = "std")]
+						print!("EA: Val set {:?} too small!",&c_auths);
+							
 						return Err("Cannot reduce validator set further".into());
 					}
 					c_auths.remove(pos);	
@@ -275,13 +293,15 @@ impl<T: Trait> Module<T>
 			else
 			{
 				#[cfg(feature = "std")]
-				print!("One of the accounts does not have bound authority {:?}",id);
+				print!("EA: One of the accounts does not have bound authority {:?}",id);
 				#[cfg(feature = "std")]
-			    print!("No authority! {:?}",&auth_map);
+			    print!("EA: No authority! {:?}",&auth_map);
 				return Err("One of the accounts does not have bound authority".into());
 			}
 		   }
 			   let mut c_auths=Self::badger_authorities();
+			   #[cfg(feature = "std")]
+			   print!("EA:  Current athorities: {:?}\n ",&c_auths);
 			   how(&mut c_auths,new_auths)?;
 			   let mut cmap:Vec<T::AccountId>=Vec::new();
 			   for auth in c_auths.iter()
@@ -290,7 +310,12 @@ impl<T: Trait> Module<T>
 				   {
 					   Some(dat) =>dat.0.clone(),
    
-					   None => return Err("Internal error: not all validators mapped".into()),
+					   None => 
+					   {
+						#[cfg(feature = "std")]
+						print!("EA: Not all validators mapped: {:?} {:?}\n",&auth,&auth_map);
+						return Err("Internal error: not all validators mapped".into())
+					    },
 				   };
 					 cmap.push(acc);
 			   }
@@ -438,13 +463,15 @@ impl<T: Trait> OnSessionEnding<T::AccountId> for Module<T>
 		{
 			BadgerPreRuntime::ValidatorsChanged(valids) => 
 			     {
+					#[cfg(feature = "std")]
+					print!("EA: valichange: {:?}",&valids);
 					 let mut ret:Vec<T::AccountId>=Vec::new();
 				 for authid in valids.into_iter()
 				 {
 				   let mp=auth_map.iter().find(|(_,value)| **value==authid);
 				   if let Some(accid)=mp
 				   {
-                  ret.push(accid.0.clone());
+				  ret.push(accid.0.clone());
 				   }
 				   else
                   {
@@ -476,29 +503,40 @@ where
     Self::initialize_authorities(&authorities, &auth_map);
   }
 
-  fn on_new_session<'a, I: 'a>(changed: bool, validators: I, _queued_validators: I)
+  fn on_new_session<'a, I: 'a>(changed: bool, _validators: I, queued_validators: I)
   where
     I: Iterator<Item = (&'a T::AccountId, AuthorityId)>,
   {
+	let auth_map: BTreeMap<T::AccountId, AuthorityId> =
+	storage::unhashed::get_or_default::<BTreeMap<T::AccountId, AuthorityId>>(HBBFT_AUTHORITIES_MAP_KEY).into();
+
+	#[cfg(feature = "std")]
+	print!("EA: New session : {:?}",&changed);
     // Always issue a change if `session` says that the validators have changed.
     // Even if their session keys are the same as before, the underyling economic
     // identities have changed.
-    let _current_set_id = if changed
-    {
-	  let next_authorities = validators.map(|(_, k)| k).collect::<Vec<_>>();
+   //always update, substrate is a bit silly about sessions
+	  let next_authorities = queued_validators.map(|(v, def)| 
+	{
+match auth_map.get(v)
+{
+	Some(k)=>k.clone(),
+	None => def
+
+}
+	}).collect::<Vec<_>>();
+
+	  #[cfg(feature = "std")]
+	  print!("EA: Next authorities: {:?}",&next_authorities);
+
+
 	  storage::unhashed::put(HBBFT_AUTHORITIES_KEY, &next_authorities);//update
       Self::deposit_log(ConsensusLog::NotifyChangedSet(next_authorities));
       CurrentSetId::mutate(|s| {
         *s += 1;
         *s
-      })
-    }
-    else
-    {
-      // nothing's changed, neither economic conditions nor session keys. update the pointer
-      // of the current set.
-      Self::current_set_id()
-    };
+      });
+
 
     // if we didn't issue a change, we update the mapping to note that the current
     // set corresponds to the latest equivalent session (i.e. now).

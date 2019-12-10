@@ -187,11 +187,11 @@ impl<B, E, Block: BlockT<Hash=H256>, RA, SC> BlockImport<Block>
 
 	fn import_block(
 		&mut self,
-		mut block: BlockImportParams<Block>,
+		 block: BlockImportParams<Block>,
 		new_cache: HashMap<well_known_cache_keys::Id, Vec<u8>>,
 	) -> Result<ImportResult, Self::Error> {
 		let hash = block.post_header().hash();
-		let number = block.header.number().clone();
+		//let number = block.header.number().clone();
 
 		// early exit if block already in chain, probably a duplicate sent from another node
 		match self.inner.status(BlockId::Hash(hash)) {
@@ -606,7 +606,7 @@ where
 	SC: SelectChain<Block>,
 {
 	let chain_info = client.info();
-	let genesis_hash = chain_info.chain.genesis_hash;
+	let _genesis_hash = chain_info.chain.genesis_hash;
 
 	let persistent_data = aux_store::loads_auth_set(
 		&*client,

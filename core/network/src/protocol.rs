@@ -17,7 +17,6 @@
 use crate::{DiscoveryNetBehaviour, config::ProtocolId};
 use crate::legacy_proto::{LegacyProto, LegacyProtoOut};
 use bytes::BytesMut;
-use log::info;
 use futures::prelude::*;
 use futures03::{StreamExt as _, TryStreamExt as _};
 use libp2p::{Multiaddr, PeerId};
@@ -1778,7 +1777,7 @@ Protocol<B, S, H> {
 		while let Ok(Async::Ready(_)) = self.tick_timeout.poll() {
 			self.tick();
 		}
-		if(self.config.propagate_extr)
+		if self.config.propagate_extr 
 		{
 		while let Ok(Async::Ready(_)) = self.propagate_timeout.poll() {
 			self.propagate_extrinsics();
