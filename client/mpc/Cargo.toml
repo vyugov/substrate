@@ -9,10 +9,9 @@ futures01 = { package = "futures", version = "0.1" }
 futures = { version = "0.3.1", features = ["compat"]}
 log = "0.4"
 
-
 primitives = { package = "sp-core",  path = "../../primitives/core" }
 runtime-io = { package = "sp-io",  path = "../../primitives/sr-io" }
-sp-runtime = { package = "sp-runtime", path = "../../primitives/sr-primitives"}
+sp-runtime = { package = "sp-runtime", path = "../../primitives/runtime"}
 sp-blockchain = { path = "../../primitives/blockchain" }
 network = { package = "sc-network", path = "../network" }
 app-crypto = { package = "sc-application-crypto",  path = "../../primitives/application-crypto"}
