@@ -3,9 +3,9 @@
 
 use codec::{Decode, Encode};
 
-// use primitives::offchain::StorageKind;
+use primitives::offchain::StorageKind;
 use rstd::prelude::*;
-use runtime_io::storage::{get as local_storage_get};
+use runtime_io::offchain::local_storage_get;
 use sp_mpc::{ConsensusLog, MPC_ENGINE_ID};
 use sp_runtime::{
 	generic::DigestItem,
@@ -38,7 +38,8 @@ decl_module! {
 
 		fn offchain_worker(_block_number: T::BlockNumber) {
 			debug::RuntimeLogger::init();
-			if let Some(value) = local_storage_get(&[1u8]) {
+			if let Some(value) = local_storage_get(StorageKind::PERSISTENT, &[1u8]) {
+				// LOCAL?
 				<Results>::insert(1, value);
 				debug::warn!("insert ok");
 			} else {
@@ -53,7 +54,7 @@ decl_event!(
 	where
 		AccountId = <T as system::Trait>::AccountId,
 	{
-		SomethingStored(u32, AccountId),
+		SmethingStored(u32, AccountId),
 	}
 );
 

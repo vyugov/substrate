@@ -57,8 +57,6 @@ where
 				});
 
 			if let Some((id, data)) = args {
-				// LOCAL?
-				// let backend = client.backend();
 				if let Some(mut offchain_storage) = backend.offchain_storage() {
 					offchain_storage.set(STORAGE_PREFIX, &[1u8], &data);
 					info!("set storage ok");
