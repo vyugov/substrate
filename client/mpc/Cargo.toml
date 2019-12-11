@@ -10,12 +10,12 @@ futures = { version = "0.3.1", features = ["compat"]}
 log = "0.4"
 
 primitives = { package = "sp-core",  path = "../../primitives/core" }
-runtime-io = { package = "sp-io",  path = "../../primitives/sr-io" }
+runtime-io = { package = "sp-io",  path = "../../primitives/io" }
 sp-runtime = { package = "sp-runtime", path = "../../primitives/runtime"}
 sp-offchain = { package = "sp-offchain", path = "../../primitives/offchain"}
 sp-blockchain = { path = "../../primitives/blockchain" }
 network = { package = "sc-network", path = "../network" }
-app-crypto = { package = "sc-application-crypto",  path = "../../primitives/application-crypto"}
+app-crypto = { package = "sp-application-crypto",  path = "../../primitives/application-crypto"}
 sp-mpc = { package = "sp-mpc", path = "../../primitives/mpc" }
 
 client-api = { package = "sc-client-api", path = "../api" }
