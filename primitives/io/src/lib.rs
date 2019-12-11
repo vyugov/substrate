@@ -750,7 +750,7 @@ pub trait Sandbox {
 #[cfg(not(feature = "std"))]
 struct WasmAllocator;
 
-#[cfg(all(not(feature = "disable_global_allocator"), not(feature = "std")))]
+#[cfg(all(not(feature = "disable_allocator"), not(feature = "std")))]
 #[global_allocator]
 static ALLOCATOR: WasmAllocator = WasmAllocator;
 
@@ -770,6 +770,7 @@ mod allocator_impl {
 	}
 }
 
+/// A default panic handler for WASM environment.
 #[cfg(all(not(feature = "disable_panic_handler"), not(feature = "std")))]
 #[panic_handler]
 #[no_mangle]
@@ -781,9 +782,10 @@ pub fn panic(info: &core::panic::PanicInfo) -> ! {
 	}
 }
 
+/// A default OOM handler for WASM environment.
 #[cfg(all(not(feature = "disable_oom"), not(feature = "std")))]
 #[alloc_error_handler]
-pub extern fn oom(_: core::alloc::Layout) -> ! {
+pub fn oom(_: core::alloc::Layout) -> ! {
 	unsafe {
 		logging::log(LogLevel::Error, "runtime", b"Runtime memory exhausted. Aborting");
 		core::intrinsics::abort();
