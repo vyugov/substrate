@@ -65,19 +65,27 @@ decl_module! {
 			ensure_signed(origin)?;
 			// ensure!(!<Requests>::exists(id), "req id exists");
 			// ensure!(!<Results>::exists(id), "req id exists");
+			<ReqIds>::mutate(|ids| {
+				ids.swap_remove(0);
+			});
+			<Requests>::remove(id);
 			<Results>::insert(id, data);
-			debug::warn!("save sig ok");
+			debug::warn!("save sig");
 			Ok(())
 		}
 
 		fn offchain_worker(_now: T::BlockNumber) {
 			debug::RuntimeLogger::init();
-			if let Some(value) = local_storage_get(StorageKind::PERSISTENT, &[1u8]) {
-				// LOCAL?
-				Self::submit_result(1, value);
-				debug::warn!("insert ok");
-			} else {
-				debug::warn!("nothing");
+			let req_ids = ReqIds::get();
+			for id in req_ids {
+				let key = id.to_le_bytes();
+				if let Some(value) = local_storage_get(StorageKind::PERSISTENT, &key) {
+					// StorageKind::LOCAL?
+					Self::submit_result(id, value);
+					debug::warn!("insert ok");
+				} else {
+					debug::warn!("nothing");
+				}
 			}
 		}
 
