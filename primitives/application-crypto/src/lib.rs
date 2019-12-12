@@ -33,7 +33,7 @@ pub use codec;
 #[cfg(feature = "std")]
 pub use serde;
 #[doc(hidden)]
-pub use rstd::{ops::Deref, vec::Vec};
+pub use sp_std::{ops::Deref, vec::Vec};
 
 pub mod ed25519;
 pub mod sr25519;
@@ -46,7 +46,7 @@ pub use traits::*;
 /// Application-specific types whose identifier is `$key_type`.
 ///
 /// ```rust
-///# use sc_application_crypto::{app_crypto, wrap, ed25519, KeyTypeId};
+///# use sp_application_crypto::{app_crypto, wrap, ed25519, KeyTypeId};
 /// // Declare a new set of crypto types using Ed25519 logic that identifies as `KeyTypeId`
 /// // of value `b"fuba"`.
 /// app_crypto!(ed25519, KeyTypeId(*b"_uba"));
@@ -67,7 +67,7 @@ macro_rules! app_crypto {
 /// Application-specific types whose identifier is `$key_type`.
 ///
 /// ```rust
-///# use sc_application_crypto::{app_crypto, wrap, ed25519, KeyTypeId};
+///# use sp_application_crypto::{app_crypto, wrap, ed25519, KeyTypeId};
 /// // Declare a new set of crypto types using Ed25519 logic that identifies as `KeyTypeId`
 /// // of value `b"fuba"`.
 /// app_crypto!(ed25519, KeyTypeId(*b"_uba"));
@@ -391,7 +391,7 @@ macro_rules! app_crypto_signature_common {
 /// Implement bidirectional `From` and on-way `AsRef`/`AsMut` for two types, `$inner` and `$outer`.
 ///
 /// ```rust
-/// sc_application_crypto::wrap! {
+/// sp_application_crypto::wrap! {
 ///     pub struct Wrapper(u32);
 /// }
 /// ```

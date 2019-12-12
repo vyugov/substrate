@@ -246,7 +246,7 @@ macro_rules! wasm_export_functions {
 				&[0u8; 0]
 			} else {
 				unsafe {
-					$crate::rstd::slice::from_raw_parts(input_data, input_len)
+					$crate::sp_std::slice::from_raw_parts(input_data, input_len)
 				}
 			};
 
@@ -274,7 +274,7 @@ macro_rules! wasm_export_functions {
 				&[0u8; 0]
 			} else {
 				unsafe {
-					$crate::rstd::slice::from_raw_parts(input_data, input_len)
+					$crate::sp_std::slice::from_raw_parts(input_data, input_len)
 				}
 			};
 

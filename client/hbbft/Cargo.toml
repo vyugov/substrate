@@ -23,10 +23,10 @@ threshold_crypto = {  git = "https://github.com/poanetwork/threshold_crypto", fe
 parity-codec = { package = "parity-scale-codec", version = "1.0.6", features = ["derive"] }
 runtime_primitives = { package = "sp-runtime", path = "../../primitives/runtime" }
 sp-blockchain = { package = "sp-blockchain", path = "../../primitives/blockchain" }
-sp-api = { package = "sp-api", path = "../../primitives/sr-api" }
-txp = { package = "sp-transaction-pool-api", path = "../../primitives/transaction-pool" }
+sp-api = { package = "sp-api", path = "../../primitives/api" }
+txp = { package = "sp-transaction-pool", path = "../../primitives/transaction-pool" }
 
-block_primitives = { package = "sp-block-builder", path = "../../primitives/block-builder/runtime-api" }
+block_primitives = { package = "sp-block-builder", path = "../../primitives/block-builder" }
 
 consensus_common = { package = "sp-consensus", path = "../../primitives/consensus/common/" }
 substrate-primitives = {  package = "sp-core",path = "../../primitives/core" }
@@ -53,14 +53,14 @@ sp-timestamp = {  package = "sp-timestamp",path = "../../primitives/timestamp" }
 serde_bytes = "0.11"
 derive_more = "0.15"
 state_machine = { package = "sp-state-machine", path = "../../primitives/state-machine" }
-app-crypto = { package = "sc-application-crypto", path = "../../primitives/application-crypto" }
+app-crypto = { package = "sp-application-crypto", path = "../../primitives/application-crypto" }
 hex-literal = { version = "0.2.1" }
 sc-api={ package = "sc-client-api", path = "../api" }
 
 [dev-dependencies]
 network = { package = "sc-network", path = "../network", features = ["test-helpers"] }
 keyring = { package = "sp-keyring", path = "../../primitives/keyring" }
-test-client = { package = "substrate-test-runtime-client", path = "../../test/utils/runtime/client"}
+test-client = { package = "substrate-test-runtime-client", path = "../../test-utils/runtime/client"}
 
 env_logger = "0.6"
 tokio = "0.1.17"

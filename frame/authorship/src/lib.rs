@@ -20,16 +20,15 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use rstd::{result, prelude::*};
-use rstd::collections::btree_set::BTreeSet;
-use support::{decl_module, decl_storage, ensure};
+use sp_std::{result, prelude::*};
+use sp_std::collections::btree_set::BTreeSet;
+use support::{decl_module, decl_storage, dispatch, ensure};
 use support::traits::{FindAuthor, VerifySeal, Get};
-use support::dispatch::Result as DispatchResult;
 use codec::{Encode, Decode};
 use system::ensure_none;
 use sp_runtime::traits::{Header as HeaderT, One, Zero};
 use support::weights::SimpleDispatchInfo;
-use inherents::{InherentIdentifier, ProvideInherent, InherentData, MakeFatalError};
+use inherents::{InherentIdentifier, ProvideInherent, InherentData};
 use sp_authorship::{INHERENT_IDENTIFIER, UnclesInherentData, InherentError};
 
 const MAX_UNCLES: usize = 10;
@@ -98,7 +97,7 @@ impl<H, A> FilterUncle<H, A> for () {
 /// A filter on uncles which verifies seals and does no additional checks.
 /// This is well-suited to consensus modes such as PoW where the cost of
 /// equivocating is high.
-pub struct SealVerify<T>(rstd::marker::PhantomData<T>);
+pub struct SealVerify<T>(sp_std::marker::PhantomData<T>);
 
 impl<Header, Author, T: VerifySeal<Header, Author>> FilterUncle<Header, Author>
 	for SealVerify<T>
@@ -116,7 +115,7 @@ impl<Header, Author, T: VerifySeal<Header, Author>> FilterUncle<Header, Author>
 /// one uncle included per author per height.
 ///
 /// This does O(n log n) work in the number of uncles included.
-pub struct OnePerAuthorPerHeight<T, N>(rstd::marker::PhantomData<(T, N)>);
+pub struct OnePerAuthorPerHeight<T, N>(sp_std::marker::PhantomData<(T, N)>);
 
 impl<Header, Author, T> FilterUncle<Header, Author>
 	for OnePerAuthorPerHeight<T, Header::Number>
@@ -185,7 +184,7 @@ decl_module! {
 
 		/// Provide a set of uncles.
 		#[weight = SimpleDispatchInfo::FixedOperational(10_000)]
-		fn set_uncles(origin, new_uncles: Vec<T::Header>) -> DispatchResult {
+		fn set_uncles(origin, new_uncles: Vec<T::Header>) -> dispatch::Result {
 			ensure_none(origin)?;
 			ensure!(new_uncles.len() <= MAX_UNCLES, "Too many uncles");
 
@@ -220,7 +219,7 @@ impl<T: Trait> Module<T> {
 		}
 	}
 
-	fn verify_and_import_uncles(new_uncles: Vec<T::Header>) -> DispatchResult {
+	fn verify_and_import_uncles(new_uncles: Vec<T::Header>) -> dispatch::Result {
 		let now = <system::Module<T>>::block_number();
 
 		let mut uncles = <Self as Store>::Uncles::get();
@@ -493,7 +492,7 @@ mod tests {
 		)
 	}
 
-	fn new_test_ext() -> runtime_io::TestExternalities {
+	fn new_test_ext() -> sp_io::TestExternalities {
 		let t = system::GenesisConfig::default().build_storage::<Test>().unwrap();
 		t.into()
 	}

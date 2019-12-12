@@ -65,8 +65,8 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use rstd::prelude::*;
-use rstd::{fmt::Debug, ops::Add, iter::once};
+use sp_std::prelude::*;
+use sp_std::{fmt::Debug, ops::Add, iter::once};
 use enumflags2::BitFlags;
 use codec::{Encode, Decode};
 use sp_runtime::{traits::{StaticLookup, EnsureOrigin, Zero}, RuntimeDebug};
@@ -134,7 +134,7 @@ pub enum Data {
 }
 
 impl Decode for Data {
-	fn decode<I: codec::Input>(input: &mut I) -> rstd::result::Result<Self, codec::Error> {
+	fn decode<I: codec::Input>(input: &mut I) -> sp_std::result::Result<Self, codec::Error> {
 		let b = input.read_byte()?;
 		Ok(match b {
 			0 => Data::None,
@@ -195,7 +195,8 @@ pub enum Judgement<
 	/// The data appears to be reasonably acceptable in terms of its accuracy, however no in depth
 	/// checks (such as in-person meetings or formal KYC) have been conducted.
 	Reasonable,
-	/// The target is known directly by the registrar and can fully attest to being accurate.
+	/// The target is known directly by the registrar and the registrar can fully attest to the
+	/// the data's accuracy.
 	KnownGood,
 	/// The data was once good but is currently out of date. There is no malicious intent in the
 	/// inaccuracy. This judgement can be removed through updating the data.
@@ -256,7 +257,7 @@ impl Encode for IdentityFields {
 	}
 }
 impl Decode for IdentityFields {
-	fn decode<I: codec::Input>(input: &mut I) -> rstd::result::Result<Self, codec::Error> {
+	fn decode<I: codec::Input>(input: &mut I) -> sp_std::result::Result<Self, codec::Error> {
 		let field = u64::decode(input)?;
 		Ok(Self(<BitFlags<IdentityField>>::from_bits(field as u64).map_err(|_| "invalid value")?))
 	}
@@ -269,11 +270,11 @@ impl Decode for IdentityFields {
 #[derive(Clone, Encode, Decode, Eq, PartialEq, RuntimeDebug)]
 #[cfg_attr(test, derive(Default))]
 pub struct IdentityInfo {
-	/// Additional fields of the identity that are not catered for with the structs explicit
+	/// Additional fields of the identity that are not catered for with the struct's explicit
 	/// fields.
 	pub additional: Vec<(Data, Data)>,
 
-	/// A reasonable display name for the controller of the account. This should be whatever is it
+	/// A reasonable display name for the controller of the account. This should be whatever it is
 	/// that it is typically known as and should not be confusable with other entities, given
 	/// reasonable context.
 	///
@@ -306,7 +307,7 @@ pub struct IdentityInfo {
 	/// The PGP/GPG public key of the controller of the account.
 	pub pgp_fingerprint: Option<[u8; 20]>,
 
-	/// An graphic image representing the controller of the account. Should be a company,
+	/// A graphic image representing the controller of the account. Should be a company,
 	/// organization or project logo or a headshot in the case of a human.
 	pub image: Data,
 }
@@ -319,7 +320,7 @@ pub struct IdentityInfo {
 pub struct Registration<
 	Balance: Encode + Decode + Copy + Clone + Debug + Eq + PartialEq
 > {
-	/// Judgements from the registrars on this identity. Stored ordered by RegistrarIndex. There
+	/// Judgements from the registrars on this identity. Stored ordered by `RegistrarIndex`. There
 	/// may be only a single judgement from each registrar.
 	pub judgements: Vec<(RegistrarIndex, Judgement<Balance>)>,
 
@@ -340,7 +341,7 @@ impl <
 	}
 }
 
-/// Information concerning the a registrar.
+/// Information concerning a registrar.
 #[derive(Clone, Encode, Decode, Eq, PartialEq, RuntimeDebug)]
 pub struct RegistrarInfo<
 	Balance: Encode + Decode + Clone + Debug + Eq + PartialEq,
@@ -349,7 +350,7 @@ pub struct RegistrarInfo<
 	/// The account of the registrar.
 	pub account: AccountId,
 
-	/// Amount required to be given to the registrar for them to check the account.
+	/// Amount required to be given to the registrar for them to provide judgement.
 	pub fee: Balance,
 
 	/// Relevant fields for this registrar. Registrar judgements are limited to attestations on
@@ -853,7 +854,7 @@ mod tests {
 
 	// This function basically just builds a genesis storage key/value store according to
 	// our desired mockup.
-	fn new_test_ext() -> runtime_io::TestExternalities {
+	fn new_test_ext() -> sp_io::TestExternalities {
 		let mut t = system::GenesisConfig::default().build_storage::<Test>().unwrap();
 		// We use default for brevity, but you can configure as desired if needed.
 		balances::GenesisConfig::<Test> {
