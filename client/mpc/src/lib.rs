@@ -13,7 +13,7 @@ use client::Client;
 use client_api::{backend::Backend, BlockchainEvents, CallExecutor, ExecutionStrategy};
 // use runtime_io::offchain::local_storage_set;
 
-use primitives::offchain::{StorageKind, OffchainStorage};
+use primitives::offchain::{OffchainStorage, StorageKind};
 use primitives::{Blake2Hasher, H256};
 use sp_blockchain::{HeaderBackend, Result as ClientResult};
 use sp_offchain::STORAGE_PREFIX;
@@ -49,7 +49,7 @@ where
 					l.try_to::<ConsensusLog>(OpaqueDigestItemId::Consensus(&MPC_ENGINE_ID))
 				})
 				.find_map(|l| match l {
-					ConsensusLog::RequestForKeygen(id, data) => {
+					ConsensusLog::RequestForSig(id, data) => {
 						info!("consensus log ok");
 						Some((id, data))
 					}
@@ -58,10 +58,11 @@ where
 
 			if let Some((id, data)) = args {
 				if let Some(mut offchain_storage) = backend.offchain_storage() {
+					let key = id.to_le_bytes();
+					info!("key {:?} data {:?}", key, data);
 					offchain_storage.set(STORAGE_PREFIX, &[1u8], &data);
 					info!("set storage ok");
- 				}
-				// local_storage_set(StorageKind::PERSISTENT, &[1u8], &data);
+				}
 			}
 			futures::future::ready(())
 		});

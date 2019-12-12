@@ -516,6 +516,12 @@ impl htlc::Trait for Runtime {
 
 impl mpc::Trait for Runtime {
 	type Event = Event;
+	type Call = Call;
+	type SubmitTransaction = system::offchain::TransactionSubmitter<
+		mpc::crypto::Public,
+		Runtime,
+		UncheckedExtrinsic
+	>;
 }
 
 construct_runtime!(

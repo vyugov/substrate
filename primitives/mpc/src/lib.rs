@@ -9,7 +9,7 @@ pub const MPC_ENGINE_ID: ConsensusEngineId = *b"MPCE";
 #[derive(Decode, Encode, RuntimeDebug)]
 pub enum ConsensusLog {
 	#[codec(index = "1")]
-	RequestForKeygen(u64, Vec<u8>),
+	RequestForSig(u64, Vec<u8>), // id, data
 }
 
 // sp_api::decl_runtime_apis! {
