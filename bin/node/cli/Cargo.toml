@@ -44,6 +44,7 @@ sp-finality-tracker = { path = "../../../primitives/finality-tracker", default-f
 inherents = { package = "sp-inherents", path = "../../../primitives/inherents" }
 keyring = { package = "sp-keyring", path = "../../../primitives/keyring" }
 sp-io = { path = "../../../primitives/io" }
+sp-mpc = { path = "../../../primitives/mpc" }
 consensus-common = { package = "sp-consensus", path = "../../../primitives/consensus/common" }
 
 # client dependencies

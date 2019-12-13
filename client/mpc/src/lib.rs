@@ -60,7 +60,7 @@ where
 				if let Some(mut offchain_storage) = backend.offchain_storage() {
 					let key = id.to_le_bytes();
 					info!("key {:?} data {:?}", key, data);
-					offchain_storage.set(STORAGE_PREFIX, &[1u8], &data);
+					offchain_storage.set(STORAGE_PREFIX, &key, &data);
 					info!("set storage ok");
 				}
 			}

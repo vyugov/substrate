@@ -136,6 +136,7 @@ macro_rules! new_full {
 			$config.network.sentry_nodes.clone(),
 		);
 
+		let dev_seed = $config.dev_key_seed.clone();
 		// sentry nodes announce themselves as authorities to the network
 		// and should run the same protocols authorities do, but it should
 		// never actively participate in any consensus process.
@@ -163,6 +164,16 @@ macro_rules! new_full {
 
 		($with_startup_data)(&block_import, &babe_link);
 
+		if let Some(seed) = dev_seed {
+			service
+			.keystore()
+			.write()
+			.insert_ephemeral_from_seed_by_type::<sp_mpc::crypto::Pair>(
+				&seed,
+				sp_mpc::KEY_TYPE,
+			)
+			.expect("Dev Seed always succeeds");
+		}
 		if participates_in_consensus {
 			let proposer = sc_basic_authority::ProposerFactory {
 				client: service.client(),

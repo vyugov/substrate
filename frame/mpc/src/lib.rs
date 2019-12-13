@@ -4,15 +4,14 @@
 use codec::{Decode, Encode};
 
 use app_crypto::RuntimeAppPublic;
-use primitives::{crypto::KeyTypeId, offchain::StorageKind};
-use rstd::prelude::*;
-use runtime_io::offchain::local_storage_get;
-use sp_mpc::{ConsensusLog, MPC_ENGINE_ID};
+use sp_core::offchain::StorageKind;
+use sp_io::offchain::local_storage_get;
 use sp_runtime::{
 	generic::DigestItem,
 	traits::{IdentifyAccount, Member, One, SimpleArithmetic, StaticLookup, Zero},
 	RuntimeDebug,
 };
+use sp_std::{collections::btree_set::BTreeSet, prelude::*};
 use support::{
 	debug, decl_event, decl_module, decl_storage, dispatch::Result, ensure, traits::Time, Parameter,
 };
@@ -21,12 +20,7 @@ use system::{
 	offchain::{CreateTransaction, SubmitSignedTransaction},
 };
 
-pub const KEY_TYPE: KeyTypeId = KeyTypeId(*b"mpc_");
-pub mod crypto {
-	use super::KEY_TYPE;
-	use sp_runtime::app_crypto::{app_crypto, sr25519};
-	app_crypto!(sr25519, KEY_TYPE);
-}
+pub use sp_mpc::{crypto, ConsensusLog, KEY_TYPE, MPC_ENGINE_ID};
 
 pub trait Trait: system::Trait {
 	type Event: From<Event<Self>> + Into<<Self as system::Trait>::Event>;
@@ -56,6 +50,9 @@ decl_module! {
 			ensure_signed(origin)?;
 			// ensure!(!<Requests>::exists(id), "req id exists");
 			// ensure!(!<Results>::exists(id), "req id exists");
+			<ReqIds>::mutate(|ids| {
+				ids.push(id);
+			});
 			Self::_request_sig(id, data);
 			Ok(())
 		}
@@ -65,9 +62,9 @@ decl_module! {
 			ensure_signed(origin)?;
 			// ensure!(!<Requests>::exists(id), "req id exists");
 			// ensure!(!<Results>::exists(id), "req id exists");
-			<ReqIds>::mutate(|ids| {
-				ids.swap_remove(0);
-			});
+			// <ReqIds>::mutate(|ids| {
+			// 	ids.remove_item(id);
+			// });
 			<Requests>::remove(id);
 			<Results>::insert(id, data);
 			debug::warn!("save sig");
@@ -79,6 +76,7 @@ decl_module! {
 			let req_ids = ReqIds::get();
 			for id in req_ids {
 				let key = id.to_le_bytes();
+				debug::warn!("key {:?}", key);
 				if let Some(value) = local_storage_get(StorageKind::PERSISTENT, &key) {
 					// StorageKind::LOCAL?
 					Self::submit_result(id, value);
