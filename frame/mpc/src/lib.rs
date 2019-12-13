@@ -38,7 +38,7 @@ decl_storage! {
 
 		Requests get(fn request_of): map u64 => Vec<u8>;
 
-		ReqIds: Vec<u64>;
+		ReqIds: BTreeSet<u64>;
 	}
 }
 
@@ -51,20 +51,20 @@ decl_module! {
 			// ensure!(!<Requests>::exists(id), "req id exists");
 			// ensure!(!<Results>::exists(id), "req id exists");
 			<ReqIds>::mutate(|ids| {
-				ids.push(id);
+				ids.insert(id);
 			});
-			Self::_request_sig(id, data);
+			<Requests>::insert(id, data.clone());
+			Self::deposit_req_log(id, data);
 			Ok(())
 		}
-
 
 		pub fn save_sig(origin, id: u64, data: Vec<u8>) -> Result {
 			ensure_signed(origin)?;
 			// ensure!(!<Requests>::exists(id), "req id exists");
 			// ensure!(!<Results>::exists(id), "req id exists");
-			// <ReqIds>::mutate(|ids| {
-			// 	ids.remove_item(id);
-			// });
+			<ReqIds>::mutate(|ids| {
+				ids.remove(&id);
+			});
 			<Requests>::remove(id);
 			<Results>::insert(id, data);
 			debug::warn!("save sig");
@@ -124,11 +124,11 @@ impl<T: Trait> Module<T> {
 		Self::authorities().into_iter().find(|i| i == who).is_some()
 	}
 
-	fn _request_sig(id: u64, data: Vec<u8>) {
-		Self::_deposit_log(ConsensusLog::RequestForSig(id, data));
+	fn deposit_req_log(id: u64, data: Vec<u8>) {
+		Self::deposit_log(ConsensusLog::RequestForSig(id, data));
 	}
 
-	fn _deposit_log(log: ConsensusLog) {
+	fn deposit_log(log: ConsensusLog) {
 		let log: DigestItem<T::Hash> = DigestItem::Consensus(MPC_ENGINE_ID, log.encode());
 		<system::Module<T>>::deposit_log(log.into());
 	}
