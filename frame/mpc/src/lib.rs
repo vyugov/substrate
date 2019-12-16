@@ -38,7 +38,7 @@ decl_storage! {
 
 		Requests get(fn request_of): map u64 => Vec<u8>;
 
-		ReqIds: BTreeSet<u64>;
+		PendingReqIds: BTreeSet<u64>;
 	}
 }
 
@@ -47,33 +47,42 @@ decl_module! {
 		fn deposit_event() = default;
 
 		fn request_sig(origin, id: u64, data: Vec<u8>) -> Result {
-			ensure_signed(origin)?;
+			let who = ensure_signed(origin)?;
 			ensure!(!<Requests>::exists(id), "req id exists");
 			ensure!(!<Results>::exists(id), "req id exists");
-			<ReqIds>::mutate(|ids| {
+
+			<PendingReqIds>::mutate(|ids| {
 				ids.insert(id);
 			});
 			<Requests>::insert(id, data.clone());
-			Self::deposit_req_log(id, data);
+			Self::deposit_req_log(id, data.clone());
+			Self::deposit_event(RawEvent::MpcRequest(
+				id, data, who
+			));
 			Ok(())
 		}
 
 		pub fn save_sig(origin, id: u64, data: Vec<u8>) -> Result {
-			ensure_signed(origin)?;
+			let who = ensure_signed(origin)?; // more restriction?
 			ensure!(<Requests>::exists(id), "req id does not exist");
 			ensure!(!<Results>::exists(id), "req id exists");
-			<ReqIds>::mutate(|ids| {
+			// remove req
+			<PendingReqIds>::mutate(|ids| {
 				ids.remove(&id);
 			});
 			<Requests>::remove(id);
-			<Results>::insert(id, data);
+			// save res
+			<Results>::insert(id, data.clone());
+			Self::deposit_event(RawEvent::MpcResponse(
+				id, data, who
+			));
 			debug::warn!("save sig");
 			Ok(())
 		}
 
 		fn offchain_worker(_now: T::BlockNumber) {
 			debug::RuntimeLogger::init();
-			let req_ids = ReqIds::get();
+			let req_ids = PendingReqIds::get();
 			for id in req_ids {
 				let key = id.to_le_bytes();
 				debug::warn!("key {:?}", key);
@@ -104,7 +113,10 @@ decl_event!(
 	where
 		AccountId = <T as system::Trait>::AccountId,
 	{
-		Test(u32, AccountId),
+		// id, request data, requester
+		MpcRequest(u64, Vec<u8>, AccountId),
+		// id, result data, responser
+		MpcResponse(u64, Vec<u8>, AccountId),
 	}
 );
 
