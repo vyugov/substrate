@@ -46,6 +46,17 @@ decl_module! {
 	pub struct Module<T: Trait> for enum Call where origin: T::Origin {
 		fn deposit_event() = default;
 
+		fn request_key(origin, id: u64) -> Result {
+			let _who = ensure_signed(origin)?;
+			ensure!(!<Requests>::exists(id), "req id exists");
+			ensure!(!<Results>::exists(id), "req id exists");
+			<PendingReqIds>::mutate(|ids| {
+				ids.insert(id);
+			});
+			Self::send_log_for_key(id);
+			Ok(())
+		}
+
 		fn request_sig(origin, id: u64, data: Vec<u8>) -> Result {
 			let who = ensure_signed(origin)?;
 			ensure!(!<Requests>::exists(id), "req id exists");
@@ -55,7 +66,7 @@ decl_module! {
 				ids.insert(id);
 			});
 			<Requests>::insert(id, data.clone());
-			Self::deposit_req_log(id, data.clone());
+			Self::send_log_for_sig(id, data.clone());
 			Self::deposit_event(RawEvent::MpcRequest(
 				id, data, who
 			));
@@ -96,15 +107,15 @@ decl_module! {
 			}
 		}
 
-		// pub fn add_authority(origin, who: T::AccountId) -> Result {
-		// 	let _me = ensure_signed(origin)?; // ensure root?
+		pub fn add_authority(origin, who: T::AccountId) -> Result {
+			let _me = ensure_signed(origin)?; // ensure root?
 
-		// 	if !Self::is_authority(&who){
-		// 		<Authorities<T>>::mutate(|l| l.push(who));
-		// 	}
+			if !Self::is_authority(&who){
+				<Authorities<T>>::mutate(|l| l.insert(who));
+			}
 
-		// 	Ok(())
-		// }
+			Ok(())
+		}
 	}
 }
 
@@ -133,10 +144,14 @@ impl<T: Trait> Module<T> {
 	}
 
 	fn is_authority(who: &T::AccountId) -> bool {
-		Self::authorities().into_iter().find(|i| i == who).is_some()
+		Self::authorities().contains(who)
 	}
 
-	fn deposit_req_log(id: u64, data: Vec<u8>) {
+	fn send_log_for_key(id: u64) {
+		Self::deposit_log(ConsensusLog::RequestForKey(id));
+	}
+
+	fn send_log_for_sig(id: u64, data: Vec<u8>) {
 		Self::deposit_log(ConsensusLog::RequestForSig(id, data));
 	}
 

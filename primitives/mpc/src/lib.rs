@@ -1,6 +1,6 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use codec::{Codec, Decode, Encode};
+use codec::{Decode, Encode};
 use sp_core::crypto::KeyTypeId;
 use sp_runtime::{ConsensusEngineId, RuntimeDebug};
 use sp_std::vec::Vec;
@@ -19,7 +19,11 @@ pub mod crypto {
 pub enum ConsensusLog {
 	#[codec(index = "1")]
 	RequestForSig(u64, Vec<u8>), // id, data
+	#[codec(index = "2")]
+	RequestForKey(u64),
 }
+
+pub type RequestId = u64;
 
 pub type AuthorityId = crypto::Public;
 

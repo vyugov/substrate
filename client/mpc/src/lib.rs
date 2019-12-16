@@ -20,7 +20,12 @@ use sp_offchain::STORAGE_PREFIX;
 use sp_runtime::generic::OpaqueDigestItemId;
 use sp_runtime::traits::{Block as BlockT, Header};
 
-use sp_mpc::{ConsensusLog, MPC_ENGINE_ID};
+use sp_mpc::{ConsensusLog, RequestId, MPC_ENGINE_ID};
+
+pub enum MpcArgument {
+	KeyGen(RequestId),
+	SigGen(RequestId, Vec<u8>),
+}
 
 pub fn run_task<B, E, Block, RA>(
 	client: Arc<Client<B, E, Block, RA>>,
@@ -40,32 +45,33 @@ where
 		.clone()
 		.import_notification_stream()
 		.for_each(move |n| {
-			let args = n
-				.header
-				.digest()
-				.logs()
-				.iter()
+			let logs = n.header.digest().logs().iter();
+
+			let arg = logs
 				.filter_map(|l| {
 					l.try_to::<ConsensusLog>(OpaqueDigestItemId::Consensus(&MPC_ENGINE_ID))
 				})
 				.find_map(|l| match l {
-					ConsensusLog::RequestForSig(id, data) => {
-						info!("consensus log ok");
-						Some((id, data))
-					}
-					_ => None,
+					ConsensusLog::RequestForSig(id, data) => Some(MpcArgument::SigGen(id, data)),
+					ConsensusLog::RequestForKey(id) => Some(MpcArgument::KeyGen(id)),
 				});
 
-			if let Some((id, mut data)) = args {
-				if let Some(mut offchain_storage) = backend.offchain_storage() {
-					let key = id.to_le_bytes();
-					info!("key {:?} data {:?}", key, data);
-					let mut t = vec![1u8];
-					t.append(&mut data);
-					offchain_storage.set(STORAGE_PREFIX, &key, &t);
-					info!("set storage ok");
+			if let Some(arg) = arg {
+				match arg {
+					MpcArgument::SigGen(id, mut data) => {
+						if let Some(mut offchain_storage) = backend.offchain_storage() {
+							let key = id.to_le_bytes();
+							info!("key {:?} data {:?}", key, data);
+							let mut t = vec![1u8];
+							t.append(&mut data);
+							offchain_storage.set(STORAGE_PREFIX, &key, &t);
+							info!("set storage ok");
+						}
+					}
+					MpcArgument::KeyGen(id) => {}
 				}
 			}
+
 			futures::future::ready(())
 		});
 
