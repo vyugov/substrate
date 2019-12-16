@@ -56,11 +56,13 @@ where
 					_ => None,
 				});
 
-			if let Some((id, data)) = args {
+			if let Some((id, mut data)) = args {
 				if let Some(mut offchain_storage) = backend.offchain_storage() {
 					let key = id.to_le_bytes();
 					info!("key {:?} data {:?}", key, data);
-					offchain_storage.set(STORAGE_PREFIX, &key, &data);
+					let mut t = vec![1u8];
+					t.append(&mut data);
+					offchain_storage.set(STORAGE_PREFIX, &key, &t);
 					info!("set storage ok");
 				}
 			}

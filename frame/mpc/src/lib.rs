@@ -32,11 +32,11 @@ pub trait Trait: system::Trait {
 
 decl_storage! {
 	trait Store for Module<T: Trait> as Mpc {
-		Authorities get(authorities): Vec<T::AccountId>;
+		Authorities get(authorities): BTreeSet<T::AccountId>;
 
 		Results get(fn result_of): map u64 => Vec<u8>;
 
-		Requests get(fn request_of): map u64 => Vec<u8>;
+		Requests get(fn request_of): map u64 => Vec<u8>; // TODO: request timeout
 
 		PendingReqIds: BTreeSet<u64>;
 	}
@@ -96,15 +96,15 @@ decl_module! {
 			}
 		}
 
-		pub fn add_authority(origin, who: T::AccountId) -> Result {
-			let _me = ensure_signed(origin)?; // ensure root?
+		// pub fn add_authority(origin, who: T::AccountId) -> Result {
+		// 	let _me = ensure_signed(origin)?; // ensure root?
 
-			if !Self::is_authority(&who){
-				<Authorities<T>>::mutate(|l| l.push(who));
-			}
+		// 	if !Self::is_authority(&who){
+		// 		<Authorities<T>>::mutate(|l| l.push(who));
+		// 	}
 
-			Ok(())
-		}
+		// 	Ok(())
+		// }
 	}
 }
 
