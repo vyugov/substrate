@@ -48,8 +48,8 @@ decl_module! {
 
 		fn request_sig(origin, id: u64, data: Vec<u8>) -> Result {
 			ensure_signed(origin)?;
-			// ensure!(!<Requests>::exists(id), "req id exists");
-			// ensure!(!<Results>::exists(id), "req id exists");
+			ensure!(!<Requests>::exists(id), "req id exists");
+			ensure!(!<Results>::exists(id), "req id exists");
 			<ReqIds>::mutate(|ids| {
 				ids.insert(id);
 			});
@@ -60,8 +60,8 @@ decl_module! {
 
 		pub fn save_sig(origin, id: u64, data: Vec<u8>) -> Result {
 			ensure_signed(origin)?;
-			// ensure!(!<Requests>::exists(id), "req id exists");
-			// ensure!(!<Results>::exists(id), "req id exists");
+			ensure!(<Requests>::exists(id), "req id does not exist");
+			ensure!(!<Results>::exists(id), "req id exists");
 			<ReqIds>::mutate(|ids| {
 				ids.remove(&id);
 			});
@@ -78,7 +78,7 @@ decl_module! {
 				let key = id.to_le_bytes();
 				debug::warn!("key {:?}", key);
 				if let Some(value) = local_storage_get(StorageKind::PERSISTENT, &key) {
-					// StorageKind::LOCAL?
+					// StorageKind::LOCAL ?
 					Self::submit_result(id, value);
 					debug::warn!("insert ok");
 				} else {
@@ -88,7 +88,7 @@ decl_module! {
 		}
 
 		pub fn add_authority(origin, who: T::AccountId) -> Result {
-			let _me = ensure_signed(origin)?; // ensure root
+			let _me = ensure_signed(origin)?; // ensure root?
 
 			if !Self::is_authority(&who){
 				<Authorities<T>>::mutate(|l| l.push(who));
