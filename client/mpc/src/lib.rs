@@ -8,11 +8,15 @@ use futures::{
 	stream::StreamExt,
 };
 use log::{debug, error, info};
+use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{
+	KeyGenBroadcastMessage1 as KeyGenCommit, KeyGenDecommitMessage1 as KeyGenDecommit, Keys,
+	Parameters, PartyPrivate, SharedKeys, SignKeys,
+};
 
 use sc_client::Client;
 use sc_client_api::{backend::Backend, BlockchainEvents, CallExecutor, ExecutionStrategy};
-
-use sp_blockchain::{HeaderBackend, Result as ClientResult};
+use sc_keystore::KeyStorePtr;
+use sp_blockchain::{Error as ClientError, HeaderBackend, Result as ClientResult};
 use sp_core::offchain::{OffchainStorage, StorageKind};
 use sp_core::{Blake2Hasher, H256};
 use sp_mpc::{ConsensusLog, RequestId, MPC_ENGINE_ID};
@@ -20,6 +24,37 @@ use sp_offchain::STORAGE_PREFIX;
 use sp_runtime::generic::OpaqueDigestItemId;
 use sp_runtime::traits::{Block as BlockT, Header};
 
+mod communication;
+mod periodic_stream;
+
+type Count = u16;
+
+#[derive(Debug)]
+pub enum Error {
+	Network(String),
+	Periodic,
+	Client(ClientError),
+	Rebuild,
+}
+
+#[derive(Clone)]
+pub struct NodeConfig {
+	pub duration: u64,
+	pub threshold: Count,
+	pub players: Count,
+	pub keystore: Option<KeyStorePtr>,
+}
+
+impl NodeConfig {
+	pub fn get_params(&self) -> Parameters {
+		Parameters {
+			threshold: self.threshold,
+			share_count: self.players,
+		}
+	}
+}
+
+#[derive(Debug)]
 pub enum MpcArgument {
 	KeyGen(RequestId),
 	SigGen(RequestId, Vec<u8>),
@@ -72,5 +107,5 @@ where
 			futures::future::ready(())
 		});
 
-	Ok(streamer.map(|_| Ok::<(), ()>(())).compat())
+	Ok(streamer.map(|_| -> Result<(), ()> { Ok(()) }).compat())
 }
