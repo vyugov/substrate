@@ -9,18 +9,16 @@ use futures::{
 };
 use log::{debug, error, info};
 
-use client::Client;
-use client_api::{backend::Backend, BlockchainEvents, CallExecutor, ExecutionStrategy};
-// use runtime_io::offchain::local_storage_set;
+use sc_client::Client;
+use sc_client_api::{backend::Backend, BlockchainEvents, CallExecutor, ExecutionStrategy};
 
-use primitives::offchain::{OffchainStorage, StorageKind};
-use primitives::{Blake2Hasher, H256};
 use sp_blockchain::{HeaderBackend, Result as ClientResult};
+use sp_core::offchain::{OffchainStorage, StorageKind};
+use sp_core::{Blake2Hasher, H256};
+use sp_mpc::{ConsensusLog, RequestId, MPC_ENGINE_ID};
 use sp_offchain::STORAGE_PREFIX;
 use sp_runtime::generic::OpaqueDigestItemId;
 use sp_runtime::traits::{Block as BlockT, Header};
-
-use sp_mpc::{ConsensusLog, RequestId, MPC_ENGINE_ID};
 
 pub enum MpcArgument {
 	KeyGen(RequestId),
@@ -65,7 +63,6 @@ where
 							let mut t = vec![1u8];
 							t.append(&mut data);
 							offchain_storage.set(STORAGE_PREFIX, &key, &t);
-							info!("set storage ok");
 						}
 					}
 					MpcArgument::KeyGen(id) => {}

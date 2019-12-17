@@ -5,18 +5,21 @@ authors = ["Parity Technologies <admin@parity.io>"]
 edition = "2018"
 
 [dependencies]
+# 3rd party
 futures01 = { package = "futures", version = "0.1" }
 futures = { version = "0.3.1", features = ["compat"]}
 log = "0.4"
 
-primitives = { package = "sp-core",  path = "../../primitives/core" }
-runtime-io = { package = "sp-io",  path = "../../primitives/io" }
-sp-runtime = { package = "sp-runtime", path = "../../primitives/runtime"}
-sp-offchain = { package = "sp-offchain", path = "../../primitives/offchain"}
+# primitives
+sp-core = { path = "../../primitives/core" }
+sp-io = { path = "../../primitives/io" }
+sp-runtime = { path = "../../primitives/runtime"}
+sp-offchain = { path = "../../primitives/offchain"}
 sp-blockchain = { path = "../../primitives/blockchain" }
-network = { package = "sc-network", path = "../network" }
-app-crypto = { package = "sp-application-crypto",  path = "../../primitives/application-crypto"}
-sp-mpc = { package = "sp-mpc", path = "../../primitives/mpc" }
+sp-application-crypto = { path = "../../primitives/application-crypto"}
+sp-mpc = { path = "../../primitives/mpc" }
 
-client-api = { package = "sc-client-api", path = "../api" }
-client = { package = "sc-client", path = "../" }
+# client
+sc-client-api = { path = "../api" }
+sc-client = { path = "../" }
+sc-network = { path = "../network" }
