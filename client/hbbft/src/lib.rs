@@ -83,17 +83,21 @@ use txp::InPoolTransaction;
 use crate::communication::SendOut;
 
 pub const INHERENT_IDENTIFIER: InherentIdentifier = *b"snakeshr";
+use hash_db::Hasher;
+use network::ClientHandle as NetClient;
 
 pub type BadgerImportQueue<B> = BasicQueue<B>;
 pub mod aux_store;
 pub mod rpc;
-pub struct BadgerWorker<C, I, SO, Inbound, B: BlockT, N: Network<B>, A>
+pub struct BadgerWorker<C, I, SO, Inbound, B: BlockT, N: Network<B>, A,Cl>
 where
 	A: TransactionPool,
+	Cl:NetClient<B>,
+	B::Hash:Ord,
 {
 	pub client: Arc<C>,
 	pub block_import: Arc<Mutex<I>>,
-	pub network: NetworkBridge<B, N>,
+	pub network: NetworkBridge<B, N,Cl>,
 
 	pub transaction_pool: Arc<A>,
 	pub sync_oracle: SO,
@@ -292,7 +296,7 @@ where
 			header: header,
 			post_digests: vec![],
 			body,
-			finalized: true,
+			finalized: false,
 			justification,
 			allow_missing_state: true,
 			auxiliary: Vec::new(),
@@ -490,18 +494,20 @@ use communication::BadgerHandler;
 
 fn global_communication<Block: BlockT<Hash = H256>, B, E, N, RA>(
 	_client: &Arc<Client<B, E, Block, RA>>,
-	network: NetworkBridge<Block, N>,
-) -> (
+	network: NetworkBridge<Block, N,Client<B, E, Block, RA>>,
+) 
+-> (
 	impl Stream<Item = <QHB as ConsensusProtocol>::Output>,
 	impl SendOut,
-	impl BadgerHandler
+	impl BadgerHandler<Block>
 )
 where
-	B: Backend<Block, Blake2Hasher>,
-	E: CallExecutor<Block, Blake2Hasher> + Send + Sync,
+	B: Backend<Block, Blake2Hasher>+'static,
+	E: CallExecutor<Block, Blake2Hasher> + Send + Sync+Clone+'static,
 	N: Network<Block>,
-	RA: Send + Sync,
+	RA: Send + Sync+'static,
 	NumberFor<Block>: BlockNumberOps,
+
 {
 	let is_voter = network.is_validator();
 
@@ -642,6 +648,7 @@ where
 	)
 }
 
+use sc_api::backend::Finalizer;
 use futures03::stream::StreamExt;
 /// Run a HBBFT churn as a task. Provide configuration and a link to a
 /// block import worker that has already been instantiated with `block_import`.
@@ -691,7 +698,25 @@ where
 	info!("Badger AUTH {:?}",&persistent_data.authority_set.inner);
 
 	let auth_ref:Arc<parking_lot::RwLock<aux_store::AuthoritySet>>=persistent_data.authority_set.inner.clone();
-	let (network_bridge, network_startup) = NetworkBridge::new(network, config.clone(),keystore.clone(),persistent_data);
+	let ccln=client.clone();
+	let (network_bridge, network_startup) = NetworkBridge::new(network, config.clone(),keystore.clone(),persistent_data,client.clone(),
+	//,finalizer: Box<dyn FnMut( &B::Hash,Option<Justification>)->bool+Send+Sync>,
+	Box::new(move |hash,justification| 
+		{
+		  match ccln.lock_import_and_run(|import_op|
+		   {
+			   ccln.apply_finality(import_op, BlockId::Hash(hash.clone()) , justification, true)
+		   })
+		   {
+			   Ok(_) => { true },
+			   Err(e) =>
+			     {
+					 info!("Eror finalizing  {:?}",e);
+					 false
+				 }
+		   }
+		})
+   );
 
 	//let PersistentData { authority_set, set_state, consensus_changes } = persistent_data;
 
@@ -699,7 +724,8 @@ where
 	let (blk_out, tx_in,handler ) = global_communication(&client, network_bridge);
 	let txcopy = Arc::new(parking_lot::RwLock::new(tx_in));
 	let tx_in_arc = txcopy.clone();
-
+	
+	//let (btf_send_tx, mut btf_send_rx) = mpsc::unbounded::<RpcMessage>();
 	let tx_out = TxStream {
 		transaction_pool: t_pool.clone(),
 		client: client.clone(),
@@ -728,9 +754,10 @@ where
 			batch.epoch(),
 			batch.len(),			
 		);
+		let auth_list=handler.get_current_authorities();
 		match batch.change()
 		{
-			ChangeState::None => {},
+		    ChangeState::None => {},
 			ChangeState::InProgress(Change::NodeChange(pubkeymap)) => 
 			{
 			 //change in progress, broadcast messages have to be sent to new node as well
@@ -791,7 +818,7 @@ where
 			//a.data.encode()
 			info!("[{:?}] Pushing to the block.", pending);
 			info!("[{:?}] Data ", &data);
-			match block_builder::BlockBuilder::push(&mut block_builder, data.clone()) {
+			match block_builder::BlockBuilder::push(&mut block_builder, data) {
 				Ok(()) => {
 					debug!("[{:?}] bytes Pushed to the block.", pending.len());
 				}
@@ -827,6 +854,7 @@ where
 						"number" => ?block.header().number(),
 						"hash" => ?<Block as BlockT>::Hash::from(block.header().hash()),
 						);
+						//TODO: maybe remove this? 
 						if Decode::decode(&mut block.encode().as_slice()).as_ref() != Ok(&block) {
 							error!("Failed to verify block encoding/decoding");
 						}
@@ -851,7 +879,7 @@ where
 							justification: None,
 							post_digests: vec![],
 							body: Some(body),
-							finalized: true,
+							finalized: false,
 							allow_missing_state:true,
 							auxiliary: Vec::new(),
 							fork_choice: ForkChoiceStrategy::LongestChain,
@@ -886,6 +914,7 @@ where
 							block_builder = cclient
 								.new_block_at(&parent_id, inherent_digests.clone())
 								.unwrap();
+								handler.emit_justification(&parent_hash,auth_list.clone());
 							is_first = true;
 							continue;
 						}
@@ -993,7 +1022,7 @@ where
 					post_digests: vec![],
 					body: Some(body),
 					allow_missing_state:true,
-					finalized: true,
+					finalized: false,
 					auxiliary: Vec::new(),
 					fork_choice: ForkChoiceStrategy::LongestChain,
 					import_existing:false
@@ -1024,6 +1053,7 @@ where
 						telemetry!(CONSENSUS_WARN; "mushroom.err_with_block_built_on";
 							"hash" => ?eh, "err" => ?e);
 					}
+					handler.emit_justification(&parent_hash,auth_list.clone());
 				}
 				
 			}

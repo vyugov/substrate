@@ -3,13 +3,24 @@ use badger::queueing_honey_badger::QueueingHoneyBadger;
 use badger::sender_queue::{Message as BMessage, SenderQueue};
 use badger::sync_key_gen::{Ack, AckOutcome, Part, PartOutcome, PubKeyMap, SyncKeyGen};//AckFault
 use keystore::KeyStorePtr;
+use runtime_primitives::generic::BlockId;
+use sc_api::{Backend,AuxStore};
 //use runtime_primitives::app_crypto::RuntimeAppPublic;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 //use std::convert::TryInto;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
+use gossip::BadgerJustification;
+use runtime_primitives::Justification;
 
+use client::{
+	CallExecutor, Client, well_known_cache_keys
+};
+use gossip::{BadgerFullJustification,BadgerAuthCommit};
+use substrate_primitives::{Blake2Hasher,};
+use hash_db::Hasher;
+use badger_primitives::AuthoritySignature;
 //use badger::dynamic_honey_badger::KeyGenMessage::Ack;
 use crate::aux_store::BadgerPersistentData;
 use badger::crypto::{PublicKey, PublicKeySet, SecretKey, SecretKeyShare}; //PublicKeyShare, Signature
@@ -47,7 +58,7 @@ use crate::Error;
 
 mod peerid;
 pub use peerid::PeerIdW;
-
+pub const MAX_DELAYED_JUSTIFICATIONS:u64=10 ;
 //use badger_primitives::NodeId;
 
 //use badger::{SourcedMessage as BSM,  TargetedMessage};
@@ -426,10 +437,20 @@ where
   AwaitingJoinPlan,
 }
 
-pub struct BadgerStateMachine<B: BlockT, D>
+pub struct JustificationCollector<B:BlockT>
+{
+ /// contemporary authorities for this block hash
+ pub contemp_auth:Option<Vec<AuthorityId>>,
+ pub justification:Vec<BadgerJustification<B>>
+}
+use network::ClientHandle as NetClient;
+pub use sp_blockchain::{HeaderBackend,HeaderMetadata};
+pub struct BadgerStateMachine<B: BlockT, D,Cl>
 where
   D: ConsensusProtocol<NodeId = NodeId>, //specialize to avoid some of the confusion
   D::Message: Serialize + DeserializeOwned,
+  B::Hash :Ord,
+  Cl:NetClient<B>
 {
   pub state: BadgerState<B, D>,
   pub peers: Peers,
@@ -438,7 +459,11 @@ where
   pub persistent: BadgerPersistentData,
   pub keystore: KeyStorePtr,
   pub cached_origin: Option<AuthorityPair>,
-  pub queued_messages: Vec<(u64, GossipMessage)>,
+  pub queued_messages: Vec<(u64, GossipMessage<B>)>,
+  pub justification_collector: BTreeMap<B::Hash,JustificationCollector<B>>,
+  pub delayed_justifications:Vec<(u64,BadgerJustification<B> )>,
+  pub client: Arc<Cl>,
+  pub finalizer: Box<dyn FnMut( &B::Hash,Option<Justification>)->bool+Send+Sync>,
 }
 
 const MAX_QUEUE_LEN: usize = 1024;
@@ -460,21 +485,44 @@ pub enum SyncKeyGenMessage
   Ack(NodeId, Ack),
 }
 
-pub struct BadgerContainer<Block: BlockT, N: Network<Block>>
+pub struct BadgerContainer<Block: BlockT, N: Network<Block>,Cl>
+where
+Cl:NetClient<Block>,
+Block::Hash:Ord,
 {
-  pub val: Arc<BadgerGossipValidator<Block>>,
+  pub val: Arc<BadgerGossipValidator<Block,Cl>>,
   pub network: N,
 }
 use crate::aux_store;
-use sc_api::AuxStore;
-impl<B, N> BadgerHandler for BadgerContainer<B, N>
+
+impl<B, N,Cl> BadgerHandler<B> for BadgerContainer<B, N,Cl>
 where
   B: BlockT,
   N: Network<B>,
+  Cl:NetClient<B>,
+  B::Hash:Ord,
 {
-  fn vote_for_validators<Be>(&self, auths: Vec<AuthorityId>, backend: &Be) -> Result<(), Error>
+  fn get_current_authorities(&self)->AuthorityList
+  {
+    let cloned:Vec<_>;
+    {
+    let locked=self.val.inner.read();
+    cloned=locked.persistent.authority_set.inner.read().current_authorities.iter().cloned().collect();
+    }
+    cloned
+  }
+
+  fn emit_justification(&self,hash:&B::Hash,auth_list:AuthorityList)
+  {
+  {
+    let locked=self.val.inner.read();
+    if !locked.is_authority() { return;}
+  }
+  self.val.do_emit_justification(hash, &self.network,auth_list)
+  }
+  fn vote_for_validators<SBe>(&self, auths: Vec<AuthorityId>, backend: &SBe) -> Result<(), Error>
   where
-    Be: AuxStore,
+    SBe: AuxStore,
   {
     {
       let lock = self.val.inner.read();
@@ -506,9 +554,9 @@ where
     self.val.do_vote_change_enc_schedule(e, &self.network)
   }
   fn notify_node_set(&self, _v: Vec<NodeId>) {}
-  fn update_validators<Be>(&self, new_validators: BTreeMap<NodeId, AuthorityId>, backend: &Be)
+  fn update_validators<SBe>(&self, new_validators: BTreeMap<NodeId, AuthorityId>, backend: &SBe)
   where
-    Be: AuxStore,
+    SBe: AuxStore,
   {
     let nex_set;
     let aux: BadgerAuxCrypto;
@@ -587,17 +635,98 @@ where
         let sgn = lock.cached_origin.as_ref().unwrap().sign(&ses_mes.encode());
         SessionMessage { ses: ses_mes, sgn: sgn }
       };
-      let packet_data = GossipMessage::Session(packet).encode();
+      let packet_data = GossipMessage::<B>::Session(packet).encode();
       self.network.register_gossip_message(topic, packet_data);
     }
   }
 }
 
-impl<B: BlockT> BadgerStateMachine<B, QHB>
+pub struct WHash<A:AsRef<[u8]>>(A);
+impl<A:AsRef<[u8]>> std::cmp::Ord  for WHash<A> 
+{
+  fn cmp(&self, other: &Self) -> std::cmp::Ordering 
+  {
+    let our_bytes=self.0.as_ref();
+    let other_bytes=other.0.as_ref();
+    if our_bytes.len()>other_bytes.len() {return  std::cmp::Ordering::Greater;}
+    if our_bytes.len()<other_bytes.len() {return  std::cmp::Ordering::Less;}
+    let miter=our_bytes.iter().zip(other_bytes.iter());
+    for (a,b) in miter
+    {
+       let c=a.cmp(b);
+       if c!= std::cmp::Ordering::Equal
+       {
+         return c;
+       }
+    }
+    std::cmp::Ordering::Equal
+  }
+}
+impl<A:AsRef<[u8]>> std::cmp::Eq  for WHash<A> 
+{
+}
+
+impl<A:AsRef<[u8]>> From<A> for WHash<A>
+{
+  fn from(inp:A) -> Self
+  {
+  WHash{0:inp}
+  }
+}
+
+impl<A:AsRef<[u8]>> std::cmp::PartialEq  for WHash<A> 
+{
+  fn eq(&self, other: &Self) -> bool 
+  {
+    let our_bytes=self.0.as_ref();
+    let other_bytes=other.0.as_ref();
+    if our_bytes.len()>other_bytes.len() {return false;}
+    if our_bytes.len()<other_bytes.len() {return  false;}
+    let miter=our_bytes.iter().zip(other_bytes.iter());
+    for (a,b) in miter
+    {
+       let c=a.cmp(b);
+       if c!= std::cmp::Ordering::Equal
+       {
+         return false;
+       }
+    }
+    true
+  }
+}
+
+
+impl<A:AsRef<[u8]>> std::cmp::PartialOrd  for WHash<A> 
+{
+  fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering>
+  {
+    let our_bytes=self.0.as_ref();
+    let other_bytes=other.0.as_ref();
+    if our_bytes.len()>other_bytes.len() {return  Some(std::cmp::Ordering::Greater);}
+    if our_bytes.len()<other_bytes.len() {return  Some(std::cmp::Ordering::Less);}
+    let miter=our_bytes.iter().zip(other_bytes.iter());
+    for (a,b) in miter
+    {
+       let c=a.cmp(b);
+       if c!= std::cmp::Ordering::Equal
+       {
+         return Some(c);
+       }
+    }
+    Some(std::cmp::Ordering::Equal)
+  }
+}
+
+
+impl<B: BlockT,Cl> BadgerStateMachine<B, QHB,Cl>
+where
+Cl:NetClient<B>,
+B::Hash:Ord,
 {
   pub fn new(
     keystore: KeyStorePtr, self_peer: PeerId, batch_size: u64, persist: BadgerPersistentData,
-  ) -> BadgerStateMachine<B, QHB>
+    client:Arc<Cl>,finalizer: Box<dyn FnMut( &B::Hash,Option<Justification>)->bool+Send+Sync>,
+  ) -> BadgerStateMachine<B, QHB,Cl>
   {
     let ap: AuthorityPair;
     let is_ob: bool;
@@ -621,12 +750,17 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
         my_peer_id: self_peer.clone(),
         batch_size: batch_size,
         my_auth_id: ap.public(),
+        
       },
       queued_transactions: Vec::new(),
       keystore: keystore.clone(),
       cached_origin: Some(ap),
       persistent: persist,
       queued_messages: Vec::new(),
+      justification_collector:BTreeMap::new(),
+      delayed_justifications:Vec::new(),
+      client:client.clone(),
+      finalizer:finalizer
     }
   }
 
@@ -645,6 +779,94 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
       }
       self.cached_origin = Some(pair);
     }
+  }
+  pub fn process_justification(n_jst:BadgerJustification<B>, existing:&mut JustificationCollector<B>)
+  {
+    //self.load_origin();
+
+    if existing.contemp_auth.is_none()
+    {
+      warn!("Should never be the case! - no authorities for block");
+      return;
+    }
+    if existing.justification.iter().find(|x| x.validator==n_jst.validator).is_none()
+     {
+      if existing.contemp_auth.as_ref().unwrap().iter().find(|&x| *x==n_jst.validator).is_some()
+      {
+      existing.justification.push(n_jst);
+      }
+    }
+  }
+  pub fn check_justification_completion(&mut self,hkey: &B::Hash)->bool
+  {
+    let  existing= match self.justification_collector.get_mut(hkey)
+    {
+      Some(k) => k,
+      None => {return false;}
+    };
+
+    let authn=existing.contemp_auth.as_ref().unwrap().len();
+    let tolerated= authn - badger::util::max_faulty(authn);
+    let collected=existing.justification.len();
+    if collected>=tolerated
+    {//justification complete
+      let hash=existing.justification[0].hash.clone();
+      let full = BadgerFullJustification::<B>
+      {
+        hash:hash.clone(),
+        commits: existing.justification.drain(..).map(|x| BadgerAuthCommit{validator:x.validator,sgn:x.sgn}).collect()
+      };
+
+      (self.finalizer)(&hash,Some(full.encode()));
+
+      for tpl in self.delayed_justifications.iter_mut()
+      {
+        (*tpl).0+=1;
+      }
+      self.delayed_justifications.retain(|x| x.0<MAX_DELAYED_JUSTIFICATIONS);
+      
+      true
+    }
+    else
+    {
+      false
+    }
+  }
+  pub fn initiate_block_justification(&mut self,n_jst:BadgerJustification<B>,auth_list:AuthorityList)
+  {
+    self.load_origin();
+    let hkey=n_jst.hash.clone();
+    {
+  let  existing=self.justification_collector.entry(hkey.clone()).or_insert(
+      JustificationCollector {
+      contemp_auth:Some(auth_list),
+      justification:Vec::new(),
+       });
+       if existing.contemp_auth.is_none()
+       {
+         warn!("Should never be the case!");
+         return;
+       }
+  let mut remaining:Vec<_>=Vec::new();     
+  for jst in self.delayed_justifications.drain(..)
+   {
+   if jst.1.hash==n_jst.hash
+    {
+    //justification
+    Self::process_justification(jst.1,existing)
+    }
+    else
+    {
+    remaining.push(jst);
+    }
+   }
+   self.delayed_justifications=remaining;
+   Self::process_justification(n_jst, existing);
+  }
+  if self.check_justification_completion(&hkey)
+  {
+    self.justification_collector.remove(&hkey);
+  }
   }
   pub fn queue_transaction(&mut self, tx: Vec<u8>) -> Result<(), Error>
   {
@@ -676,7 +898,7 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
     }
   }
 
-  pub fn proceed_to_badger(&mut self) -> Vec<(LocalTarget, GossipMessage)>
+  pub fn proceed_to_badger(&mut self) -> Vec<(LocalTarget, GossipMessage<B>)>
   {
     self.load_origin();
 
@@ -707,7 +929,7 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
     Vec::new()
   }
 
-  pub fn proceed_to_keygen(&mut self) -> Vec<(LocalTarget, GossipMessage)>
+  pub fn proceed_to_keygen(&mut self) -> Vec<(LocalTarget, GossipMessage<B>)>
   {
     self.load_origin();
 
@@ -849,7 +1071,7 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
     aset.current_authorities.contains(&aset.self_id)
   }
 
-  pub fn process_decoded_message(&mut self, message: &GossipMessage) -> (SAction, Vec<(LocalTarget, GossipMessage)>)
+  pub fn process_decoded_message(&mut self, message: &GossipMessage<B>) -> (SAction, Vec<(LocalTarget, GossipMessage<B>)>)
   {
     let cset_id;
     {
@@ -866,7 +1088,7 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
         if ses_msg.ses.ses_id == cset_id
         //??? needs session versions
         {
-          let mut ret_msgs: Vec<(LocalTarget, GossipMessage)> = Vec::new();
+          let mut ret_msgs: Vec<(LocalTarget, GossipMessage<B>)> = Vec::new();
           self
             .peers
             .update_id(&ses_msg.ses.peer_id.0, ses_msg.ses.session_key.clone());
@@ -923,16 +1145,7 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
       GossipMessage::KeygenData(wkgen) =>
       {
         info!("Got Keygen message!");
-        /*let  kgen:SyncKeyGenMessage= match bincode::deserialize(&wkgen.data)
-        {
-          Ok(data) =>data,
-          Err(_) =>
-          {
-            info!("Invalid keygen data");
-            return (SAction::Discard,Vec::new());
-          }
-        };*/
-        // let num_auth = self.persistent.authority_set.inner.read().current_authorities.len();
+
         /*
         Got data from key generation. If we are still waiting for peers, cache it for the moment.
         If we are done with keygen and are in badger state... hmm, this is gossip. Ignore and propagate?
@@ -1088,6 +1301,60 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
             return (SAction::Discard, Vec::new());
           }
         }
+      },
+      GossipMessage::JustificationData(just) =>
+      {
+        if !just.verify()
+        {
+          return (SAction::Discard, Vec::new()); 
+        }
+        let b_id=BlockId::Hash(just.hash);
+        let hd=self.client.header(&b_id);
+        let info = self.client.info().chain;
+        let finalized_number = info.finalized_number;
+
+        match hd 
+        {
+         Ok(opt) =>
+         {
+           if let Some(hdr)=opt
+           {
+           if *hdr.number()<=finalized_number
+            {
+              //we already have justification, hopefully
+              info!("Discarding old justification");
+              return  (SAction::Discard, Vec::new());
+            }
+           }
+         }
+         Err(_) =>{}
+        }
+        info!("Got justification for {:?}",&just.hash);
+        let hkey=just.hash.clone();
+         match self.justification_collector.get_mut(&hkey)
+         {
+           Some(existing) => {
+            Self::process_justification(just.clone(),existing);
+            if self.check_justification_completion(&hkey)
+            {
+              self.justification_collector.remove(&hkey);
+            }
+
+           },
+           None =>
+           {
+             if self.delayed_justifications.iter().find( |x| (x.1.hash==just.hash && x.1.validator==just.validator)).is_some()
+             {
+                return  (SAction::Discard, Vec::new());
+             }
+          self.delayed_justifications.push((0,just.clone()));
+           }
+         }
+          
+         
+        
+     
+       (SAction::PropagateOnce,Vec::new())
       }
     }
   }
@@ -1165,7 +1432,7 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
 
   pub fn process_message(
     &mut self, _who: &PeerId, mut data: &[u8],
-  ) -> (SAction, Vec<(LocalTarget, GossipMessage)>, Option<GossipMessage>)
+  ) -> (SAction, Vec<(LocalTarget, GossipMessage<B>)>, Option<GossipMessage<B>>)
   {
     match GossipMessage::decode(&mut data)
     {
@@ -1191,10 +1458,10 @@ impl<B: BlockT> BadgerStateMachine<B, QHB>
   }
   pub fn process_and_replay(
     &mut self, who: &PeerId, data: &[u8],
-  ) -> (Vec<(SAction, Option<GossipMessage>)>, Vec<(LocalTarget, GossipMessage)>)
+  ) -> (Vec<(SAction, Option<GossipMessage<B>>)>, Vec<(LocalTarget, GossipMessage<B>)>)
   {
-    let mut acc: Vec<(LocalTarget, GossipMessage)> = Vec::new();
-    let mut vals: Vec<(SAction, Option<GossipMessage>)> = Vec::new();
+    let mut acc: Vec<(LocalTarget, GossipMessage<B>)> = Vec::new();
+    let mut vals: Vec<(SAction, Option<GossipMessage<B>>)> = Vec::new();
     let (action, mut repl, msg) = self.process_message(who, data);
     acc.append(&mut repl);
     match action
@@ -1435,13 +1702,19 @@ impl<B: BlockT> BadgerNode<B, QHB>
     }
   }
 }
-pub struct BadgerGossipValidator<Block: BlockT>
+pub struct BadgerGossipValidator<Block: BlockT,Cl>
+where
+Block::Hash:Ord,
+Cl:NetClient<Block>
 {
   // peers: RwLock<Arc<Peers>>,
-  inner: RwLock<BadgerStateMachine<Block, QHB>>,
+  inner: RwLock<BadgerStateMachine<Block, QHB,Cl>>,
   pending_messages: RwLock<BTreeMap<PeerIdW, Vec<Vec<u8>>>>,
 }
-impl<Block: BlockT> BadgerGossipValidator<Block>
+impl<Block: BlockT,Cl> BadgerGossipValidator<Block,Cl>
+where
+Cl:NetClient<Block>,
+Block::Hash:Ord,
 {
   fn send_message_either<N: Network<Block>>(
     &self, who: &PeerId, vdata: Vec<u8>, context_net: Option<&N>,
@@ -1459,7 +1732,7 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
     }
   }
   fn flush_message_either<N: Network<Block>>(
-    &self, additional: &mut Vec<(LocalTarget, GossipMessage)>, context_net: Option<&N>,
+    &self, additional: &mut Vec<(LocalTarget, GossipMessage<Block>)>, context_net: Option<&N>,
     context_val: &mut Option<&mut dyn ValidatorContext<Block>>,
   )
   {
@@ -1608,11 +1881,11 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
     info!("BaDGER!! Exit flush {:?}", thread::current().id());
   }
   /// Create a new gossip-validator.
-  pub fn new(keystore: KeyStorePtr, self_peer: PeerId, batch_size: u64, persist: BadgerPersistentData) -> Self
+  pub fn new(keystore: KeyStorePtr, self_peer: PeerId, batch_size: u64, persist: BadgerPersistentData, client:Arc<Cl>,finalizer: Box<dyn FnMut( &Block::Hash,Option<Justification>)->bool+Send+Sync>,) -> Self
   {
     Self {
-      inner: RwLock::new(BadgerStateMachine::<Block, QHB>::new(
-        keystore, self_peer, batch_size, persist,
+      inner: RwLock::new(BadgerStateMachine::<Block, QHB,Cl>::new(
+        keystore, self_peer, batch_size, persist,client,finalizer
       )),
       pending_messages: RwLock::new(BTreeMap::new()),
     }
@@ -1669,6 +1942,36 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
     }
 
     Ok(())
+  }
+  pub fn do_emit_justification<N: Network<Block>>(&self,hash:&Block::Hash, net: &N,auth_list:AuthorityList)
+  {
+    if !self.is_validator()
+    {
+      return;
+    }
+    info!("Emitting Justification");
+    
+    let sgn;
+    let authid;
+    {
+      let mut inner=self.inner.write();
+      inner.load_origin();
+      sgn = inner.cached_origin.as_ref().unwrap().sign(&hash.encode());
+      authid=inner.cached_origin.as_ref().unwrap().public();
+    }
+  let jus= BadgerJustification::<Block>
+   {
+    hash:hash.clone(),
+     validator:authid,
+     sgn:sgn 
+   };
+   {
+    let mut inner=self.inner.write();
+    inner.initiate_block_justification(jus.clone(),auth_list);
+   }
+   {
+    self.flush_message_either(&mut vec![ (LocalTarget::AllExcept(BTreeSet::new()), GossipMessage::JustificationData(jus) ) ], Some(net), &mut None);
+   }
   }
   pub fn do_vote_validators<N: Network<Block>>(&self, auths: Vec<AuthorityId>, net: &N) -> Result<(), Error>
   {
@@ -1740,7 +2043,11 @@ impl<Block: BlockT> BadgerGossipValidator<Block>
 }
 use gossip::PeerConsensusState;
 
-impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<Block>
+impl<Block: BlockT,Cl> network_gossip::Validator<Block> for BadgerGossipValidator<Block,Cl>
+where
+Cl:NetClient<Block>,
+Block::Hash:Ord,
+
 {
   fn new_peer(&self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, _roles: Roles)
   {
@@ -1765,7 +2072,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
     };
 
     //if let Some(packet) = packet {
-    let packet_data = GossipMessage::Session(packet).encode();
+    let packet_data = GossipMessage::<Block>::Session(packet).encode();
     context.send_message(who, packet_data);
     //}
   }
@@ -1843,7 +2150,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
 
   fn message_allowed<'b>(&'b self) -> Box<dyn FnMut(&PeerId, MessageIntent, &Block::Hash, &[u8]) -> bool + 'b>
   {
-    info!("MessageAllowed 2");
+   // info!("MessageAllowed 2");
     Box::new(move |who, intent, topic, mut data| {
       // if the topic is not something we're keeping at the moment,
       // do not send.
@@ -1865,12 +2172,13 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
         Some(x) => x,
       };
     }
-      match GossipMessage::decode(&mut data)
+      match GossipMessage::<Block>::decode(&mut data)
       {
         Err(_) => false,
         Ok(GossipMessage::BadgerData(_)) => return true,
         Ok(GossipMessage::KeygenData(_)) => return true,
         Ok(GossipMessage::Session(_)) => true,
+        Ok(GossipMessage::JustificationData(_)) =>return true,
       }
     })
   }
@@ -1885,7 +2193,7 @@ impl<Block: BlockT> network_gossip::Validator<Block> for BadgerGossipValidator<B
         return true;
       }
 
-      match GossipMessage::decode(&mut data)
+      match GossipMessage::<Block>::decode(&mut data)
       {
         Err(_) => true,
         Ok(GossipMessage::Session(ses_data)) =>
@@ -2046,23 +2354,29 @@ impl Stream for NetworkStream
 }
 
 /// Bridge between the underlying network service, gossiping consensus messages and Badger
-pub struct NetworkBridge<B: BlockT, N: Network<B>>
+pub struct NetworkBridge<B: BlockT, N: Network<B>,Cl>
+where
+Cl:NetClient<B>,
+B::Hash:Ord,
 {
   service: N,
-  node: Arc<BadgerGossipValidator<B>>,
+  node: Arc<BadgerGossipValidator<B,Cl>>,
 }
 
-impl<B: BlockT, N: Network<B>> NetworkBridge<B, N>
+impl<B: BlockT, N: Network<B>,Cl> NetworkBridge<B, N,Cl>
+where
+Cl:NetClient<B>+'static,
+B::Hash:Ord,
 {
   /// Create a new NetworkBridge to the given NetworkService. Returns the service
   /// handle and a future that must be polled to completion to finish startup.
   /// If a voter set state is given it registers previous round votes with the
   /// gossip service.
   pub fn new(
-    service: N, config: crate::Config, keystore: KeyStorePtr, persist: BadgerPersistentData,
+    service: N, config: crate::Config, keystore: KeyStorePtr, persist: BadgerPersistentData,client:Arc<Cl>,finalizer: Box<dyn FnMut( &B::Hash,Option<Justification>)->bool+Send+Sync>,
   ) -> (Self, impl futures03::future::Future<Output = ()> + Send + Unpin)
   {
-    let validator = BadgerGossipValidator::new(keystore, service.local_id().clone(), config.batch_size.into(), persist);
+    let validator = BadgerGossipValidator::new(keystore, service.local_id().clone(), config.batch_size.into(), persist,client,finalizer);
     let validator_arc = Arc::new(validator);
     service.register_validator(validator_arc.clone());
 
@@ -2093,12 +2407,12 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N>
   ) -> (
     impl Stream<Item = <QHB as ConsensusProtocol>::Output>,
     impl SendOut,
-    impl BadgerHandler,
+    impl BadgerHandler<B>,
   )
   {
-    let incoming = incoming_global::<B, N>(self.node.clone());
+    let incoming = incoming_global::<B, N,Cl>(self.node.clone());
 
-    let outgoing = TransactionFeed::<B, N>::new(self.service.clone(), is_voter, self.node.clone());
+    let outgoing = TransactionFeed::<B, N,Cl>::new(self.service.clone(), is_voter, self.node.clone());
     let handler = BadgerContainer {
       val: self.node.clone(),
       network: self.service.clone(),
@@ -2107,14 +2421,20 @@ impl<B: BlockT, N: Network<B>> NetworkBridge<B, N>
   }
 }
 
-fn incoming_global<B: BlockT, N: Network<B>>(
-  gossip_validator: Arc<BadgerGossipValidator<B>>,
-) -> impl Stream<Item = <QHB as ConsensusProtocol>::Output>
+fn incoming_global<B: BlockT, N: Network<B>,Cl>(
+  gossip_validator: Arc<BadgerGossipValidator<B,Cl>>,
+)-> impl Stream<Item = <QHB as ConsensusProtocol>::Output>
+where
+Cl:NetClient<B>,
+B::Hash:Ord,
 {
   BadgerStream::new(gossip_validator.clone())
 }
 
-impl<B: BlockT, N: Network<B>> Clone for NetworkBridge<B, N>
+impl<B: BlockT, N: Network<B>,Cl> Clone for NetworkBridge<B, N,Cl>
+where
+Cl:NetClient<B>,
+B::Hash:Ord,
 {
   fn clone(&self) -> Self
   {
@@ -2125,23 +2445,31 @@ impl<B: BlockT, N: Network<B>> Clone for NetworkBridge<B, N>
   }
 }
 
-pub trait BadgerHandler
+pub trait BadgerHandler<B:BlockT>
 {
   fn vote_for_validators<Be: AuxStore>(&self, auths: Vec<AuthorityId>, backend: &Be) -> Result<(), Error>;
   fn vote_change_encryption_schedule(&self, e: EncryptionSchedule) -> Result<(), Error>;
   fn notify_node_set(&self, vc: Vec<NodeId>); // probably not too important, though ve might want to make sure nodea are connected
-
+ 
   fn update_validators<Be: AuxStore>(&self, new_validators: BTreeMap<NodeId, AuthorityId>, backend: &Be);
+  fn emit_justification(&self,hash:&B::Hash,auth_list:AuthorityList);
+  fn get_current_authorities(&self) -> AuthorityList;
 }
 
-pub struct BadgerStream<Block: BlockT>
+pub struct BadgerStream<Block: BlockT,Cl>
+where
+Cl:NetClient<Block>,
+Block::Hash:Ord,
 {
-  validator: Arc<BadgerGossipValidator<Block>>,
+  validator: Arc<BadgerGossipValidator<Block,Cl>>,
 }
 
-impl<Block: BlockT> BadgerStream<Block>
+impl<Block: BlockT,Cl> BadgerStream<Block,Cl>
+where 
+Cl:NetClient<Block>,
+Block::Hash:Ord,
 {
-  fn new(gossip_validator: Arc<BadgerGossipValidator<Block>>) -> Self
+  fn new(gossip_validator: Arc<BadgerGossipValidator<Block,Cl>>) -> Self
   {
     BadgerStream {
       validator: gossip_validator,
@@ -2149,7 +2477,10 @@ impl<Block: BlockT> BadgerStream<Block>
   }
 }
 
-impl<Block: BlockT> Stream for BadgerStream<Block>
+impl<Block: BlockT,Cl> Stream for BadgerStream<Block,Cl>
+where
+Cl:NetClient<Block>,
+Block::Hash:Ord,
 {
   type Item = <QHB as ConsensusProtocol>::Output;
 
@@ -2164,10 +2495,13 @@ impl<Block: BlockT> Stream for BadgerStream<Block>
 }
 
 /// An output sink for commit messages.
-struct TransactionFeed<Block: BlockT, N: Network<Block>>
+struct TransactionFeed<Block: BlockT, N: Network<Block>,Cl>
+where
+Cl:NetClient<Block>,
+Block::Hash:Ord,
 {
   network: N,
-  gossip_validator: Arc<BadgerGossipValidator<Block>>,
+  gossip_validator: Arc<BadgerGossipValidator<Block,Cl>>,
 }
 
 pub trait SendOut
@@ -2175,9 +2509,12 @@ pub trait SendOut
   fn send_out(&mut self, input: Vec<Vec<u8>>) -> Result<(), Error>;
 }
 
-impl<Block: BlockT, N: Network<Block>> TransactionFeed<Block, N>
+impl<Block: BlockT, N: Network<Block>,Cl> TransactionFeed<Block, N,Cl>
+where
+Cl:NetClient<Block>,
+Block::Hash:Ord,
 {
-  pub fn new(network: N, _is_voter: bool, gossip_validator: Arc<BadgerGossipValidator<Block>>) -> Self
+  pub fn new(network: N, _is_voter: bool, gossip_validator: Arc<BadgerGossipValidator<Block,Cl>>) -> Self
   {
     TransactionFeed {
       network,
@@ -2186,7 +2523,10 @@ impl<Block: BlockT, N: Network<Block>> TransactionFeed<Block, N>
     }
   }
 }
-impl<Block: BlockT, N: Network<Block>> SendOut for TransactionFeed<Block, N>
+impl<Block: BlockT, N: Network<Block>,Cl> SendOut for TransactionFeed<Block, N,Cl>
+where
+Cl:NetClient<Block>,
+Block::Hash:Ord,
 {
   fn send_out(&mut self, input: Vec<Vec<u8>>) -> Result<(), Error>
   {
@@ -2252,7 +2592,10 @@ impl<'g, 'p, B: BlockT> ValidatorContext<B> for NetworkSubtext<'g, 'p, B>
   }
 }
 
-impl<Block: BlockT, N: Network<Block>> Sink<Vec<Vec<u8>>> for TransactionFeed<Block, N>
+impl<Block: BlockT, N: Network<Block>,Cl> Sink<Vec<Vec<u8>>> for TransactionFeed<Block, N,Cl>
+where
+Cl:NetClient<Block>,
+Block::Hash:Ord,
 {
   type Error = Error;
 

@@ -631,7 +631,7 @@ impl<T: Trait> Module<T> {
 
 	// perform the set_key operation, checking for duplicates.
 	// does not set `Changed`.
-	fn do_set_keys(who: &T::ValidatorId, keys: T::Keys) -> dispatch::Result {
+	pub fn do_set_keys(who: &T::ValidatorId, keys: T::Keys) -> dispatch::Result {
 		let old_keys = Self::load_keys(&who);
 
 		for id in T::Keys::key_ids() {

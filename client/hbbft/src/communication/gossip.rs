@@ -1,4 +1,4 @@
-//use runtime_primitives::traits::Block as BlockT;
+use runtime_primitives::traits::Block as BlockT;
 //use network::consensus_gossip::{self as network_gossip, MessageIntent, ValidatorContext};
 use badger_primitives::{AuthorityId, AuthorityPair, AuthoritySignature};
 use network::PeerId; //config::Roles,
@@ -31,15 +31,47 @@ use crate::communication::PeerIdW;
 /// HB gossip message type.
 /// This is the root type that gets encoded and sent on the network.
 #[derive(Debug, Encode, Decode)]
-pub enum GossipMessage
+pub enum GossipMessage<Block: BlockT>
 {
   /// Raw Badger data
   BadgerData(BadgeredMessage),
   KeygenData(BadgeredMessage),
   Session(SessionMessage),
+  JustificationData(BadgerJustification<Block>),
 }
 
-impl GossipMessage
+#[derive(Encode, Decode, Debug,Clone)]
+pub struct BadgerJustification<Block: BlockT> 
+{
+	pub hash: Block::Hash,
+  pub validator:AuthorityId,
+  pub sgn: AuthoritySignature,
+}
+
+#[derive(Encode, Decode, Debug)]
+pub struct BadgerAuthCommit 
+{
+  pub validator:AuthorityId,
+  pub sgn: AuthoritySignature,
+}
+
+
+#[derive(Encode, Decode, Debug)]
+pub struct BadgerFullJustification<Block: BlockT> 
+{
+	pub hash: Block::Hash,
+  pub commits:Vec<BadgerAuthCommit>,
+}
+
+impl<Block: BlockT> BadgerJustification<Block>
+{
+  pub fn verify(&self) -> bool
+  {
+    badger_primitives::app::Public::verify(&self.validator, &self.hash.encode(), &self.sgn)
+  }
+}
+
+impl<B:BlockT> GossipMessage<B>
 {
   pub fn verify(&self) -> bool
   {
@@ -48,6 +80,7 @@ impl GossipMessage
       GossipMessage::BadgerData(data) => data.verify(),
       GossipMessage::KeygenData(data) => data.verify(),
       GossipMessage::Session(data) => data.verify(),
+      GossipMessage::JustificationData(data) =>data.verify(),
     }
   }
 }
