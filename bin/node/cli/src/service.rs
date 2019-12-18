@@ -23,7 +23,7 @@ use std::sync::Arc;
 use sc_consensus_babe;
 use sc_client::{self, LongestChain};
 use grandpa::{self, FinalityProofProvider as GrandpaFinalityProofProvider};
-use mpc::run_task;
+use sc_mpc::run_task;
 use node_executor;
 use node_primitives::Block;
 use node_runtime::{GenesisConfig, RuntimeApi};

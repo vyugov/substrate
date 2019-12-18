@@ -45,6 +45,7 @@ sp-inherents = { version = "2.0.0", path = "../../../primitives/inherents" }
 sp-keyring = { version = "2.0.0", path = "../../../primitives/keyring" }
 sp-io = { version = "2.0.0", path = "../../../primitives/io" }
 sp-consensus = { version = "0.8", path = "../../../primitives/consensus/common" }
+sp-mpc = { path = "../../../primitives/mpc" }
 
 # client dependencies
 sc-client-api = { version = "2.0.0", path = "../../../client/api" }
@@ -62,7 +63,7 @@ sc-basic-authority = { version = "2.0.0", path = "../../../client/basic-authorsh
 sc-service = { version = "2.0.0", default-features = false, path = "../../../client/service" }
 sc-telemetry = { version = "2.0.0", path = "../../../client/telemetry" }
 sc-authority-discovery = { version = "2.0.0",  path = "../../../client/authority-discovery" }
-mpc = { package = "sc-mpc", path = "../../../client/mpc" }
+sc-mpc = { path = "../../../client/mpc" }
 
 # frame dependencies
 pallet-indices = { version = "2.0.0", path = "../../../frame/indices" }
