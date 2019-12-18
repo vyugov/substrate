@@ -11,7 +11,7 @@ use log::{error, info, trace};
 
 use sc_network::message::generic::{ConsensusMessage, Message};
 use sc_network::{NetworkService, PeerId};
-use sc_network_gossip::TopicNotification;
+use sc_network_gossip::{GossipEngine, Network, TopicNotification};
 use sp_runtime::traits::{
 	Block as BlockT, DigestFor, Hash as HashT, Header as HeaderT, NumberFor, ProvideRuntimeApi,
 };
@@ -65,85 +65,14 @@ pub(crate) fn string_topic<B: BlockT>(input: &str) -> B::Hash {
 	<<B::Header as HeaderT>::Hashing as HashT>::hash(input.as_bytes())
 }
 
-use futures::channel::mpsc::UnboundedReceiver;
-impl<B, S, H> Network<B> for Arc<NetworkService<B, S, H>>
-where
-	B: BlockT,
-	S: sc_network::specialization::NetworkSpecialization<B>,
-	H: sc_network::ExHashT,
-{
-	type In = NetworkStream<UnboundedReceiver<TopicNotification>>; //Pin<Box<dyn Stream<Item = TopicNotification> + Send>>>;
-
-	fn messages_for(&self, topic: B::Hash) -> Self::In {
-		let (tx, rx) = oneshot::channel();
-
-		self.with_gossip(move |gossip, _| {
-			let inner_rx = gossip.messages_for(MPC_ENGINE_ID, topic);
-			//	let inner_rx = Compat01As03::new(inner_rx).map(|x| x.unwrap()).boxed();
-			let _ = tx.send(inner_rx);
-		});
-
-		Self::In {
-			outer: rx,
-			inner: None,
-		}
-	}
-
-	fn register_validator(&self, validator: Arc<dyn sc_network_gossip::Validator<B>>) {
-		self.with_gossip(move |gossip, context| {
-			gossip.register_validator(context, MPC_ENGINE_ID, validator)
-		})
-	}
-
-	fn gossip_message(&self, topic: B::Hash, data: Vec<u8>, force: bool) {
-		let msg = ConsensusMessage {
-			engine_id: MPC_ENGINE_ID,
-			data,
-		};
-
-		self.with_gossip(move |gossip, ctx| gossip.multicast(ctx, topic, msg, force))
-	}
-
-	fn register_gossip_message(&self, topic: B::Hash, data: Vec<u8>) {
-		let msg = ConsensusMessage {
-			engine_id: MPC_ENGINE_ID,
-			data,
-		};
-
-		self.with_gossip(move |gossip, _| gossip.register_message(topic, msg))
-	}
-
-	fn send_message(&self, who: Vec<sc_network::PeerId>, data: Vec<u8>) {
-		let msg = ConsensusMessage {
-			engine_id: MPC_ENGINE_ID,
-			data,
-		};
-
-		self.with_gossip(move |gossip, ctx| {
-			for who in &who {
-				gossip.send_message(ctx, who, msg.clone())
-			}
-		})
-	}
-
-	fn report(&self, who: sc_network::PeerId, cost_benefit: i32) {
-		self.report_peer(who, cost_benefit)
-	}
-
-	fn announce(&self, block: B::Hash, associated_data: Vec<u8>) {
-		self.announce_block(block, associated_data)
-	}
-}
-
-struct MessageSender<Block: BlockT, N: Network<Block> + Unpin> {
-	network: N,
+struct MessageSender<Block: BlockT> {
+	network: GossipEngine<Block>,
 	validator: Arc<GossipValidator<Block>>,
 }
 
-impl<Block, N> MessageSender<Block, N>
+impl<Block> MessageSender<Block>
 where
 	Block: BlockT,
-	N: Network<Block> + Unpin,
 {
 	fn broadcast(&self, msg: GossipMessage) {
 		let raw_msg = msg.encode();
@@ -158,10 +87,9 @@ where
 	}
 }
 
-impl<Block, N> Sink<MessageWithReceiver> for MessageSender<Block, N>
+impl<Block> Sink<MessageWithReceiver> for MessageSender<Block>
 where
 	Block: BlockT,
-	N: Network<Block> + Unpin,
 {
 	type Error = Error;
 
@@ -190,22 +118,27 @@ where
 	}
 }
 
-pub(crate) struct NetworkBridge<B: BlockT, N: Network<B>> {
-	pub service: N,
+pub(crate) struct NetworkBridge<B: BlockT> {
+	pub gossip_engine: GossipEngine<B>,
 	pub validator: Arc<GossipValidator<B>>,
 }
 
-impl<B, N> NetworkBridge<B, N>
+impl<B> NetworkBridge<B>
 where
 	B: BlockT,
-	N: Network<B> + Unpin,
-	N::In: Stream<Item = TopicNotification> + Unpin + Send,
 {
-	pub fn new(service: N, config: crate::NodeConfig, local_peer_id: PeerId) -> Self {
+	pub fn new<N: Network<B> + Clone + Send + 'static>(
+		service: N,
+		config: crate::NodeConfig,
+		local_peer_id: PeerId,
+		executor: &impl futures::task::Spawn,
+	) -> Self {
 		let validator = Arc::new(GossipValidator::new(config, local_peer_id));
-		service.register_validator(validator.clone());
-
-		Self { service, validator }
+		let gossip_engine = GossipEngine::new(service, executor, MPC_ENGINE_ID, validator.clone());
+		Self {
+			gossip_engine,
+			validator,
+		}
 	}
 
 	pub fn global(
@@ -216,21 +149,24 @@ where
 	) {
 		let topic = string_topic::<B>("hash"); // related with `fn validate` in gossip.rs
 
-		let incoming = self.service.messages_for(topic).filter_map(|notification| {
-			async {
-				let decoded = GossipMessage::decode(&mut &notification.message[..]);
-				if let Err(e) = decoded {
-					trace!("notification error {:?}", e);
-					println!("NOTIFICATION ERROR");
-					return None;
+		let incoming = self
+			.gossip_engine
+			.messages_for(topic)
+			.filter_map(|notification| {
+				async {
+					let decoded = GossipMessage::decode(&mut &notification.message[..]);
+					if let Err(e) = decoded {
+						trace!("notification error {:?}", e);
+						println!("NOTIFICATION ERROR");
+						return None;
+					}
+					println!("sender in global {:?}", notification.sender);
+					Some((decoded.unwrap(), notification.sender))
 				}
-				println!("sender in global {:?}", notification.sender);
-				Some((decoded.unwrap(), notification.sender))
-			}
-		});
+			});
 
-		let outgoing = MessageSender::<B, N> {
-			network: self.service.clone(),
+		let outgoing = MessageSender::<B> {
+			network: self.gossip_engine.clone(),
 			validator: self.validator.clone(),
 		};
 
@@ -238,10 +174,10 @@ where
 	}
 }
 
-impl<B: BlockT, N: Network<B>> Clone for NetworkBridge<B, N> {
+impl<B: BlockT> Clone for NetworkBridge<B> {
 	fn clone(&self) -> Self {
 		Self {
-			service: self.service.clone(),
+			gossip_engine: self.gossip_engine.clone(),
 			validator: Arc::clone(&self.validator),
 		}
 	}

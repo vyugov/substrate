@@ -68,6 +68,9 @@ mod state_machine;
 
 /// Abstraction over a network.
 pub trait Network<B: BlockT> {
+	/// Return local peer id
+	fn local_peer_id(&self) -> PeerId;
+
 	/// Returns a stream of events representing what happens on the network.
 	fn event_stream(&self) -> Box<dyn futures01::Stream<Item = Event, Error = ()> + Send>;
 
@@ -107,6 +110,9 @@ pub trait Network<B: BlockT> {
 }
 
 impl<B: BlockT, S: NetworkSpecialization<B>, H: ExHashT> Network<B> for Arc<NetworkService<B, S, H>> {
+	fn local_peer_id(&self) -> PeerId {
+		NetworkService::local_peer_id(self)
+	}
 	fn event_stream(&self) -> Box<dyn futures01::Stream<Item = Event, Error = ()> + Send> {
 		Box::new(NetworkService::event_stream(self))
 	}
