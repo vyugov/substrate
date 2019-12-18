@@ -24,7 +24,7 @@ use sp_offchain::STORAGE_PREFIX;
 use sp_runtime::generic::OpaqueDigestItemId;
 use sp_runtime::traits::{Block as BlockT, Header};
 
-mod communication;
+// mod communication;
 mod periodic_stream;
 
 type Count = u16;

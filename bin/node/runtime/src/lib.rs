@@ -127,7 +127,7 @@ impl frame_system::Trait for Runtime {
 	type Version = Version;
 }
 
-impl frame_utility::Trait for Runtime {
+impl pallet_utility::Trait for Runtime {
 	type Event = Event;
 	type Call = Call;
 }
@@ -507,6 +507,7 @@ impl frame_system::offchain::CreateTransaction<Runtime, UncheckedExtrinsic> for 
 	}
 }
 
+<<<<<<< HEAD
 impl htlc::Trait for Runtime {
 	type Time = Timestamp;
 	type AssetId = u32;
@@ -524,6 +525,8 @@ impl mpc::Trait for Runtime {
 	>;
 }
 
+=======
+>>>>>>> 16817ab6b6b529ae32fc8151820c15dd1ed00291
 construct_runtime!(
 	pub enum Runtime where
 		Block = Block,
@@ -531,7 +534,11 @@ construct_runtime!(
 		UncheckedExtrinsic = UncheckedExtrinsic
 	{
 		System: frame_system::{Module, Call, Storage, Config, Event},
+<<<<<<< HEAD
 		Utility: frame_utility::{Module, Call, Event},
+=======
+		Utility: pallet_utility::{Module, Call, Event},
+>>>>>>> 16817ab6b6b529ae32fc8151820c15dd1ed00291
 		Babe: pallet_babe::{Module, Call, Storage, Config, Inherent(Timestamp)},
 		Timestamp: pallet_timestamp::{Module, Call, Storage, Inherent},
 		Authorship: pallet_authorship::{Module, Call, Storage, Inherent},
