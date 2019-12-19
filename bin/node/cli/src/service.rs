@@ -188,7 +188,7 @@ macro_rules! new_full {
 
 			let client = service.client();
 
-			let mpc = run_task(service.client(), backend, service.network(), service.keystore())?;
+			let mpc = run_task(service.client(), backend, service.network(), service.keystore(), service.spawn_task_handle())?;
 			service.spawn_essential_task(mpc);
 
 			let select_chain = service.select_chain()

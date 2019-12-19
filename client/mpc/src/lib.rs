@@ -10,7 +10,7 @@ use futures::{
 	future::{select, FutureExt, TryFutureExt},
 	prelude::{Future, Sink, Stream},
 	stream::StreamExt,
-	task::{Context, Poll},
+	task::{Context, Poll, Spawn},
 };
 use log::{debug, error, info};
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{
@@ -22,7 +22,8 @@ use parking_lot::RwLock;
 use sc_client::Client;
 use sc_client_api::{backend::Backend, BlockchainEvents, CallExecutor, ExecutionStrategy};
 use sc_keystore::KeyStorePtr;
-use sc_network_gossip::{GossipEngine, Network, TopicNotification};
+use sc_network::{PeerId, NetworkService, NetworkStateInfo};
+use sc_network_gossip::{GossipEngine, Network as GossipNetwork, TopicNotification};
 use sp_blockchain::{Error as ClientError, HeaderBackend, Result as ClientResult};
 use sp_core::{
 	offchain::{OffchainStorage, StorageKind},
@@ -46,7 +47,19 @@ use communication::{
 use periodic_stream::PeriodicStream;
 use signer::Signer;
 
-type Count = u16;
+pub trait Network<B: BlockT>: GossipNetwork<B> + Clone + Send + 'static {
+	fn local_peer_id(&self) -> PeerId;
+}
+
+impl<B, S, H> Network<B> for Arc<NetworkService<B, S, H>> where
+	B: BlockT,
+	S: sc_network::specialization::NetworkSpecialization<B>,
+	H: sc_network::ExHashT,
+{
+	fn local_peer_id(&self) -> PeerId {
+		NetworkService::local_peer_id(self)
+	}
+}
 
 #[derive(Debug)]
 pub enum Error {
@@ -59,8 +72,8 @@ pub enum Error {
 #[derive(Clone)]
 pub struct NodeConfig {
 	pub duration: u64,
-	pub threshold: Count,
-	pub players: Count,
+	pub threshold: u16,
+	pub players: u16,
 	pub keystore: Option<KeyStorePtr>,
 }
 
@@ -245,19 +258,21 @@ where
 	(global_in, global_out)
 }
 
-pub fn run_task<B, E, Block, N, RA>(
+pub fn run_task<B, E, Block, N, RA, Ex>(
 	client: Arc<Client<B, E, Block, RA>>,
 	backend: Arc<B>,
 	network: N,
 	keystore: KeyStorePtr,
+	executor: Ex
 ) -> ClientResult<impl futures01::Future<Item = (), Error = ()>>
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
 	E: CallExecutor<Block, Blake2Hasher> + 'static + Send + Sync,
 	Block: BlockT<Hash = H256> + Unpin,
 	Block::Hash: Ord,
-	N: Network<Block> + Clone + Send + Sync + Unpin + 'static,
+	N: Network<Block>,
 	RA: Send + Sync + 'static,
+	Ex: Spawn + 'static,
 {
 	let keyclone = keystore.clone();
 	let config = NodeConfig {
@@ -266,7 +281,7 @@ where
 		players: 3,
 		keystore: Some(keystore),
 	};
-
+	let backend_ = backend.clone();
 	let streamer = client
 		.clone()
 		.import_notification_stream()
@@ -301,13 +316,13 @@ where
 		});
 
 	let local_peer_id = network.local_peer_id();
-	let bridge = NetworkBridge::new(network, config.clone(), local_peer_id, executor);
+	let bridge = NetworkBridge::new(network, config.clone(), local_peer_id, &executor);
 
 	let keygen_work = KeyGenWork::new(
 		client,
 		config,
 		bridge,
-		backend
+		backend_
 			.offchain_storage()
 			.expect("Need offchain for keygen work"),
 	)
@@ -315,5 +330,5 @@ where
 
 	let worker = select(streamer, keygen_work).then(|_| futures::future::ready(Ok(())));
 
-	Ok(worker.map(|_| -> Result<(), ()> { Ok(()) }).compat())
+	Ok(worker.compat())
 }

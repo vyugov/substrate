@@ -100,8 +100,6 @@ mod test {
 		stream,
 	};
 
-	use tokio::runtime::Runtime;
-
 	use super::*;
 
 	#[test]

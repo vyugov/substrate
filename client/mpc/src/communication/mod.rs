@@ -22,7 +22,7 @@ pub mod gossip;
 pub mod message;
 mod peer;
 
-use crate::Error;
+use crate::{NodeConfig, Error};
 
 use gossip::{GossipMessage, GossipValidator, MessageWithReceiver, MessageWithSender};
 use message::{ConfirmPeersMessage, KeyGenMessage, SignMessage};
@@ -129,7 +129,7 @@ where
 {
 	pub fn new<N: Network<B> + Clone + Send + 'static>(
 		service: N,
-		config: crate::NodeConfig,
+		config: NodeConfig,
 		local_peer_id: PeerId,
 		executor: &impl futures::task::Spawn,
 	) -> Self {
