@@ -526,7 +526,7 @@ where
   queued_block:RwLock<Option<B>>, //block awaiting finalization
 	overflow:RwLock<VecDeque<BadgerTransaction>>,
   queued_batches:RwLock<VecDeque<BatchType>>,
-  pub output_message_buffer:Vec<GossipMessage<B>>,
+  pub output_message_buffer:Vec<(LocalTarget, GossipMessage<B>)>,
   pub finalizer: Box<dyn FnMut( &B::Hash,Option<Justification>)->bool+Send+Sync>,
 }
 
@@ -832,9 +832,32 @@ Aux:AuxStore+Send+Sync+'static,
       overflow:RwLock::new(VecDeque::new()),
       queued_batches:RwLock::new(VecDeque::new()),
       queued_block:RwLock::new(None),
-      finalizer:finalizer
+      finalizer:finalizer,
+      output_message_buffer:Vec::new(),
     }
   }
+  pub fn process_extracted(&mut self,logs:Vec<ExtractedLogs<B>>,)
+  {
+  for elog in logs.into_iter()
+   {
+   match elog
+   {
+     ExtractedLogs::ValidatorVote(authids) =>
+     {
+     info!("Voting for: {:?}",authids);
+     self.vote_for_validators(authids);
+     },
+     ExtractedLogs::NewSessionMessage(nsm) =>
+     {
+      let topic = badger_topic::<B>();
+      self.output_message_buffer.push((LocalTarget::AllExcept(BTreeSet::new()),nsm));
+       //net.register_gossip_message(topic,nsm.encode());
+     }
+   }
+   }
+  }
+
+
   pub fn notify_node_set(&self, _v: Vec<NodeId>)
   {
     //TODO
@@ -922,14 +945,23 @@ Aux:AuxStore+Send+Sync+'static,
      // network.register_gossip_message(topic, packet_data);
     }
   }
-  pub fn consume_batch(&mut self, batch:BatchType)->BatchProcResult<B>
+  pub fn consume_batch(&mut self, batch:BatchType)
   {
     if self.queued_block.read().is_some()
     {
       self.queued_batches.write().push_back(batch);
-      return BatchProcResult::Nothing;
+      return;
     }
-    self.batch_to_block(batch)
+    match self.batch_to_block(batch) {
+    BatchProcResult::EmitJustification(hash,alist,logs) => 
+     {   
+      self.initiate_block_justification(hash,alist);
+      self.process_extracted(logs);
+       },
+     BatchProcResult::Completed(logs) =>{ self.process_extracted(logs); },
+     _ =>{}
+      }
+
   }
 
   pub fn pre_finalize(&mut self, hash: &B::Hash,just: Justification) -> BatchProcResult<B>
@@ -1197,45 +1229,107 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
     }
   }
 
-
-  pub fn initiate_block_justification(&mut self,n_jst:BadgerJustification<B>,auth_list:AuthorityList) ->BatchProcResult<B>
+  pub fn extract_state(&mut self)->Vec<(LocalTarget,GossipMessage<B>)>
+  {
+//self.output_message_buffer
+std::mem::replace(&mut self.output_message_buffer,Vec::new())
+  }
+  pub fn  flush_state(&mut self)
   {
     self.load_origin();
-    let hkey=n_jst.hash.clone();
-    {
-  let  existing=self.justification_collector.entry(hkey.clone()).or_insert(
-      JustificationCollector {
-      contemp_auth:Some(auth_list),
-      justification:Vec::new(),
-       });
-       if existing.contemp_auth.is_none()
-       {
-         warn!("Should never be the case!");
-         return BatchProcResult::Nothing; 
-       }
-  let mut remaining:Vec<_>=Vec::new();     
-  for jst in self.delayed_justifications.drain(..)
-   {
-   if jst.1.hash==n_jst.hash
-    {
-    //justification
-    Self::process_justification(jst.1,existing)
-    }
-    else
-    {
-    remaining.push(jst);
-    }
-   }
-   self.delayed_justifications=remaining;
-   Self::process_justification(n_jst, existing);
+   let  sid = self.config.my_peer_id.clone();
+   let  pair = self.cached_origin.clone().unwrap();
+    let mut drain=Vec::new();
+      if let BadgerState::Badger(ref mut state) = &mut self.state
+      {
+        debug!("BaDGER!! Flushing {} messages_net", &state.out_queue.len());
+        drain = state
+          .out_queue
+          .drain(..)
+          .map(|x| {
+            (
+              x.target,
+              GossipMessage::BadgerData(BadgeredMessage::new(pair.clone(), &x.message)),
+            )
+          })
+          .collect();
+      }
+      self.output_message_buffer.append(&mut drain);
+
   }
-  let cres =self.check_justification_completion(&hkey);
-  match cres
+
+  //pub fn initiate_block_justification(&mut self,n_jst:BadgerJustification<B>,auth_list:AuthorityList) ->BatchProcResult<B>
+  pub fn initiate_block_justification(&mut self,hkey: B::Hash,auth_list:AuthorityList) 
   {
-   BatchProcResult::Completed(vc) =>  { self.justification_collector.remove(&hkey);  BatchProcResult::Completed(vc)},
-   BatchProcResult::EmitJustification(hash,alist,logs) => {  BatchProcResult::EmitJustification(hash,alist,logs)  },
-   BatchProcResult::Nothing =>{ BatchProcResult::Nothing }
-  }
+    self.load_origin();
+    let pair=self.cached_origin.as_ref().unwrap().clone();
+    let authid=pair.public();
+    
+//////////////////////////////////////
+    let mut n_hash=hkey;
+    let mut n_list=auth_list;
+    loop 
+    {
+    info!("Emitting Justification {:?}",&n_hash);
+    let sgn;
+    sgn = pair.sign(&n_hash.encode());
+      
+    
+  let n_jst= BadgerJustification::<B>
+   {
+    hash:n_hash.clone(),
+     validator:authid.clone(),
+     sgn:sgn 
+   };
+   let  existing=self.justification_collector.entry(hkey.clone()).or_insert(
+    JustificationCollector {
+    contemp_auth:Some(n_list),
+    justification:Vec::new(),
+     });
+     if existing.contemp_auth.is_none()
+     {
+       warn!("Should never be the case!");
+       return ; 
+     }
+
+
+     {
+      let mut remaining:Vec<_>=Vec::new();     
+      for jst in self.delayed_justifications.drain(..)
+       {
+       if jst.1.hash==n_jst.hash
+        {
+        //justification
+        Self::process_justification(jst.1,existing)
+        }
+        else
+        {
+        remaining.push(jst);
+        }
+       }
+       self.delayed_justifications=remaining;
+       Self::process_justification(n_jst.clone(), existing);
+      }
+      self.output_message_buffer.push((LocalTarget::AllExcept(BTreeSet::new()), GossipMessage::JustificationData(n_jst)) );
+     
+      let cres =self.check_justification_completion(&hkey);
+      match cres
+      {
+       BatchProcResult::Completed(vc) =>  { self.justification_collector.remove(&hkey); self.process_extracted(vc); break},
+       BatchProcResult::EmitJustification(hash,alist,logs) => {  
+                       self.process_extracted(logs); 
+                       n_hash=hash;
+                       n_list=alist;
+                       },
+       BatchProcResult::Nothing =>{ break; }
+      }
+      
+    }
+
+
+/////////////////////////
+
+
   }
   pub fn queue_transaction(&mut self, tx: Vec<u8>) -> Result<(), Error>
   {
@@ -1249,7 +1343,9 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
 
   pub fn push_transaction(
     &mut self, tx: Vec<u8>,
-  ) -> Result<CpStep<QHB>, badger::sender_queue::Error<badger::queueing_honey_badger::Error>>
+  ) ->  Result<(), Error>
+  
+  //Result<CpStep<QHB>, badger::sender_queue::Error<badger::queueing_honey_badger::Error>>
   {
     match &mut self.state
     {
@@ -1257,13 +1353,27 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
       {
         match self.queue_transaction(tx)
         {
-          Ok(_) => Ok(CpStep::<QHB>::default()),
-          Err(_) => Err(badger::sender_queue::Error::Apply(
-            badger::queueing_honey_badger::Error::HandleMessage(badger::dynamic_honey_badger::Error::UnknownSender),
-          )),
+          Ok(_) => Ok(()),
+          Err(_) => Err(Error::Badger("Transaction Queue full".to_owned())),
         }
       }
-      BadgerState::Badger(ref mut node) => node.push_transaction(tx),
+      BadgerState::Badger(ref mut node) =>
+      {
+          match node.push_transaction(tx)
+          {
+            Ok(step) =>
+            {
+              match node.process_step(step)
+              {
+                Ok(_) =>
+                { Ok(()) }
+                Err(e) => return Err(Error::Badger(e.to_string())),
+              }
+            }
+            Err(e) => return Err(Error::Badger(e.to_string())),
+          }
+       
+      } 
     }
   }
 
@@ -1440,7 +1550,7 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
     aset.current_authorities.contains(&aset.self_id)
   }
 
-  pub fn process_decoded_message(&mut self, message: &GossipMessage<B>) -> (SAction, Vec<(LocalTarget, GossipMessage<B>)>)
+  pub fn process_decoded_message(&mut self, message: &GossipMessage<B>) -> SAction
   {
     let cset_id;
     {
@@ -1493,22 +1603,23 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
               ret_msgs = self.proceed_to_keygen();
             }
           }
+          self.output_message_buffer.append(&mut ret_msgs);
           //repropagate
-          return (SAction::PropagateOnce, ret_msgs);
+          return SAction::PropagateOnce;
         }
         else if ses_msg.ses.ses_id < cset_id
         {
           //discard
-          return (SAction::Discard, Vec::new());
+          return SAction::Discard;
         }
         else if ses_msg.ses.ses_id > cset_id + 1
         {
           //?? cache/propagate?
-          return (SAction::Discard, Vec::new());
+          return SAction::Discard;
         }
         else
         {
-          return (SAction::QueueRetry(ses_msg.ses.ses_id.into()), Vec::new());
+          return SAction::QueueRetry(ses_msg.ses.ses_id.into());
         }
       }
       GossipMessage::KeygenData(wkgen) =>
@@ -1526,7 +1637,7 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
           None =>
           {
             info!("Unknown originator for {:?}", &wkgen.originator);
-            return (SAction::QueueRetry(0), Vec::new());
+            return SAction::QueueRetry(0);
           }
         };
         info!("Originator: {:?}, Peer: {:?}", &wkgen.originator, &orid);
@@ -1538,7 +1649,7 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
             Err(_) =>
             {
               warn!("Keygen message should be correct");
-              return (SAction::Discard, Vec::new());
+              return SAction::Discard;
             }
           };
           let acks = step.process_message(&orid, k_message);
@@ -1576,12 +1687,13 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
                 )
                 .expect("Couldn't save keys");
             }
-
-            (SAction::PropagateOnce, self.proceed_to_badger())
+            let mut msgs=self.proceed_to_badger();
+            self.output_message_buffer.append(&mut msgs);
+            SAction::PropagateOnce
           }
           else
           {
-            let ret = acks
+            let mut ret = acks
               .into_iter()
               .map(|msg| {
                 (
@@ -1593,7 +1705,8 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
                 )
               })
               .collect();
-            (SAction::PropagateOnce, ret)
+              self.output_message_buffer.append(&mut ret);
+            SAction::PropagateOnce
           }
         }
         else
@@ -1602,10 +1715,10 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
           if let BadgerState::AwaitingValidators = &mut self.state
           {
             // should buffer here?
-            return (SAction::QueueRetry(1), Vec::new());
+            return SAction::QueueRetry(1);
           }
           // propagate once?
-          return (SAction::PropagateOnce, Vec::new());
+          return SAction::PropagateOnce;
         }
       }
       GossipMessage::BadgerData(bdat) =>
@@ -1616,21 +1729,11 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
           None =>
           {
             info!("Unknown originator for {:?}", &bdat.originator);
-            return (SAction::QueueRetry(0), Vec::new());
+            return SAction::QueueRetry(0);
           }
         };
         //we actually need to process observer state updates if we want to use SendQueue
-        /*if !self
-          .persistent
-          .authority_set
-          .inner
-          .read()
-          .current_authorities
-          .contains(&bdat.originator)
-        {
-          info!("Got Badger message from non-authority, discarding");
-          return (SAction::Discard, Vec::new());
-        }*/
+
         match self.state
         {
           BadgerState::Badger(ref mut badger) =>
@@ -1645,29 +1748,29 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
                   //send is handled separately. trigger propose? or leave it for stream
                   debug!("BadGER: decoded gossip message");
 
-                  return (SAction::Discard, Vec::new());
+                  return SAction::Discard;
                 }
                 Err(e) =>
                 {
                   info!("Error handling badger message {:?}", e);
                   telemetry!(CONSENSUS_DEBUG; "afg.err_handling_msg"; "err" => ?format!("{}", e));
-                  return (SAction::Discard, Vec::new());
+                  return SAction::Discard;
                 }
               }
             }
             else
             {
-              return (SAction::Discard, Vec::new());
+              return SAction::Discard;
             }
           }
           BadgerState::KeyGen(_) | BadgerState::AwaitingValidators =>
           {
-            return (SAction::QueueRetry(2), Vec::new());
+            return SAction::QueueRetry(2);
           }
           _ =>
           {
             warn!("Discarding badger message");
-            return (SAction::Discard, Vec::new());
+            return SAction::Discard;
           }
         }
       },
@@ -1675,7 +1778,7 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
       {
         if !just.verify()
         {
-          return (SAction::Discard, Vec::new()); 
+          return SAction::Discard; 
         }
         let b_id=BlockId::Hash(just.hash);
         let hd=self.client.header(&b_id);
@@ -1693,7 +1796,7 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
             {
               //we already have justification, hopefully
               info!("Discarding old justification");
-              return  (SAction::Discard, Vec::new());
+              return  SAction::Discard;
             }
            }
          }
@@ -1711,8 +1814,15 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
              BatchProcResult::Completed(logs) =>
                  { 
                    self.justification_collector.remove(&hkey);
-
+                   self.process_extracted(logs);
                  } ,
+                 BatchProcResult::Nothing =>{},
+                 BatchProcResult::EmitJustification(hash,alist,logs)=>
+                 {
+                  self.process_extracted(logs);
+                   self.initiate_block_justification(hash, alist);
+                 },
+                 
                 
             }
 
@@ -1722,16 +1832,13 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
             info!("None exists");
              if self.delayed_justifications.iter().find( |x| (x.1.hash==just.hash && x.1.validator==just.validator)).is_some()
              {
-                return  (SAction::Discard, Vec::new());
+                return  SAction::Discard;
              }
           self.delayed_justifications.push((0,just.clone()));
            }
          }
-          
-         
-        
-     
-       (SAction::PropagateOnce,Vec::new())
+         //justification flood
+       SAction::PropagateOnce
       }
     }
   }
@@ -1809,7 +1916,8 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
 
   pub fn process_message(
     &mut self, _who: &PeerId, mut data: &[u8],
-  ) -> (SAction, Vec<(LocalTarget, GossipMessage<B>)>, Option<GossipMessage<B>>)
+  ) -> (SAction,  Option<GossipMessage<B>>)
+  //(SAction, Vec<(LocalTarget, GossipMessage<B>)>, Option<GossipMessage<B>>)
   {
     match GossipMessage::decode(&mut data)
     {
@@ -1819,28 +1927,28 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
         if !message.verify()
         {
           warn!("Invalid message signature in {:?}", &message);
-          return (SAction::Discard, Vec::new(), None);
+          return (SAction::Discard, None);
         }
-        let (a, b) = self.process_decoded_message(&message);
-        return (a, b, Some(message));
+        let a = self.process_decoded_message(&message);
+        return (a, Some(message));
       }
       Err(e) =>
       {
         info!(target: "afg", "Error decoding message {:?}",e);
         telemetry!(CONSENSUS_DEBUG; "afg.err_decoding_msg"; "" => "");
 
-        (SAction::Discard, Vec::new(), None)
+        (SAction::Discard,  None)
       }
     }
   }
+
+
   pub fn process_and_replay(
     &mut self, who: &PeerId, data: &[u8],
-  ) -> (Vec<(SAction, Option<GossipMessage<B>>)>, Vec<(LocalTarget, GossipMessage<B>)>)
+  ) -> Vec<(SAction, Option<GossipMessage<B>>)>//, Vec<(LocalTarget, GossipMessage<B>)>)
   {
-    let mut acc: Vec<(LocalTarget, GossipMessage<B>)> = Vec::new();
     let mut vals: Vec<(SAction, Option<GossipMessage<B>>)> = Vec::new();
-    let (action, mut repl, msg) = self.process_message(who, data);
-    acc.append(&mut repl);
+    let (action,  msg) = self.process_message(who, data);
     match action
     {
       SAction::QueueRetry(tp) =>
@@ -1852,7 +1960,7 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
           None =>
           {}
         }
-        return (vec![(SAction::Discard, None)], acc); //no need to inform upstream, I think
+        return vec![(SAction::Discard, None)] ; //no need to inform upstream, I think
       }
       act =>
       {
@@ -1869,8 +1977,7 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
           for (_, msg) in silly_compiler.into_iter()
           //TODO: use the number eventually
           {
-            let (s_act, mut repl) = self.process_decoded_message(&msg);
-            acc.append(&mut repl);
+            let s_act = self.process_decoded_message(&msg);
             match s_act
             {
               SAction::QueueRetry(tp) =>
@@ -1896,7 +2003,7 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
             break;
           }
         }
-        return (vals, acc);
+        return vals;
       }
     }
   }
@@ -2114,8 +2221,7 @@ Aux:AuxStore+Send+Sync+'static
   }
   fn flush_message_either<N: Network<Block>>(
     &self, additional: &mut Vec<(LocalTarget, GossipMessage<Block>)>, context_net: Option<&N>,
-    context_val: &mut Option<&mut dyn ValidatorContext<Block>>,
-  )
+    context_val: &mut Option<&mut dyn ValidatorContext<Block>>,   )
   {
     info!("BaDGER!! Enter flush {:?}", thread::current().id());
     // let topic = badger_topic::<Block>();
@@ -2125,27 +2231,21 @@ Aux:AuxStore+Send+Sync+'static
     {
       info!("Lock inner");
       let mut locked = self.inner.write();
+      locked.flush_state();
+      //add the buffer...
+      let mut extr=locked.extract_state();
+      drain.append(&mut extr);
       sid = locked.config.my_peer_id.clone();
       pair = locked.cached_origin.clone().unwrap();
-      if let BadgerState::Badger(ref mut state) = &mut locked.state
-      {
-        debug!("BaDGER!! Flushing {} messages_net", &state.out_queue.len());
-        drain = state
-          .out_queue
-          .drain(..)
-          .map(|x| {
-            (
-              x.target,
-              GossipMessage::BadgerData(BadgeredMessage::new(pair.clone(), &x.message)),
-            )
-          })
-          .collect();
-      }
-
+     
       info!("UnLock inner");
       
     }
     drain.append(additional);
+    if drain.len()==0
+    {
+      return;
+    }
     {
       let mut ldict = self.pending_messages.write();
       let plist;
@@ -2296,30 +2396,11 @@ Aux:AuxStore+Send+Sync+'static
 
   pub fn push_transaction<N: Network<Block>>(&self, tx: Vec<u8>, net: &N) -> Result<(), Error>
   {
-    let mut do_flush = false;
-    {
-      let mut locked = self.inner.write();
-      if let BadgerState::Badger(ref mut node) = &mut locked.state
-      {
-        do_flush = match node.push_transaction(tx)
-        {
-          Ok(step) =>
-          {
-            match node.process_step(step)
-            {
-              Ok(_) =>
-              {}
-              Err(e) => return Err(Error::Badger(e.to_string())),
-            };
 
-            node.out_queue.len() > 0
-          }
-          Err(e) => return Err(Error::Badger(e.to_string())),
-        }
-      }
+    {
+     self.inner.write().push_transaction(tx);
     }
     //send messages out
-    if do_flush
     {
       self.flush_message_either(&mut Vec::new(), Some(net), &mut None);
     }
@@ -2328,89 +2409,31 @@ Aux:AuxStore+Send+Sync+'static
   }
   pub fn process_batch<N: Network<Block>>(&self,batch:<QHB as ConsensusProtocol>::Output,net: &N)
   {
-    let res;
     {
-      res=self.inner.write().consume_batch(batch);
+     self.inner.write().consume_batch(batch);
     }
-    match res
     {
-     BatchProcResult::EmitJustification(hash,alist,logs) => 
-     {   
-      self.do_emit_justification(&hash,net,alist);
-      self.process_extracted(logs,net);
-       },
-     BatchProcResult::Completed(logs) =>{ self.process_extracted(logs,net); },
-     _ =>{}
+      self.flush_message_either(&mut Vec::new(), Some(net), &mut None);
     }
-
   }
   
-  pub fn process_extracted<N: Network<Block>>(&self,logs:Vec<ExtractedLogs<Block>>,net: &N)
-  {
-  for elog in logs.into_iter()
-   {
-   match elog
-   {
-     ExtractedLogs::ValidatorVote(authids) =>
-     {
-     info!("Voting for: {:?}",authids);
-     self.do_vote_validators(authids,net);
-     },
-     ExtractedLogs::NewSessionMessage(nsm) =>
-     {
-      let topic = badger_topic::<Block>();
-       net.register_gossip_message(topic,nsm.encode());
-     }
-   }
-   }
-  }
+
   pub fn do_emit_justification<N: Network<Block>>(&self,hash:&Block::Hash, net: &N,auth_list:AuthorityList)
   {
     if !self.is_validator()
     {
       return;
     }
-    let mut n_hash=*hash;
-    let mut n_list=auth_list;
-    loop 
-    {
-    info!("Emitting Justification {:?}",&n_hash);
-    let sgn;
-    let authid;
     {
       let mut inner=self.inner.write();
-      inner.load_origin();
-      let pair=inner.cached_origin.as_ref().unwrap();
-      sgn = pair.sign(&n_hash.encode());
-      authid=pair.public();
-    }
-  let jus= BadgerJustification::<Block>
-   {
-    hash:n_hash.clone(),
-     validator:authid,
-     sgn:sgn 
-   };
-   let nxt;
-   {
-    let mut inner=self.inner.write();
-    nxt= inner.initiate_block_justification(jus.clone(),n_list);
-   }
-   {
-    self.flush_message_either(&mut vec![ (LocalTarget::AllExcept(BTreeSet::new()), GossipMessage::JustificationData(jus) ) ], Some(net), &mut None);
-   }
-   match nxt
-   {
-    BatchProcResult::EmitJustification(hash,alist,logs) => {  n_hash=hash;n_list=alist; self.process_extracted(logs,net); },
-    BatchProcResult::Completed(logs) =>{
-      self.process_extracted(logs,net);
-      break;},
-      _ =>{break;}
-  
+      inner.initiate_block_justification(hash.clone(),auth_list);
+     }
 
-    }
-   
+    {
+      self.flush_message_either(&mut Vec::new(), Some(net), &mut None);
+     }
 
-    }
+
   }
   pub fn do_vote_validators<N: Network<Block>>(&self, auths: Vec<AuthorityId>, net: &N) -> Result<(), Error>
   {
@@ -2419,11 +2442,9 @@ Aux:AuxStore+Send+Sync+'static
       info!("Non-validator cannot vote");
       return Err(Error::Badger("Non-validator".to_string()));
     }
-    let mut do_flush = false;
+
     {
-      info!("DO_VOTE_PRELOCK");
       let mut locked = self.inner.write();
-      info!("DO_VOTE_LOCK");
       match locked.vote_for_validators(auths)
       {
         Ok(_) =>
@@ -2433,14 +2454,9 @@ Aux:AuxStore+Send+Sync+'static
           return Err(Error::Badger(e.to_string()));
         }
       }
-      if let BadgerState::Badger(ref mut node) = &mut locked.state
-      {
-        do_flush = node.out_queue.len() > 0;
-      }
     }
     info!("DO_VOTE");
     //send messages out
-    if do_flush
     {
       self.flush_message_either(&mut Vec::new(), Some(net), &mut None);
     }
@@ -2454,7 +2470,6 @@ Aux:AuxStore+Send+Sync+'static
       info!("Non-validator cannot vote");
       return Err(Error::Badger("Non-validator".to_string()));
     }
-    let mut do_flush = false;
     {
       let mut locked = self.inner.write();
       match locked.vote_change_encryption_schedule(e)
@@ -2466,13 +2481,9 @@ Aux:AuxStore+Send+Sync+'static
           return Err(Error::Badger(e.to_string()));
         }
       }
-      if let BadgerState::Badger(ref mut node) = &mut locked.state
-      {
-        do_flush = node.out_queue.len() > 0;
-      }
+
     }
     //send messages out
-    if do_flush
     {
       self.flush_message_either(&mut Vec::new(), Some(net), &mut None);
     }
@@ -2528,14 +2539,8 @@ BPM:BlockPusherMaker<Block>
   {
     info!("Enter validate {:?}", who);
     let topic = badger_topic::<Block>();
-    let (actions, mut accumulated_output) = self.inner.write().process_and_replay(who, data);//TODO: Locks! cannot use handler inside...
-    self.process_extracted(logs, self.service);
+    let actions = self.inner.write().process_and_replay(who, data);//TODO: Locks! cannot use handler inside...
     let mut ret = network_gossip::ValidationResult::ProcessAndDiscard(topic);
-    if accumulated_output.len() == 0
-    //whatever? does this make any sense?
-    {
-      ret = network_gossip::ValidationResult::Discard;
-    }
     let mut keep: bool = false; //a hack. TODO?
 
     for (action, msg) in actions.into_iter()
@@ -2577,7 +2582,7 @@ BPM:BlockPusherMaker<Block>
 
     {
       info!("Preflush");
-      self.flush_message_either::<ShutUp>(&mut accumulated_output, None, &mut Some(context));
+      self.flush_message_either::<ShutUp>(&mut Vec::new(), None, &mut Some(context));
       info!("Postflush");
     }
     info!("Flushed");
