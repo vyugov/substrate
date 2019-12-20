@@ -2063,17 +2063,20 @@ impl<B: BlockT> BadgerNode<B, QHB>
     vset.sort();
 
     let ni = NetworkInfo::<NodeId>::new(self_id.clone().into(), sks, (pkset).clone(), vset);
-    //let num_faulty = hbbft::util::max_faulty(indices.len());
-    /*let peer_ids: Vec<_> = ni
-    .all_ids()
-    .filter(|&them| *them != PeerIdW { 0: self_id.clone() })
-    .cloned()
-    .collect();*/
+
     let val_map: BTreeMap<NodeId, PublicKey> = validator_set
       .iter()
       .map(|auth| {
+        if *auth==auth_id
+        {
+          
+          (self_id.clone().into(), (*auth).clone().into())
+        }
+        else
+        {
         let nid = peers.inverse.get(auth).expect("All authorities should have loaded!");
         (nid.clone().into(), (*auth).clone().into())
+        }
       })
       .collect();
 
