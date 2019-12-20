@@ -27,36 +27,6 @@ use crate::{NodeConfig, Error};
 use gossip::{GossipMessage, GossipValidator, MessageWithReceiver, MessageWithSender};
 use message::{ConfirmPeersMessage, KeyGenMessage, SignMessage};
 
-pub struct NetworkStream<R> {
-	inner: Option<R>,
-	outer: oneshot::Receiver<R>,
-}
-
-impl<R> Stream for NetworkStream<R>
-where
-	R: Stream<Item = TopicNotification> + Unpin,
-{
-	type Item = R::Item;
-
-	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-		if let Some(ref mut inner) = self.as_mut().inner {
-			return inner.poll_next_unpin(cx);
-		}
-
-		match self.outer.poll_unpin(cx) {
-			Poll::Ready(r) => match r {
-				Ok(mut inner) => {
-					let poll_result = inner.poll_next_unpin(cx);
-					self.inner = Some(inner);
-					poll_result
-				}
-				Err(Canceled) => panic!("Oneshot cancelled"),
-			},
-			Poll::Pending => Poll::Pending,
-		}
-	}
-}
-
 pub(crate) fn hash_topic<B: BlockT>(hash: u64) -> B::Hash {
 	<<B::Header as HeaderT>::Hashing as HashT>::hash(&hash.to_be_bytes())
 }
