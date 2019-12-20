@@ -276,7 +276,7 @@ where
 {
 	let keyclone = keystore.clone();
 	let config = NodeConfig {
-		duration: 5,
+		duration: 1,
 		threshold: 1,
 		players: 3,
 		keystore: Some(keystore),

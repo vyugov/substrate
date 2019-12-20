@@ -13,7 +13,7 @@ use sp_runtime::{
 };
 use sp_std::{collections::btree_set::BTreeSet, prelude::*};
 use support::{
-	debug, decl_event, decl_module, decl_storage, dispatch::Result, ensure, traits::Time, Parameter,
+	debug, decl_event, decl_module, decl_storage, dispatch::DispatchResult, ensure, traits::Time, Parameter,
 };
 use system::{
 	ensure_signed,
@@ -46,7 +46,7 @@ decl_module! {
 	pub struct Module<T: Trait> for enum Call where origin: T::Origin {
 		fn deposit_event() = default;
 
-		fn request_key(origin, id: u64) -> Result {
+		fn request_key(origin, id: u64) -> DispatchResult {
 			let _who = ensure_signed(origin)?;
 			ensure!(!<Requests>::exists(id), "req id exists");
 			ensure!(!<Results>::exists(id), "req id exists");
@@ -57,7 +57,7 @@ decl_module! {
 			Ok(())
 		}
 
-		fn request_sig(origin, id: u64, data: Vec<u8>) -> Result {
+		fn request_sig(origin, id: u64, data: Vec<u8>) -> DispatchResult {
 			let who = ensure_signed(origin)?;
 			ensure!(!<Requests>::exists(id), "req id exists");
 			ensure!(!<Results>::exists(id), "req id exists");
@@ -73,7 +73,7 @@ decl_module! {
 			Ok(())
 		}
 
-		pub fn save_sig(origin, id: u64, data: Vec<u8>) -> Result {
+		pub fn save_sig(origin, id: u64, data: Vec<u8>) -> DispatchResult {
 			let who = ensure_signed(origin)?; // more restriction?
 			ensure!(<Requests>::exists(id), "req id does not exist");
 			ensure!(!<Results>::exists(id), "req id exists");
@@ -107,7 +107,7 @@ decl_module! {
 			}
 		}
 
-		pub fn add_authority(origin, who: T::AccountId) -> Result {
+		pub fn add_authority(origin, who: T::AccountId) -> DispatchResult {
 			let _me = ensure_signed(origin)?; // ensure root?
 
 			if !Self::is_authority(&who){

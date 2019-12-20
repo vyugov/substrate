@@ -15,7 +15,7 @@ use sp_runtime::{
 	RuntimeDebug,
 };
 use support::{
-	decl_event, decl_module, decl_storage, dispatch::Result, ensure, traits::Time, Parameter,
+	decl_event, decl_module, decl_storage, dispatch::{DispatchResult, DispatchError}, ensure, traits::Time, Parameter,
 };
 use system::ensure_signed;
 
@@ -93,7 +93,7 @@ decl_module! {
 
 		fn deposit_event() = default;
 
-		pub fn create_token(origin, symbol: Symbol) -> Result {
+		pub fn create_token(origin, symbol: Symbol) -> DispatchResult {
 			let who = ensure_signed(origin)?; // root?
 			Self::_create_token(who, symbol)?;
 
@@ -107,7 +107,7 @@ decl_module! {
 			amount: T::Balance,
 			secret_hash: SecretHash,
 			expiration_in_ms: MomentOf<T>
-		) -> Result {
+		) -> DispatchResult {
 			let who = ensure_signed(origin)?; // root?
 			let buyer = T::Lookup::lookup(buyer)?;
 
@@ -118,7 +118,7 @@ decl_module! {
 			Ok(())
 		}
 
-		pub fn claim(origin, secret: Secret) -> Result {
+		pub fn claim(origin, secret: Secret) -> DispatchResult {
 			// mint
 			ensure_signed(origin)?; // root?
 
@@ -126,7 +126,7 @@ decl_module! {
 			Ok(())
 		}
 
-		pub fn cancel(origin, secret_hash: SecretHash) -> Result {
+		pub fn cancel(origin, secret_hash: SecretHash) -> DispatchResult {
 			ensure_signed(origin)?; // root?
 
 			Self::_cancel(secret_hash)?;
@@ -138,7 +138,7 @@ decl_module! {
 			symbol: Symbol, // or asset_id?
 			to: <T::Lookup as StaticLookup>::Source,
 			amount: T::Balance
-		) -> Result {
+		) -> DispatchResult {
 			let from = ensure_signed(origin)?;
 			let to = T::Lookup::lookup(to)?;
 			let asset_id = Self::asset_id_of(&symbol).ok_or("the symbol does not exist")?;
@@ -152,7 +152,7 @@ decl_module! {
 			symbol: Symbol, // or asset id?
 			spender: <T::Lookup as StaticLookup>::Source,
 			amount: T::Balance
-		) -> Result {
+		) -> DispatchResult {
 			let owner = ensure_signed(origin)?;
 			let spender = T::Lookup::lookup(spender)?;
 			let asset_id = Self::asset_id_of(&symbol).ok_or("the symbol does not exist")?;
@@ -167,7 +167,7 @@ decl_module! {
 			from: <T::Lookup as StaticLookup>::Source,
 			to: <T::Lookup as StaticLookup>::Source,
 			amount: T::Balance
-		) -> Result {
+		) -> DispatchResult {
 			let spender = ensure_signed(origin)?;
 			let from = T::Lookup::lookup(from)?;
 			let to = T::Lookup::lookup(to)?;
@@ -185,7 +185,7 @@ decl_module! {
 			origin,
 			symbol: Symbol, // or asset id?
 			amount: T::Balance
-		) -> Result {
+		) -> DispatchResult {
 			let who = ensure_signed(origin)?;
 
 			let asset_id = Self::asset_id_of(&symbol).ok_or("the symbol does not exist")?;
@@ -280,7 +280,7 @@ impl<T: Trait> Module<T> {
 		from: &T::AccountId,
 		to: &T::AccountId,
 		amount: T::Balance,
-	) -> Result {
+	) -> DispatchResult {
 		let from_balance = Self::get_balance_of(asset_id, from);
 		ensure!(from_balance >= amount, "no enough balance");
 		Self::set_balance(asset_id, from, from_balance - amount);
@@ -302,7 +302,7 @@ impl<T: Trait> Module<T> {
 		owner: &T::AccountId,
 		spender: &T::AccountId,
 		amount: T::Balance,
-	) -> Result {
+	) -> DispatchResult {
 		Self::set_allowance(asset_id, owner, spender, amount);
 
 		Self::deposit_event(RawEvent::Approval(
@@ -314,7 +314,7 @@ impl<T: Trait> Module<T> {
 		Ok(())
 	}
 
-	fn _create_token(who: T::AccountId, symbol: Symbol) -> Result {
+	fn _create_token(who: T::AccountId, symbol: Symbol) -> DispatchResult {
 		ensure!(!Self::token_exists(&symbol), "token already exists");
 
 		let id = Self::next_asset_id();
@@ -342,7 +342,7 @@ impl<T: Trait> Module<T> {
 		amount: T::Balance,
 		secret_hash: SecretHash,
 		expiration_in_ms: MomentOf<T>,
-	) -> Result {
+	) -> DispatchResult {
 		ensure!(!Self::htlc_exists(&secret_hash), "htlc already exists");
 
 		if let Some(token) = <Token<T>>::get(&symbol) {
@@ -366,11 +366,11 @@ impl<T: Trait> Module<T> {
 
 			Ok(())
 		} else {
-			Err("token does not exist")
+			Err(DispatchError::Other("token does not exist"))
 		}
 	}
 
-	fn _claim(secret: Secret) -> Result {
+	fn _claim(secret: Secret) -> DispatchResult {
 		let secret_hash = Self::hash_of(&secret);
 		if let Some(htlc) = <Htlc<T>>::get(&secret_hash) {
 			ensure!(T::Time::now() <= htlc.expiration_in_ms, "htlc expired");
@@ -395,11 +395,11 @@ impl<T: Trait> Module<T> {
 
 			Ok(())
 		} else {
-			Err("no htlc bound with this secret hash")
+			Err(DispatchError::Other("no htlc bound with this secret hash"))
 		}
 	}
 
-	fn _cancel(secret_hash: SecretHash) -> Result {
+	fn _cancel(secret_hash: SecretHash) -> DispatchResult {
 		if let Some(htlc) = <Htlc<T>>::get(&secret_hash) {
 			ensure!(
 				T::Time::now() > htlc.expiration_in_ms,
@@ -423,11 +423,11 @@ impl<T: Trait> Module<T> {
 			));
 			Ok(())
 		} else {
-			Err("no htlc bound with this secret hash")
+			Err(DispatchError::Other("no htlc bound with this secret hash"))
 		}
 	}
 
-	fn _mint(asset_id: &T::AssetId, who: &T::AccountId, amount: T::Balance) -> Result {
+	fn _mint(asset_id: &T::AssetId, who: &T::AccountId, amount: T::Balance) -> DispatchResult {
 		let current_balance = <Balances<T>>::get((asset_id, who));
 		Self::set_balance(asset_id, who, current_balance + amount); // checked add?
 
@@ -444,7 +444,7 @@ impl<T: Trait> Module<T> {
 		Ok(())
 	}
 
-	fn _burn(asset_id: &T::AssetId, who: &T::AccountId, amount: T::Balance) -> Result {
+	fn _burn(asset_id: &T::AssetId, who: &T::AccountId, amount: T::Balance) -> DispatchResult {
 		let current_balance = <Balances<T>>::get((asset_id, who));
 		if current_balance >= amount {
 			Self::set_balance(asset_id, who, current_balance - amount); // checked sub?
@@ -461,7 +461,7 @@ impl<T: Trait> Module<T> {
 
 			Ok(())
 		} else {
-			Err("No enough balance!")
+			Err(DispatchError::Other("No enough balance!"))
 		}
 	}
 }
