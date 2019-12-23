@@ -135,6 +135,7 @@ macro_rules! new_full {
 			$config.disable_grandpa,
 			$config.network.sentry_nodes.clone(),
 		);
+		let dev_seed = $config.dev_key_seed.clone();
 
 		// sentry nodes announce themselves as authorities to the network
 		// and should run the same protocols authorities do, but it should

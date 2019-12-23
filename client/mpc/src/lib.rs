@@ -22,7 +22,7 @@ use parking_lot::RwLock;
 use sc_client::Client;
 use sc_client_api::{backend::Backend, BlockchainEvents, CallExecutor, ExecutionStrategy};
 use sc_keystore::KeyStorePtr;
-use sc_network::{PeerId, NetworkService, NetworkStateInfo};
+use sc_network::{NetworkService, NetworkStateInfo, PeerId};
 use sc_network_gossip::{GossipEngine, Network as GossipNetwork, TopicNotification};
 use sp_blockchain::{Error as ClientError, HeaderBackend, Result as ClientResult};
 use sp_core::{
@@ -32,6 +32,7 @@ use sp_core::{
 use sp_offchain::STORAGE_PREFIX;
 use sp_runtime::generic::OpaqueDigestItemId;
 use sp_runtime::traits::{Block as BlockT, Header};
+use sp_application_crypto::Pair;
 
 use sp_mpc::{ConsensusLog, RequestId, MPC_ENGINE_ID};
 
@@ -51,7 +52,8 @@ pub trait Network<B: BlockT>: GossipNetwork<B> + Clone + Send + 'static {
 	fn local_peer_id(&self) -> PeerId;
 }
 
-impl<B, S, H> Network<B> for Arc<NetworkService<B, S, H>> where
+impl<B, S, H> Network<B> for Arc<NetworkService<B, S, H>>
+where
 	B: BlockT,
 	S: sc_network::specialization::NetworkSpecialization<B>,
 	H: sc_network::ExHashT,
@@ -122,6 +124,9 @@ impl Default for KeyGenState {
 		}
 	}
 }
+
+#[derive(Debug)]
+pub struct SigGenState {}
 
 pub(crate) struct Environment<B, E, Block: BlockT, RA, Storage> {
 	pub client: Arc<Client<B, E, Block, RA>>,
@@ -263,7 +268,7 @@ pub fn run_task<B, E, Block, N, RA, Ex>(
 	backend: Arc<B>,
 	network: N,
 	keystore: KeyStorePtr,
-	executor: Ex
+	executor: Ex,
 ) -> ClientResult<impl futures01::Future<Item = (), Error = ()>>
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
