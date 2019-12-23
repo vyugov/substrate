@@ -11,7 +11,7 @@ use curv::{
 	FE, GE,
 };
 use futures::{
-	future::{select, FutureExt, TryFutureExt},
+	future::{select, ready, FutureExt, TryFutureExt},
 	prelude::{Future, Sink, Stream},
 	stream::StreamExt,
 	task::{Context, Poll, Spawn},
@@ -203,7 +203,7 @@ where
 	type Output = Result<(), Error>;
 
 	fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-		println!("POLLLLLLLLLLLLLLLLLLLL");
+		println!("POLLING IN KEYGEN WORK");
 		match self.key_gen.poll_unpin(cx) {
 			Poll::Pending => {
 				let (is_complete, is_canceled, commits_len) = {
@@ -276,11 +276,10 @@ where
 	(global_in, global_out)
 }
 
-pub fn run_task<B, E, Block, N, RA, Ex>(
+pub fn run_mpc_task<B, E, Block, N, RA, Ex>(
 	client: Arc<Client<B, E, Block, RA>>,
 	backend: Arc<B>,
 	network: N,
-	keystore: KeyStorePtr,
 	executor: Ex,
 ) -> ClientResult<impl futures01::Future<Item = (), Error = ()>>
 where
@@ -292,7 +291,6 @@ where
 	RA: Send + Sync + 'static,
 	Ex: Spawn + 'static,
 {
-	let ks = keystore.clone();
 	let config = NodeConfig {
 		duration: 1,
 		threshold: 1,
@@ -329,7 +327,7 @@ where
 				}
 			}
 
-			futures::future::ready(())
+			ready(())
 		});
 
 	let local_peer_id = network.local_peer_id();
@@ -345,7 +343,7 @@ where
 	)
 	.map_err(|e| error!("Error {:?}", e));
 
-	let worker = select(streamer, keygen_work).then(|_| futures::future::ready(Ok(())));
+	let worker = select(streamer, keygen_work).then(|_| ready(Ok(())));
 
 	Ok(worker.compat())
 }

@@ -40,7 +40,6 @@ use node_executor::NativeExecutor;
 use sc_network::NetworkService;
 use sc_offchain::OffchainWorkers;
 use sp_core::Blake2Hasher;
-use sc_mpc::run_task;
 
 construct_simple_protocol! {
 	/// Demo protocol attachment for substrate.
@@ -182,7 +181,12 @@ macro_rules! new_full {
 
 			let client = service.client();
 
-			let mpc = run_task(service.client(), backend, service.network(), service.keystore(), service.spawn_task_handle())?;
+			let mpc = sc_mpc::run_mpc_task(
+				service.client(),
+				backend,
+				service.network(),
+				service.spawn_task_handle()
+			)?;
 			service.spawn_essential_task(mpc);
 
 			let select_chain = service.select_chain()
