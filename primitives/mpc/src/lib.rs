@@ -9,6 +9,8 @@ pub const MPC_ENGINE_ID: ConsensusEngineId = *b"MPCE";
 
 pub const KEY_TYPE: KeyTypeId = KeyTypeId(*b"mpc_");
 
+pub const SECP_KEY_TYPE: KeyTypeId = KeyTypeId(*b"secp");
+
 pub mod crypto {
 	use super::KEY_TYPE;
 	use sp_runtime::app_crypto::{app_crypto, sr25519};

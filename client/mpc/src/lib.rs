@@ -3,9 +3,13 @@ use std::{
 	thread, time::Duration,
 };
 
-use curv::cryptographic_primitives::proofs::sigma_dlog::DLogProof;
-use curv::cryptographic_primitives::secret_sharing::feldman_vss::VerifiableSS;
-use curv::{FE, GE};
+use curv::{
+	cryptographic_primitives::{
+		proofs::sigma_dlog::DLogProof, secret_sharing::feldman_vss::VerifiableSS,
+	},
+	elliptic::curves::traits::ECPoint,
+	FE, GE,
+};
 use futures::{
 	future::{select, FutureExt, TryFutureExt},
 	prelude::{Future, Sink, Stream},
@@ -26,15 +30,15 @@ use sc_network::{NetworkService, NetworkStateInfo, PeerId};
 use sc_network_gossip::{GossipEngine, Network as GossipNetwork, TopicNotification};
 use sp_blockchain::{Error as ClientError, HeaderBackend, Result as ClientResult};
 use sp_core::{
+	ecdsa::Pair,
 	offchain::{OffchainStorage, StorageKind},
 	Blake2Hasher, H256,
 };
 use sp_offchain::STORAGE_PREFIX;
 use sp_runtime::generic::OpaqueDigestItemId;
 use sp_runtime::traits::{Block as BlockT, Header};
-use sp_application_crypto::Pair;
 
-use sp_mpc::{ConsensusLog, RequestId, MPC_ENGINE_ID};
+use sp_mpc::{ConsensusLog, RequestId, MPC_ENGINE_ID, SECP_KEY_TYPE};
 
 mod communication;
 mod periodic_stream;
@@ -76,7 +80,6 @@ pub struct NodeConfig {
 	pub duration: u64,
 	pub threshold: u16,
 	pub players: u16,
-	pub keystore: Option<KeyStorePtr>,
 }
 
 impl NodeConfig {
@@ -207,6 +210,16 @@ where
 					let state = self.env.state.read();
 					let validator = self.env.bridge.validator.inner.read();
 
+					if state.complete {
+						let mut offchain_storage = self.env.offchain.write();
+
+						let sk = state.local_key.clone().unwrap();
+						let seed = bincode::serialize(&sk).unwrap();
+						// let pk = sk.y_i.pk_to_key_slice();
+						// self.keystore.write().insert_unknown(SECP_KEY_TYPE, &seed, &pk);
+						offchain_storage.set(STORAGE_PREFIX, b"local_key", &seed);
+					}
+
 					println!(
 						"INDEX {:?} state: commits {:?} decommits {:?} vss {:?} ss {:?}  proof {:?} has key {:?} complete {:?} peers hash {:?}",
 						validator.get_local_index(),
@@ -279,12 +292,11 @@ where
 	RA: Send + Sync + 'static,
 	Ex: Spawn + 'static,
 {
-	let keyclone = keystore.clone();
+	let ks = keystore.clone();
 	let config = NodeConfig {
 		duration: 1,
 		threshold: 1,
 		players: 3,
-		keystore: Some(keystore),
 	};
 	let backend_ = backend.clone();
 	let streamer = client
