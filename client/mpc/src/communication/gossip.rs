@@ -18,6 +18,7 @@ use super::{
 	peer::{PeerInfo, PeerState, Peers},
 	string_topic,
 };
+use crate::NodeConfig;
 
 const REBROADCAST_AFTER: Duration = Duration::from_secs(30);
 
@@ -35,12 +36,12 @@ pub struct Inner {
 	local_peer_id: PeerId,
 	local_peer_info: PeerInfo,
 	peers: Peers,
-	config: crate::NodeConfig,
+	config: NodeConfig,
 	next_rebroadcast: Instant,
 }
 
 impl Inner {
-	fn new(config: crate::NodeConfig, local_peer_id: PeerId) -> Self {
+	fn new(config: NodeConfig, local_peer_id: PeerId) -> Self {
 		let mut peers = Peers::default();
 		peers.add(local_peer_id.clone());
 
@@ -59,6 +60,10 @@ impl Inner {
 
 	fn del_peer(&mut self, who: &PeerId) {
 		self.peers.del(who);
+	}
+
+	pub fn get_players(&self) -> u16 {
+		self.config.players
 	}
 
 	pub fn get_peers_len(&self) -> usize {
@@ -170,7 +175,7 @@ pub struct GossipValidator<Block: BlockT> {
 }
 
 impl<Block: BlockT> GossipValidator<Block> {
-	pub fn new(config: crate::NodeConfig, local_peer_id: PeerId) -> Self {
+	pub fn new(config: NodeConfig, local_peer_id: PeerId) -> Self {
 		Self {
 			inner: parking_lot::RwLock::new(Inner::new(config, local_peer_id)),
 			_phantom: PhantomData,
@@ -194,32 +199,23 @@ impl<Block: BlockT> sc_network_gossip::Validator<Block> for GossipValidator<Bloc
 
 		let mut inner = self.inner.write();
 
-		let players = inner.config.players as usize;
-		let all_peers_len = inner.get_peers_len();
-
-		if all_peers_len >= players {
-			panic!("peers enough");
-			// don't take > n peers
-			return;
-		}
-
 		inner.add_peer(who.clone());
 		inner.set_local_awaiting_peers();
 
-		let our_index = inner.get_local_index() as u16;
-		let all_peers_hash = inner.get_peers_hash();
-		drop(inner);
+		// let our_index = inner.get_local_index() as u16;
+		// let all_peers_hash = inner.get_peers_hash();
+		// drop(inner);
 
-		if all_peers_len == players - 1 {
-			// broadcast message to check all peers are the same
-			println!("new peer of {:?} hash {:?}", our_index, all_peers_hash);
+		// if all_peers_len == players - 1 {
+		// 	// broadcast message to check all peers are the same
+		// 	println!("new peer of {:?} hash {:?}", our_index, all_peers_hash);
 
-			let msg = GossipMessage::ConfirmPeers(
-				ConfirmPeersMessage::Confirming(our_index),
-				all_peers_hash,
-			);
-			self.broadcast(context, msg.encode());
-		}
+		// 	let msg = GossipMessage::ConfirmPeers(
+		// 		ConfirmPeersMessage::Confirming(our_index),
+		// 		all_peers_hash,
+		// 	);
+		// 	self.broadcast(context, msg.encode());
+		// }
 	}
 
 	fn peer_disconnected(&self, _context: &mut dyn ValidatorContext<Block>, who: &PeerId) {

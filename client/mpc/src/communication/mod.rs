@@ -22,13 +22,13 @@ pub mod gossip;
 pub mod message;
 mod peer;
 
-use crate::{NodeConfig, Error};
+use crate::{Error, NodeConfig};
 
 use gossip::{GossipMessage, GossipValidator, MessageWithReceiver, MessageWithSender};
 use message::{ConfirmPeersMessage, KeyGenMessage, SignMessage};
 
 pub(crate) fn hash_topic<B: BlockT>(hash: u64) -> B::Hash {
-	<<B::Header as HeaderT>::Hashing as HashT>::hash(&hash.to_be_bytes())
+	<<B::Header as HeaderT>::Hashing as HashT>::hash(&hash.to_le_bytes())
 }
 
 pub(crate) fn string_topic<B: BlockT>(input: &str) -> B::Hash {
@@ -134,12 +134,31 @@ where
 				}
 			});
 
-		let outgoing = MessageSender::<B> {
+		let outgoing = MessageSender {
 			network: self.gossip_engine.clone(),
 			validator: self.validator.clone(),
 		};
 
 		(incoming.boxed(), outgoing)
+	}
+
+	pub fn start_key_gen(&self) {
+		let inner = self.validator.inner.read();
+
+		let all_peers_len = inner.get_peers_len();
+		let players = inner.get_players() as usize;
+		if all_peers_len != players {
+			return
+		}
+
+		let our_index = inner.get_local_index() as u16;
+		let all_peers_hash = inner.get_peers_hash();
+		let msg = GossipMessage::ConfirmPeers(
+			ConfirmPeersMessage::Confirming(our_index),
+			all_peers_hash
+		);
+		let peers = inner.get_other_peers();
+		self.gossip_engine.send_message(peers, msg.encode());
 	}
 }
 

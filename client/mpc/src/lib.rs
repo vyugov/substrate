@@ -11,6 +11,7 @@ use curv::{
 	FE, GE,
 };
 use futures::{
+	channel::mpsc,
 	future::{ready, select, FutureExt, TryFutureExt},
 	prelude::{Future, Sink, Stream},
 	stream::StreamExt,
@@ -43,6 +44,7 @@ use sp_mpc::{ConsensusLog, RequestId, MPC_ENGINE_ID, SECP_KEY_TYPE};
 mod communication;
 mod periodic_stream;
 mod signer;
+mod utils;
 
 use communication::{
 	gossip::{GossipMessage, MessageWithSender},
@@ -139,15 +141,20 @@ pub(crate) struct Environment<B, E, Block: BlockT, RA, Storage> {
 	pub offchain: Arc<RwLock<Storage>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MpcArgument {
 	KeyGen(RequestId),
 	SigGen(RequestId, Vec<u8>),
 }
 
+pub enum MpcCommand {
+	StartKeyGen,
+}
+
 struct KeyGenWork<B, E, Block: BlockT, RA, Storage> {
 	key_gen: Pin<Box<dyn Future<Output = Result<(), Error>> + Send + Unpin>>,
 	env: Arc<Environment<B, E, Block, RA, Storage>>,
+	mpc_command_rx: mpsc::UnboundedReceiver<MpcArgument>,
 }
 
 impl<B, E, Block, RA, Storage> KeyGenWork<B, E, Block, RA, Storage>
@@ -163,7 +170,8 @@ where
 		client: Arc<Client<B, E, Block, RA>>,
 		config: NodeConfig,
 		bridge: NetworkBridge<Block>,
-		db: Storage,
+		offchain: Storage,
+		mpc_command_rx: mpsc::UnboundedReceiver<MpcArgument>,
 	) -> Self {
 		let state = KeyGenState::default();
 
@@ -172,22 +180,33 @@ where
 			config,
 			bridge,
 			state: Arc::new(RwLock::new(state)),
-			offchain: Arc::new(RwLock::new(db)),
+			offchain: Arc::new(RwLock::new(offchain)),
 		});
 
 		let mut work = Self {
 			key_gen: Box::pin(futures::future::pending()),
 			env,
+			mpc_command_rx,
 		};
-		work.rebuild(true); // init should be okay
+		work.rebuild(true);
 		work
 	}
 
 	fn rebuild(&mut self, last_message_ok: bool) {
+		// last_message_ok = true when the first build, = false else
 		let (incoming, outgoing) = global_comm(&self.env.bridge, self.env.config.duration);
 		let signer = Signer::new(self.env.clone(), incoming, outgoing, last_message_ok);
 
 		self.key_gen = Box::pin(signer);
+	}
+
+	fn handle_command(&mut self, command: MpcArgument) {
+		match command {
+			MpcArgument::KeyGen(id) => {
+				self.env.bridge.start_key_gen();
+			}
+			_ => {}
+		}
 	}
 }
 
@@ -204,9 +223,22 @@ where
 
 	fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
 		println!("POLLING IN KEYGEN WORK");
+
+		match self.mpc_command_rx.poll_next_unpin(cx) {
+			Poll::Pending => {}
+			Poll::Ready(None) => {
+				// impossible
+				return Poll::Ready(Ok(()));
+			}
+			Poll::Ready(Some(command)) => {
+				self.handle_command(command);
+				futures01::task::current().notify();
+			}
+		}
+
 		match self.key_gen.poll_unpin(cx) {
 			Poll::Pending => {
-				let (is_complete, is_canceled, commits_len) = {
+				{
 					let state = self.env.state.read();
 					let validator = self.env.bridge.validator.inner.read();
 
@@ -230,11 +262,6 @@ where
 						state.complete,
 						validator.get_peers_hash()
 					);
-					(
-						validator.is_local_complete(),
-						validator.is_local_canceled(),
-						state.commits.len(),
-					)
 				};
 
 				return Poll::Pending;
@@ -245,8 +272,7 @@ where
 			Poll::Ready(Err(e)) => {
 				match e {
 					Error::Rebuild => {
-						println!("inner keygen rebuilt");
-						self.rebuild(false);
+ 						self.rebuild(false);
 						futures01::task::current().notify();
 						return Poll::Pending;
 					}
@@ -303,6 +329,8 @@ where
 		println!("{:?}", bincode::deserialize::<Keys>(&k));
 	}
 
+	let (tx, rx) = mpsc::unbounded();
+
 	let streamer = client
 		.clone()
 		.import_notification_stream()
@@ -321,6 +349,7 @@ where
 			if let Some(arg) = arg {
 				match arg {
 					MpcArgument::SigGen(id, mut data) => {
+						let _ = tx.unbounded_send(MpcArgument::SigGen(id, data.clone()));
 						if let Some(mut offchain_storage) = backend.offchain_storage() {
 							let key = id.to_le_bytes();
 							info!("key {:?} data {:?}", key, data);
@@ -329,10 +358,8 @@ where
 							offchain_storage.set(STORAGE_PREFIX, &key, &t);
 						}
 					}
-					MpcArgument::KeyGen(id) => {
-						if let Some(mut offchain_storage) = backend.offchain_storage() {
-							//
-						}
+					kg @ MpcArgument::KeyGen(_) => {
+						let _ = tx.unbounded_send(kg);
 					}
 				}
 			}
@@ -340,7 +367,7 @@ where
 			ready(())
 		});
 
-	let keygen_work = KeyGenWork::new(client, config, bridge, offchain_storage)
+	let keygen_work = KeyGenWork::new(client, config, bridge, offchain_storage, rx)
 		.map_err(|e| error!("Error {:?}", e));
 
 	let worker = select(streamer, keygen_work).then(|_| ready(Ok(())));
