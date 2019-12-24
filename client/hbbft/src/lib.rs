@@ -89,7 +89,7 @@ use communication::BlockPusherMaker;
 pub type BadgerImportQueue<B> = BasicQueue<B>;
 pub mod aux_store;
 pub mod rpc;
-pub struct BadgerWorker<C, I, SO, Inbound, B: BlockT, N: Network<B>, A,Cl,BPM,Aux>
+pub struct BadgerWorker<C, I, SO, Inbound, B: BlockT,  A,Cl,BPM,Aux>
 where
 	A: TransactionPool,
 	Cl:NetClient<B>,
@@ -99,7 +99,7 @@ where
 {
 	pub client: Arc<C>,
 	pub block_import: Arc<Mutex<I>>,
-	pub network: NetworkBridge<B, N,Cl,BPM,Aux>,
+	pub network: NetworkBridge<B,Cl,BPM,Aux>,
 
 	pub transaction_pool: Arc<A>,
 	pub sync_oracle: SO,
@@ -1099,14 +1099,15 @@ RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
  
 }
 use communication::BadgerStream;
+use sc_network_ranting::{ Network as RantingNetwork};
 
 
-pub struct cwrap<B, E, Block:BlockT, RA>
+pub struct Cwrap<B, E, Block:BlockT, RA>
 
 {
 	pub client: Arc<Client<B, E, Block, RA>>,
 }
-impl<B, E, Block, RA> AuxStore for cwrap<B, E, Block, RA>
+impl<B, E, Block, RA> AuxStore for Cwrap<B, E, Block, RA>
 where
 Block: BlockT<Hash = H256>,
 Block::Hash: Ord,
@@ -1136,7 +1137,7 @@ Block::Hash: Ord,
 }
 /// Run a HBBFT churn as a task. Provide configuration and a link to a
 /// block import worker that has already been instantiated with `block_import`.
-pub fn run_honey_badger<B, E, Block: BlockT<Hash = H256>, N, RA, SC, X, I, A>(
+pub fn run_honey_badger<B, E, Block: BlockT<Hash = H256>, N, RA, SC, X, I, A,Sp>(
 	client: Arc<Client<B, E, Block, RA>>,
 	t_pool: Arc<A>,
 	config: Config,
@@ -1146,16 +1147,17 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash = H256>, N, RA, SC, X, I, A>(
 	inherent_data_providers: InherentDataProviders,
 	selch: SC,
 	keystore: KeyStorePtr,
+	executor:Sp,
 	_node_key:Option<String>,
 	_dev_seed:Option<String>
 ) -> ClientResult<impl Future<Output = ()> + Send + Unpin>
 where
-    
+    Sp: futures03::task::Spawn + 'static,
 	Block::Hash: Ord,
 	B: Backend<Block, Blake2Hasher> + 'static,
 	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static + Clone,
-	N: Network<Block> + Send + Sync + Unpin,
-	N::In: Send,
+	N: RantingNetwork<Block> + Send + Sync + Unpin+Clone+'static,
+	//N::In: Send,
 	SC: SelectChain<Block> + 'static + Unpin,
 	NumberFor<Block>: BlockNumberOps,
 	DigestFor<Block>: Encode,
@@ -1207,7 +1209,7 @@ where
 			
 		};
 	let (network_bridge, network_startup) = NetworkBridge::new(network, config.clone(),keystore.clone(),persistent_data,client.clone(),
-	mjust, block_handler,cwrap{client: cclient.clone()},
+	mjust, block_handler,Cwrap{client: cclient.clone()}, &executor
 	//,finalizer: Box<dyn FnMut( &B::Hash,Option<Justification>)->bool+Send+Sync>,     
    );
 	let net_arc=Arc::new(network_bridge);

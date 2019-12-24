@@ -27,7 +27,7 @@ use app_crypto::RuntimeAppPublic;
 //const KEEP_RECENT_ROUNDS: usize = 3;
 
 //const BADGER_TOPIC: &str = "itsasnake";
-use crate::communication::PeerIdW;
+use sc_peerid_wrapper::PeerIdW;
 /// HB gossip message type.
 /// This is the root type that gets encoded and sent on the network.
 #[derive(Debug, Encode, Decode)]
@@ -340,6 +340,7 @@ pub enum Action<H>
   Useless(H),
 }
 
+/*
 #[derive(Debug, PartialEq, Clone)]
 pub enum SAction
 {
@@ -355,3 +356,4 @@ pub enum SAction
   //Queue locally and retry later, contains relevance/topic?
   QueueRetry(u64),
 }
+*/

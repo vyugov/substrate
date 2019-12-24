@@ -212,22 +212,13 @@ macro_rules! new_full {
         inherent_data_providers.clone(),
         select_chain,
 		service.keystore(),
+		service.spawn_task_handle(),
 		node_key,
 		dev_seed,
-      )?;    
-      let key_gen = keygen::run_key_gen(
-        service.network().local_peer_id(),
-        (2, 5),
-        3,
-        service.keystore(),
-        service.client(),
-        service.network(),
-        back,
-      )?;
-      let svc = futures03::future::select(service.on_exit().clone(), key_gen).map(|_| Ok::<(), ()>(())).compat();
-
-      
-      service.spawn_essential_task( svc);
+	  )?;    
+	  let mpc = keygen::run_task(service.client(), back, service.network(), service.keystore(), service.spawn_task_handle())?;
+	  service.spawn_essential_task(mpc);
+     
 			service.spawn_essential_task(badger.map(|_| Ok::<(), ()>(())).compat());
 		}
 

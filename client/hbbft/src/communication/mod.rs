@@ -17,16 +17,16 @@ use consensus_common::{self, BlockImportParams, BlockOrigin, ForkChoiceStrategy,
 use runtime_primitives::{
 	generic::{self,DigestItem ,OpaqueDigestItemId},
 };
+use sc_network_ranting::RawMessage;
 use badger::dynamic_honey_badger::ChangeState;
-
 use badger_primitives::BadgerPreRuntime;
-
+use runtime_primitives::traits::{NumberFor,One};
 use consensus_common::evaluation;
-
+use sc_network_ranting::{ Network as RantingNetwork};
 use client::{
 	 Client, well_known_cache_keys //
 };
-
+use sc_network_ranting::ValidationResult;
 use badger_primitives::ConsensusLog;
 
 use gossip::{BadgerFullJustification,BadgerAuthCommit};
@@ -52,13 +52,14 @@ use serde::{Deserialize, Serialize};
 //};//
 pub use badger_primitives::HBBFT_ENGINE_ID;
 use badger_primitives::{AuthorityId, AuthorityList, AuthorityPair};
-use gossip::{BadgeredMessage, GossipMessage, Peers, SAction, SessionData, SessionMessage};
+use gossip::{BadgeredMessage, GossipMessage, Peers,  SessionData, SessionMessage};
 use network::config::Roles;
-use network::consensus_gossip::MessageIntent;
-use network::consensus_gossip::ValidatorContext;
+use sc_network_ranting::ValidatorContext;
+use sc_network_ranting::RantingEngine;
 use network::PeerId;
-use network::{consensus_gossip as network_gossip, NetworkService,ReputationChange};
-use network_gossip::ConsensusMessage;
+use network::{ NetworkService,ReputationChange};
+use network::message::generic::{ConsensusMessage, Message};
+
 //use runtime_primitives::app_crypto::hbbft_thresh::Public as bPublic;
 use runtime_primitives::traits::{Block as BlockT, Hash as HashT, Header as HeaderT};
 use substrate_primitives::crypto::Pair;
@@ -68,10 +69,9 @@ pub mod gossip;
 
 use crate::Error;
 
-mod peerid;
-pub use peerid::PeerIdW;
 pub const MAX_DELAYED_JUSTIFICATIONS:u64=10 ;
 //use badger_primitives::NodeId;
+use sc_peerid_wrapper::PeerIdW;
 
 //use badger::{SourcedMessage as BSM,  TargetedMessage};
 pub type NodeId = PeerIdW; //session index? -> might be difficult. but it looks like nodeId for observer does not matter?  but it does for restarts
@@ -119,31 +119,22 @@ pub trait BatchProcessor<Block:BlockT>
   fn process_batch(&self,batch:<QHB as ConsensusProtocol>::Output);
 }
 
-pub trait Network<Block: BlockT>: Clone + Send + 'static
-{
-  type In: Stream<Item = network_gossip::TopicNotification>;
-
-  fn messages_for(&self, topic: Block::Hash) -> Self::In;
-
-  fn register_validator(&self, validator: Arc<dyn network_gossip::Validator<Block>>);
-
-  fn gossip_message(&self, topic: Block::Hash, data: Vec<u8>, force: bool);
-
-  fn register_gossip_message(&self, topic: Block::Hash, data: Vec<u8>);
-
-  fn send_message(&self, who: Vec<network::PeerId>, data: Vec<u8>);
-
-  fn report(&self, who: network::PeerId, cost_benefit: i32);
-
-  fn announce(&self, block: Block::Hash, associated_data: Vec<u8>);
-
-  fn local_id(&self) -> PeerId;
-}
 
 pub fn badger_topic<B: BlockT>() -> B::Hash
 {
   <<B::Header as HeaderT>::Hashing as HashT>::hash(format!("badger-mushroom").as_bytes())
 }
+
+pub fn badger_session<B: BlockT>() -> B::Hash
+{
+  <<B::Header as HeaderT>::Hashing as HashT>::hash(format!("badger-mushroom-session-data").as_bytes())
+}
+pub fn badger_justification<B: BlockT>(bh: B::Hash) -> B::Hash
+{
+ // <<B::Header as HeaderT>::Hashing as HashT>::hash(format!("badger-mushroom-block_justification").as_bytes())
+ bh
+}
+
 
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 pub enum LocalTarget
@@ -192,21 +183,7 @@ where
   message: Vec<u8>,
 }
 
-impl rand::distributions::Distribution<PeerIdW> for rand::distributions::Standard
-{
-  fn sample<R: Rng + ?Sized>(&self, _rng: &mut R) -> PeerIdW
-  {
-    PeerIdW(PeerId::random())
-  }
-}
 
-impl rand::distributions::Distribution<PeerIdW> for PeerIdW
-{
-  fn sample<R: Rng + ?Sized>(&self, _rng: &mut R) -> PeerIdW
-  {
-    PeerIdW(PeerId::random())
-  }
-}
 
 pub type BadgerTransaction = Vec<u8>;
 pub type QHB = SenderQueue<QueueingHoneyBadger<BadgerTransaction, NodeId, Vec<BadgerTransaction>>>;
@@ -845,11 +822,16 @@ Aux:AuxStore+Send+Sync+'static,
      ExtractedLogs::ValidatorVote(authids) =>
      {
      info!("Voting for: {:?}",authids);
-     self.vote_for_validators(authids);
+     match self.vote_for_validators(authids)
+     {
+       Ok(_) => {},
+       Err(e) =>
+       {info!("Error voting for validators: {:?}",e);}
+     }
      },
      ExtractedLogs::NewSessionMessage(nsm) =>
      {
-      let topic = badger_topic::<B>();
+     
       self.output_message_buffer.push((LocalTarget::AllExcept(BTreeSet::new()),nsm));
        //net.register_gossip_message(topic,nsm.encode());
      }
@@ -1550,7 +1532,7 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
     aset.current_authorities.contains(&aset.self_id)
   }
 
-  pub fn process_decoded_message(&mut self, message: &GossipMessage<B>) -> SAction
+  pub fn process_decoded_message(&mut self, message: &GossipMessage<B>) -> (ValidationResult<B>,bool)
   {
     let cset_id;
     {
@@ -1604,22 +1586,22 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
             }
           }
           self.output_message_buffer.append(&mut ret_msgs);
-          //repropagate
-          return SAction::PropagateOnce;
+          //repropagate -automatic now
+          return (ValidationResult::Discard,false);
         }
         else if ses_msg.ses.ses_id < cset_id
         {
           //discard
-          return SAction::Discard;
+          return return (ValidationResult::Punish(0),false);
         }
         else if ses_msg.ses.ses_id > cset_id + 1
         {
           //?? cache/propagate?
-          return SAction::Discard;
+          return (ValidationResult::Discard,false);
         }
         else
         {
-          return SAction::QueueRetry(ses_msg.ses.ses_id.into());
+          return (ValidationResult::Discard,true);
         }
       }
       GossipMessage::KeygenData(wkgen) =>
@@ -1637,7 +1619,7 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
           None =>
           {
             info!("Unknown originator for {:?}", &wkgen.originator);
-            return SAction::QueueRetry(0);
+            return (ValidationResult::Discard,true);
           }
         };
         info!("Originator: {:?}, Peer: {:?}", &wkgen.originator, &orid);
@@ -1649,7 +1631,7 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
             Err(_) =>
             {
               warn!("Keygen message should be correct");
-              return SAction::Discard;
+              return (ValidationResult::Punish(-2),false);
             }
           };
           let acks = step.process_message(&orid, k_message);
@@ -1689,7 +1671,7 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
             }
             let mut msgs=self.proceed_to_badger();
             self.output_message_buffer.append(&mut msgs);
-            SAction::PropagateOnce
+            (ValidationResult::Discard,false)
           }
           else
           {
@@ -1706,7 +1688,7 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
               })
               .collect();
               self.output_message_buffer.append(&mut ret);
-            SAction::PropagateOnce
+              (ValidationResult::Discard,false)
           }
         }
         else
@@ -1715,10 +1697,10 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
           if let BadgerState::AwaitingValidators = &mut self.state
           {
             // should buffer here?
-            return SAction::QueueRetry(1);
+           return  (ValidationResult::Discard,true);
           }
           // propagate once?
-          return SAction::PropagateOnce;
+          return (ValidationResult::Discard,false);
         }
       }
       GossipMessage::BadgerData(bdat) =>
@@ -1729,7 +1711,7 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
           None =>
           {
             info!("Unknown originator for {:?}", &bdat.originator);
-            return SAction::QueueRetry(0);
+            return (ValidationResult::Discard,true);
           }
         };
         //we actually need to process observer state updates if we want to use SendQueue
@@ -1748,29 +1730,29 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
                   //send is handled separately. trigger propose? or leave it for stream
                   debug!("BadGER: decoded gossip message");
 
-                  return SAction::Discard;
+                  return (ValidationResult::Discard,false);
                 }
                 Err(e) =>
                 {
                   info!("Error handling badger message {:?}", e);
                   telemetry!(CONSENSUS_DEBUG; "afg.err_handling_msg"; "err" => ?format!("{}", e));
-                  return SAction::Discard;
+                  return (ValidationResult::Discard,false);
                 }
               }
             }
             else
             {
-              return SAction::Discard;
+              return (ValidationResult::Discard,false);
             }
           }
           BadgerState::KeyGen(_) | BadgerState::AwaitingValidators =>
           {
-            return SAction::QueueRetry(2);
+            return (ValidationResult::Discard,true);
           }
           _ =>
           {
             warn!("Discarding badger message");
-            return SAction::Discard;
+            return (ValidationResult::Punish(-1),false);
           }
         }
       },
@@ -1778,7 +1760,7 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
       {
         if !just.verify()
         {
-          return SAction::Discard; 
+          return (ValidationResult::Punish(-8),false);
         }
         let b_id=BlockId::Hash(just.hash);
         let hd=self.client.header(&b_id);
@@ -1796,7 +1778,7 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
             {
               //we already have justification, hopefully
               info!("Discarding old justification");
-              return  SAction::Discard;
+              return    (ValidationResult::Discard,false);
             }
            }
          }
@@ -1832,15 +1814,47 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
             info!("None exists");
              if self.delayed_justifications.iter().find( |x| (x.1.hash==just.hash && x.1.validator==just.validator)).is_some()
              {
-                return  SAction::Discard;
+                return  (ValidationResult::Discard,false);
              }
           self.delayed_justifications.push((0,just.clone()));
            }
          }
-         //justification flood
-       SAction::PropagateOnce
+         //justification flood -automatic...
+         (ValidationResult::Discard,false)
       }
     }
+  }
+  pub fn is_justification_expired(&self,hash:B::Hash) ->bool
+  {
+    let b_id=BlockId::Hash(hash);
+    let hd=self.client.header(&b_id);
+    let info = self.client.info().chain;
+    let finalized_number = info.finalized_number;
+    match hd 
+    {
+     Ok(opt) =>
+     {
+       if let Some(hdr)=opt
+       {
+       let five=NumberFor::<B>::one()+NumberFor::<B>::one()+NumberFor::<B>::one()+NumberFor::<B>::one()+NumberFor::<B>::one();
+       if *hdr.number()+five<finalized_number
+        {
+         true
+        }
+        else
+        {
+          false
+        }
+       }
+       else
+       {
+         true
+       }
+     }
+     // we should not keep justifications for blocks we don't know
+     Err(_) =>{ true}
+    }
+
   }
   pub fn vote_change_encryption_schedule(&mut self, e: EncryptionSchedule) -> Result<(), &'static str>
   {
@@ -1916,7 +1930,7 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
 
   pub fn process_message(
     &mut self, _who: &PeerId, mut data: &[u8],
-  ) -> (SAction,  Option<GossipMessage<B>>)
+  ) -> ( (ValidationResult<B>,bool),  Option<GossipMessage<B>>)
   //(SAction, Vec<(LocalTarget, GossipMessage<B>)>, Option<GossipMessage<B>>)
   {
     match GossipMessage::decode(&mut data)
@@ -1927,7 +1941,7 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
         if !message.verify()
         {
           warn!("Invalid message signature in {:?}", &message);
-          return (SAction::Discard, None);
+          return (  (ValidationResult::Discard,false), None);
         }
         let a = self.process_decoded_message(&message);
         return (a, Some(message));
@@ -1937,7 +1951,7 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
         info!(target: "afg", "Error decoding message {:?}",e);
         telemetry!(CONSENSUS_DEBUG; "afg.err_decoding_msg"; "" => "");
 
-        (SAction::Discard,  None)
+        ((ValidationResult::Discard,false),  None)
       }
     }
   }
@@ -1945,24 +1959,24 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
 
   pub fn process_and_replay(
     &mut self, who: &PeerId, data: &[u8],
-  ) -> Vec<(SAction, Option<GossipMessage<B>>)>//, Vec<(LocalTarget, GossipMessage<B>)>)
+  ) -> Vec<(ValidationResult<B>, Option<GossipMessage<B>>)>//, Vec<(LocalTarget, GossipMessage<B>)>)
   {
-    let mut vals: Vec<(SAction, Option<GossipMessage<B>>)> = Vec::new();
+    let mut vals: Vec<(ValidationResult<B>, Option<GossipMessage<B>>)> = Vec::new();
     let (action,  msg) = self.process_message(who, data);
     match action
     {
-      SAction::QueueRetry(tp) =>
+      (act,true) =>
       {
         //message has not been processed
         match msg
         {
-          Some(msg) => self.queued_messages.push((tp, msg)),
+          Some(msg) => self.queued_messages.push((0, msg)),
           None =>
           {}
         }
-        return vec![(SAction::Discard, None)] ; //no need to inform upstream, I think
+        return vec![(act, None)] ; //no need to inform upstream, I think
       }
-      act =>
+      (act,false) =>
       {
         //retry existing messages...
         vals.push((act, msg));
@@ -1975,22 +1989,21 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
           let silly_compiler: Vec<_> = self.queued_messages.drain(..).collect();
           info!("Replaying {:?}", silly_compiler.len());
           for (_, msg) in silly_compiler.into_iter()
-          //TODO: use the number eventually
           {
             let s_act = self.process_decoded_message(&msg);
             match s_act
             {
-              SAction::QueueRetry(tp) =>
+              (_,true) =>
               {
-                new_queue.push((tp, msg));
-              }
-              SAction::Discard =>
+                new_queue.push((0, msg));
+              },
+              (ValidationResult::Discard,false) =>
               {
                 done = false;
-              }
-              action =>
+              },
+              (action,false) =>
               {
-                vals.push((action.clone(), Some(msg)));
+                vals.push((action, Some(msg)));
                 done = false;
               }
             }
@@ -2207,29 +2220,18 @@ Block::Hash:Ord,
 BPM:BlockPusherMaker<Block>,
 Aux:AuxStore+Send+Sync+'static
 {
-  fn send_message_either<N: Network<Block>>(
-    &self, who: &PeerId, vdata: Vec<u8>, context_net: Option<&N>,
-    context_val: &mut Option<&mut dyn ValidatorContext<Block>>,
+  fn send_message(
+    &self, who: &PeerId, vdata: Vec<u8>, context_val: &mut dyn ValidatorContext<Block>,
   )
   {
-    if let Some(context) = context_net
-    {
-      context.send_message(vec![who.clone()], vdata);
-      return;
-    }
-    if let Some(context) = context_val
-    {
-      context.send_message(who, vdata);
-    }
+    context_val.send_single(who, vdata);
   }
-  fn flush_message_either<N: Network<Block>>(
-    &self, additional: &mut Vec<(LocalTarget, GossipMessage<Block>)>, context_net: Option<&N>,
-    context_val: &mut Option<&mut dyn ValidatorContext<Block>>,   )
+  fn flush_message(
+    &self, additional: &mut Vec<(LocalTarget, GossipMessage<Block>)>,  context_val:&mut dyn ValidatorContext<Block>,   )
   {
     info!("BaDGER!! Enter flush {:?}", thread::current().id());
     // let topic = badger_topic::<Block>();
-    let sid: PeerId;
-    let pair: AuthorityPair;
+    let spid;
     let mut drain: Vec<_> = Vec::new();
     {
       info!("Lock inner");
@@ -2238,9 +2240,8 @@ Aux:AuxStore+Send+Sync+'static
       //add the buffer...
       let mut extr=locked.extract_state();
       drain.append(&mut extr);
-      sid = locked.config.my_peer_id.clone();
-      pair = locked.cached_origin.clone().unwrap();
-     
+
+      spid=locked.config.my_peer_id.clone();
       info!("UnLock inner");
       
     }
@@ -2267,47 +2268,53 @@ Aux:AuxStore+Send+Sync+'static
           for msg in v.drain(..)
           {
             info!("BaDGER!! RESending to {:?}", &k);
-            self.send_message_either(&k.0, msg, context_net, context_val);
+            self.send_message(&k.0, msg,  context_val);
           }
         }
       }
     }
     for (target, msg) in drain
     {
+      if let &GossipMessage::Session(ref sdat) = &msg
+      {
+       if sdat.ses.peer_id.0==spid
+       {
+        context_val.keep(badger_session::<Block>(),msg.encode());
+       }
+      }
       //let vdata = GossipMessage::BadgerData(BadgeredMessage::new(pair,msg.message)).encode();
       let vdata = msg.encode();
       match target
       {
         LocalTarget::Nodes(node_set) =>
         {
+          context_val.send_to_set(node_set.iter().map(|x| x.0.clone()).collect(), vdata.clone()); 
           let av_list;
           {
           let inner = self.inner.read();
           trace!("Nodes lock success");
           let peers = &inner.peers;
           av_list = peers.connected_peer_list();
+
           }
           for to_id in node_set.iter()
           {
-            debug!("BaDGER!! Id_net {:?}", &to_id);
-            info!("Sending message node {:?} to {:?}", &msg, &to_id,);
-            if av_list.contains(&to_id.0)
-            {
-              self.send_message_either(&to_id.0, vdata.clone(), context_net, context_val);
-            }
-            else
+            if !av_list.contains(&to_id.0)
             {
               let mut ldict = self.pending_messages.write();
               let stat = ldict.entry(to_id.clone()).or_insert(Vec::new());
               stat.push(vdata.clone());
             }
           }
+
+
         }
         LocalTarget::AllExcept(exclude) =>
         {
           debug!("BaDGER!! AllExcept  {}", exclude.len());
           let clist;
           let mut vallist: Vec<_>;
+          context_val.broadcast_except(exclude.iter().map(|x| x.0.clone()).collect(), vdata.clone());
 
           {
             let locked = self.inner.write();
@@ -2315,8 +2322,7 @@ Aux:AuxStore+Send+Sync+'static
           
           let peers = &locked.peers;
           vallist = locked
-            .persistent
-            .authority_set
+            .persistent.authority_set
             .inner
             .read()
             .current_authorities
@@ -2330,36 +2336,28 @@ Aux:AuxStore+Send+Sync+'static
               {
                 peers.inverse.get(x).expect("All auths should be known").clone()
               }
-            })
+            }).filter(|n| !exclude.contains(&PeerIdW { 0: (*n).clone() }) )
             .collect();
             clist=peers.connected_peer_list();
-          }
-          info!("Excluding {:?}", &exclude);
-          for pid in clist
-            .iter()
-            .filter(|n| !exclude.contains(&PeerIdW { 0: (*n).clone() }))
-          {
+            for pid in clist.iter()
+            {
             let tmp = pid.clone();
-            if tmp != sid
-            {
-              info!("Sending message {:?} to {:?}", &msg, &tmp,);
-              self.send_message_either(pid, vdata.clone(), context_net, context_val);
-              info!("Sent");
-            }
             vallist.retain(|x| *x != tmp);
+             }
+             if vallist.len() > 0
+             {
+               let mut ldict = self.pending_messages.write();
+               for val in vallist.into_iter()
+               {
+                 let stat = ldict.entry(val.clone().into()).or_insert(Vec::new());
+                 stat.push(vdata.clone());
+               }
+   
+               // context.register_gossip_message(topic,vdata.clone());
+             }
           }
+          info!("Excluded {:?}", &exclude);
 
-          if vallist.len() > 0
-          {
-            let mut ldict = self.pending_messages.write();
-            for val in vallist.into_iter()
-            {
-              let stat = ldict.entry(val.clone().into()).or_insert(Vec::new());
-              stat.push(vdata.clone());
-            }
-
-            // context.register_gossip_message(topic,vdata.clone());
-          }
         }
       }
     }
@@ -2397,31 +2395,35 @@ Aux:AuxStore+Send+Sync+'static
     rd.is_authority()
   }
 
-  pub fn push_transaction<N: Network<Block>>(&self, tx: Vec<u8>, net: &N) -> Result<(), Error>
+  pub fn push_transaction(&self, tx: Vec<u8>, net:  &mut dyn ValidatorContext<Block> ) -> Result<(), Error>
   {
 
     {
-     self.inner.write().push_transaction(tx);
+     match self.inner.write().push_transaction(tx)
+     {
+       Ok(_) =>{},
+       Err(e) =>{info!("Error pushing transaction {:?}",e);},
+     }
     }
     //send messages out
     {
-      self.flush_message_either(&mut Vec::new(), Some(net), &mut None);
+      self.flush_message(&mut Vec::new(),net);
     }
 
     Ok(())
   }
-  pub fn process_batch<N: Network<Block>>(&self,batch:<QHB as ConsensusProtocol>::Output,net: &N)
+  pub fn process_batch(&self,batch:<QHB as ConsensusProtocol>::Output,net:  &mut dyn ValidatorContext<Block>)
   {
     {
      self.inner.write().consume_batch(batch);
     }
     {
-      self.flush_message_either(&mut Vec::new(), Some(net), &mut None);
+      self.flush_message(&mut Vec::new(), net);
     }
   }
   
 
-  pub fn do_emit_justification<N: Network<Block>>(&self,hash:&Block::Hash, net: &N,auth_list:AuthorityList)
+  pub fn do_emit_justification(&self,hash:&Block::Hash, net:  &mut dyn ValidatorContext<Block>,auth_list:AuthorityList)
   {
     if !self.is_validator()
     {
@@ -2433,12 +2435,12 @@ Aux:AuxStore+Send+Sync+'static
      }
 
     {
-      self.flush_message_either(&mut Vec::new(), Some(net), &mut None);
+      self.flush_message(&mut Vec::new(), net);
      }
 
 
   }
-  pub fn do_vote_validators<N: Network<Block>>(&self, auths: Vec<AuthorityId>, net: &N) -> Result<(), Error>
+  pub fn do_vote_validators(&self, auths: Vec<AuthorityId>, net:  &mut dyn ValidatorContext<Block>) -> Result<(), Error>
   {
     if !self.is_validator()
     {
@@ -2461,12 +2463,12 @@ Aux:AuxStore+Send+Sync+'static
     info!("DO_VOTE");
     //send messages out
     {
-      self.flush_message_either(&mut Vec::new(), Some(net), &mut None);
+      self.flush_message(&mut Vec::new(), net);
     }
 
     Ok(())
   }
-  pub fn do_vote_change_enc_schedule<N: Network<Block>>(&self, e: EncryptionSchedule, net: &N) -> Result<(), Error>
+  pub fn do_vote_change_enc_schedule(&self, e: EncryptionSchedule, net:  &mut dyn ValidatorContext<Block>) -> Result<(), Error>
   {
     if !self.is_validator()
     {
@@ -2488,21 +2490,23 @@ Aux:AuxStore+Send+Sync+'static
     }
     //send messages out
     {
-      self.flush_message_either(&mut Vec::new(), Some(net), &mut None);
+      self.flush_message(&mut Vec::new(), net);
     }
 
     Ok(())
   }
+ // pub fn update_session()
 }
 use gossip::PeerConsensusState;
 
-impl<Block: BlockT,Cl,BPM,Aux> network_gossip::Validator<Block> for BadgerGossipValidator<Block,Cl,BPM,Aux>
+impl<Block: BlockT,Cl,BPM,Aux> sc_network_ranting::Validator<Block> for BadgerGossipValidator<Block,Cl,BPM,Aux>
 where
 Cl:NetClient<Block>,
 Block::Hash:Ord,
 Aux:AuxStore+Send+Sync+'static,
 BPM:BlockPusherMaker<Block>
 {
+
   fn new_peer(&self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, _roles: Roles)
   {
     info!("New Peer called {:?}", who);
@@ -2510,24 +2514,37 @@ BPM:BlockPusherMaker<Block>
       let mut inner = self.inner.write();
       inner.peers.update_peer_state(who, PeerConsensusState::Connected);
     };
-    let packet = {
-      let mut inner = self.inner.write();
-      inner.peers.new_peer(who.clone());
-      inner.load_origin();
-
-      let ses_mes = SessionData {
-        ///TODO: mitigate sending of invalid peerid
-        ses_id: inner.persistent.authority_set.inner.read().set_id,
-        session_key: inner.cached_origin.as_ref().unwrap().public(),
-        peer_id: inner.config.my_peer_id.clone().into(),
-      };
-      let sgn = inner.cached_origin.as_ref().unwrap().sign(&ses_mes.encode());
-      SessionMessage { ses: ses_mes, sgn: sgn }
+    let scell=badger_session::<Block>();
+    let packet_data = match context.get_kept(&scell)
+    {
+      Some (p) =>{p},
+      None =>
+      {
+       let packet= {
+          let mut inner = self.inner.write();
+          inner.peers.new_peer(who.clone());
+          inner.load_origin();
+    
+          let ses_mes = SessionData {
+            ///TODO: mitigate sending of invalid peerid
+            ses_id: inner.persistent.authority_set.inner.read().set_id,
+            session_key: inner.cached_origin.as_ref().unwrap().public(),
+            peer_id: inner.config.my_peer_id.clone().into(),
+          };
+          let sgn = inner.cached_origin.as_ref().unwrap().sign(&ses_mes.encode());
+          SessionMessage { ses: ses_mes, sgn: sgn }
+        };
+        let packet_data = GossipMessage::<Block>::Session(packet).encode();
+        context.keep(scell, packet_data.clone());
+        packet_data
+      }
     };
+    context.send_single(who, packet_data);
 
     //if let Some(packet) = packet {
-    let packet_data = GossipMessage::<Block>::Session(packet).encode();
-    context.send_message(who, packet_data);
+    
+    //self.inner.write().process_and_replay(who, &packet_data);
+   
     //}
   }
 
@@ -2538,115 +2555,63 @@ BPM:BlockPusherMaker<Block>
 
   fn validate(
     &self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, data: &[u8],
-  ) -> network_gossip::ValidationResult<Block::Hash>
+  ) -> sc_network_ranting::ValidationResult<Block>
   {
     info!("Enter validate {:?}", who);
     let topic = badger_topic::<Block>();
     let actions = self.inner.write().process_and_replay(who, data);//TODO: Locks! cannot use handler inside...
-    let mut ret = network_gossip::ValidationResult::ProcessAndDiscard(topic);
+    let mut ret = sc_network_ranting::ValidationResult::Discard;
     let mut keep: bool = false; //a hack. TODO?
 
     for (action, msg) in actions.into_iter()
     {
       match action
       {
-        SAction::Discard =>
-        {}
-        SAction::PropagateOnce =>
+        ValidationResult::Maintain(cell) =>
         {
-          if let Some(msg) = msg
-          {
-            context.broadcast_message(topic, msg.encode().to_vec(), false);
+          if let Some(mmsg) =msg{
+          context.keep(cell,mmsg.encode());
+          ret = sc_network_ranting::ValidationResult::Maintain(cell);
           }
         }
-
-        SAction::RepropagateKeep =>
-        {
-          /*if let Some(msg)=msg
-          {
-           let cmsg = ConsensusMessage {
-            engine_id: HBBFT_ENGINE_ID,
-            data: msg.encode().to_vec(),
-             };
-           context.register_gossip_message(topic, cmsg);
-           }*/
-          //ret=network_gossip::ValidationResult::ProcessAndKeep;
-          keep = true;
-        }
-        SAction::QueueRetry(num) =>
-        {
-          //shouldn't reach here normally
-          info!("Unexpected SAction::QueueRetry {:?}", num);
-        }
+       _ =>{}
       }
     }
-    info!("Sending topic");
-    context.send_topic(who, topic, false);
-
+  
     {
-      info!("Preflush");
-      self.flush_message_either::<ShutUp>(&mut Vec::new(), None, &mut Some(context));
-      info!("Postflush");
+      self.flush_message(&mut Vec::new(),context);
     }
     info!("Flushed");
-    if keep
-    {
-      ret = network_gossip::ValidationResult::ProcessAndKeep(topic);
-    }
+
     return ret;
   }
 
-  fn message_allowed<'b>(&'b self) -> Box<dyn FnMut(&PeerId, MessageIntent, &Block::Hash, &[u8]) -> bool + 'b>
-  {
-   // info!("MessageAllowed 2");
-    Box::new(move |who, intent, topic, mut data| {
-      // if the topic is not something we're keeping at the moment,
-      // do not send.
-      if *topic != badger_topic::<Block>()
-      //only one topic, i guess we may add epochs eventually
-      {
-        return false;
-      }
 
-      if let MessageIntent::PeriodicRebroadcast = intent
-      {
-        return true; //might be useful
-      }
-
-      {
-       match self.inner.read().peers.inner.get(who)
-      {
-        None => return false,
-        Some(x) => x,
-      };
-    }
-      match GossipMessage::<Block>::decode(&mut data)
-      {
-        Err(_) => false,
-        Ok(GossipMessage::BadgerData(_)) => return true,
-        Ok(GossipMessage::KeygenData(_)) => return true,
-        Ok(GossipMessage::Session(_)) => true,
-        Ok(GossipMessage::JustificationData(_)) =>return true,
-      }
-    })
-  }
 
   fn message_expired<'b>(&'b self) -> Box<dyn FnMut(Block::Hash, &[u8]) -> bool + 'b>
   {
     //let inner = self.inner.read();
-    Box::new(move |topic, mut data| {
+    Box::new(move |cell, mut data| {
       //only one topic, i guess we may add epochs eventually
-      if topic != badger_topic::<Block>()
-      {
-        return true;
-      }
 
       match GossipMessage::<Block>::decode(&mut data)
       {
         Err(_) => true,
         Ok(GossipMessage::Session(ses_data)) =>
         {
-          ses_data.ses.ses_id >= self.inner.read().persistent.authority_set.inner.read().set_id
+          if cell!=badger_session::<Block>()
+          {
+            return true;
+          }
+          ses_data.ses.ses_id < self.inner.read().persistent.authority_set.inner.read().set_id
+        }
+        Ok(GossipMessage::JustificationData(just)) =>
+        {
+          if badger_justification::<Block>(just.hash.clone())!=cell
+          {
+            return true;
+          }
+          self.inner.read().is_justification_expired(just.hash)
         }
         Ok(_) => true,
       }
@@ -2654,122 +2619,39 @@ BPM:BlockPusherMaker<Block>
   }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
-struct ShutUp;
 
-impl<B> Network<B> for ShutUp
-where
-  B: BlockT,
-{
-  type In = NetworkStream;
-  fn local_id(&self) -> PeerId
-  {
-    PeerId::random()
-  }
 
-  fn messages_for(&self, _topic: B::Hash) -> Self::In
-  {
-    let (_tx, rx) = oneshot::channel::<mpsc::UnboundedReceiver<_>>();
-    NetworkStream { outer: rx, inner: None }
-  }
-
-  fn register_validator(&self, _validator: Arc<dyn network_gossip::Validator<B>>) {}
-
-  fn gossip_message(&self, _topic: B::Hash, _data: Vec<u8>, _force: bool) {}
-
-  fn register_gossip_message(&self, _topic: B::Hash, _data: Vec<u8>) {}
-
-  fn send_message(&self, _who: Vec<network::PeerId>, _data: Vec<u8>) {}
-
-  fn report(&self, _who: network::PeerId, _cost_benefit: i32) {}
-
-  fn announce(&self, _block: B::Hash, _data: Vec<u8>) {}
+pub trait Network<Block: BlockT>: RantingNetwork<Block> + Clone + Send + 'static {
+	/// Notifies the sync service to try and sync the given block from the given
+	/// peers.
+	///
+	/// If the given vector of peers is empty then the underlying implementation
+	/// should make a best effort to fetch the block from any peers it is
+	/// connected to (NOTE: this assumption will change in the future #3629).
+	fn set_sync_fork_request(&self, peers: Vec<network::PeerId>, hash: Block::Hash, number: NumberFor<Block>);
 }
 
-impl<B, S, H> Network<B> for Arc<NetworkService<B, S, H>>
-where
-  B: BlockT,
-  S: network::specialization::NetworkSpecialization<B>,
-  H: network::ExHashT,
+impl<B, S, H> Network<B> for Arc<NetworkService<B, S, H>> where
+	B: BlockT,
+	S: network::specialization::NetworkSpecialization<B>,
+	H: network::ExHashT,
 {
-  type In = NetworkStream;
-  fn local_id(&self) -> PeerId
-  {
-    self.local_peer_id()
-  }
-
-  fn messages_for(&self, topic: B::Hash) -> Self::In
-  {
-    let (tx, rx) = oneshot::channel::<mpsc::UnboundedReceiver<_>>();
-    self.with_gossip(move |gossip, _| {
-      let inner_rx = gossip.messages_for(HBBFT_ENGINE_ID, topic);
-      let _ = tx.send(inner_rx);
-    });
-    NetworkStream { outer: rx, inner: None }
-  }
-
-  fn register_validator(&self, validator: Arc<dyn network_gossip::Validator<B>>)
-  {
-    self.with_gossip(move |gossip, context| gossip.register_validator(context, HBBFT_ENGINE_ID, validator))
-  }
-
-  fn gossip_message(&self, topic: B::Hash, data: Vec<u8>, force: bool)
-  {
-    let msg = ConsensusMessage {
-      engine_id: HBBFT_ENGINE_ID,
-      data,
-    };
-
-    self.with_gossip(move |gossip, ctx| gossip.multicast(ctx, topic, msg, force))
-  }
-
-  fn register_gossip_message(&self, topic: B::Hash, data: Vec<u8>)
-  {
-    let msg = ConsensusMessage {
-      engine_id: HBBFT_ENGINE_ID,
-      data,
-    };
-
-    self.with_gossip(move |gossip, _| gossip.register_message(topic, msg))
-  }
-
-  fn send_message(&self, who: Vec<network::PeerId>, data: Vec<u8>)
-  {
-    let msg = ConsensusMessage {
-      engine_id: HBBFT_ENGINE_ID,
-      data,
-    };
-
-    self.with_gossip(move |gossip, ctx| {
-      for who in &who
-      {
-        gossip.send_message(ctx, who, msg.clone())
-      }
-    })
-  }
-
-  fn report(&self, who: network::PeerId, cost_benefit: i32)
-  {
-    self.report_peer(who, ReputationChange::new( cost_benefit,"silly"));
-  }
-
-  fn announce(&self, block: B::Hash, associated_data: Vec<u8>)
-  {
-    info!("Announcing block!");
-    self.announce_block(block, associated_data)
-  }
+	fn set_sync_fork_request(&self, peers: Vec<network::PeerId>, hash: B::Hash, number: NumberFor<B>) {
+		NetworkService::set_sync_fork_request(self, peers, hash, number)
+	}
 }
+
 
 /// A stream used by NetworkBridge in its implementation of Network.
 pub struct NetworkStream
 {
-  inner: Option<mpsc::UnboundedReceiver<network_gossip::TopicNotification>>,
-  outer: oneshot::Receiver<mpsc::UnboundedReceiver<network_gossip::TopicNotification>>,
+  inner: Option<mpsc::UnboundedReceiver<RawMessage>>,
+  outer: oneshot::Receiver<mpsc::UnboundedReceiver<RawMessage>>,
 }
 
 impl Stream for NetworkStream
 {
-  type Item = network_gossip::TopicNotification;
+  type Item = RawMessage;
 
   fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Option<Self::Item>>
   {
@@ -2802,17 +2684,17 @@ impl Stream for NetworkStream
 }
 
 /// Bridge between the underlying network service, gossiping consensus messages and Badger
-pub struct NetworkBridge<B: BlockT, N: Network<B>,Cl,BPM,Aux>
+pub struct NetworkBridge<B: BlockT,Cl,BPM,Aux>
 where
 Cl:NetClient<B>,
 B::Hash:Ord,
 Aux:AuxStore,
 BPM:BlockPusherMaker<B>,
 {
-  service: N,
+  engine: sc_network_ranting::RantingEngine<B>,
   node: Arc<BadgerGossipValidator<B,Cl,BPM,Aux>>,
 }
-impl<B: BlockT, N: Network<B>,Cl,BPM,Aux>  BatchProcessor<B> for NetworkBridge<B, N,Cl,BPM,Aux>
+impl<B: BlockT,Cl,BPM,Aux>  BatchProcessor<B> for NetworkBridge<B, Cl,BPM,Aux>
 where
 Cl:NetClient<B>+'static,
 B::Hash:Ord,
@@ -2821,12 +2703,12 @@ BPM:BlockPusherMaker<B>,
 {
   fn process_batch(&self,batch:<QHB as ConsensusProtocol>::Output)
   {
-    self.node.process_batch(batch,&self.service);
+     self.engine.with_lock(|en|  self.node.process_batch(batch,en)) ;
   }
 }
 
 
-impl<B: BlockT, N: Network<B>,Cl,BPM,Aux> NetworkBridge<B, N,Cl,BPM,Aux>
+impl<B: BlockT, Cl,BPM,Aux> NetworkBridge<B,Cl,BPM,Aux>
 where
 Cl:NetClient<B>+'static,
 B::Hash:Ord,
@@ -2837,17 +2719,18 @@ BPM:BlockPusherMaker<B>+'static,
   /// handle and a future that must be polled to completion to finish startup.
   /// If a voter set state is given it registers previous round votes with the
   /// gossip service.
-  pub fn new(
+  pub fn new<N:RantingNetwork<B>+Send+Sync+Clone+'static>(
     service: N, config: crate::Config, keystore: KeyStorePtr, persist: BadgerPersistentData,client:Arc<Cl>,flizer:Box<dyn FnMut( &B::Hash,Option<Justification>)->bool+Send+Sync>,
-    bpusher:BPM,astore:Aux
+    bpusher:BPM,astore:Aux,
+    executor: &impl futures03::task::Spawn,
   ) -> (Self, impl futures03::future::Future<Output = ()> + Send + Unpin)
   {
     let validator = BadgerGossipValidator::new(keystore, service.local_id().clone(), config.batch_size.into(), persist,client,flizer,bpusher,astore);
     let validator_arc = Arc::new(validator);
-    service.register_validator(validator_arc.clone());
-
+    let engine=RantingEngine::new(service, executor,HBBFT_ENGINE_ID, validator_arc.clone() );
+   
     let bridge = NetworkBridge {
-      service,
+      engine: engine,
       node: validator_arc,
     };
 
@@ -2869,7 +2752,7 @@ BPM:BlockPusherMaker<B>+'static,
 
 }
 
-impl<B: BlockT, N: Network<B>,Cl,BPM,Aux> Clone for NetworkBridge<B, N,Cl,BPM,Aux>
+impl<B: BlockT, Cl,BPM,Aux> Clone for NetworkBridge<B, Cl,BPM,Aux>
 where
 Cl:NetClient<B>,
 B::Hash:Ord,
@@ -2879,7 +2762,7 @@ BPM:BlockPusherMaker<B>,
   fn clone(&self) -> Self
   {
     NetworkBridge {
-      service: self.service.clone(),
+      engine: self.engine.clone(),
       node: Arc::clone(&self.node),
     }
   }
@@ -2898,7 +2781,7 @@ pub trait BadgerHandler<B:BlockT>
   
 }
 
-pub struct BadgerStream<Block:BlockT,N:Network<Block>,Cl,BPM,Aux>
+pub struct BadgerStream<Block:BlockT,Cl,BPM,Aux>
 where
 Cl:NetClient<Block>,
 
@@ -2906,11 +2789,11 @@ Block::Hash:Ord,
 Aux:AuxStore+Send+Sync+'static,
 BPM:BlockPusherMaker<Block>,
 {
-  pub wrap:Arc< NetworkBridge<Block,N,Cl,BPM,Aux>>,
+  pub wrap:Arc< NetworkBridge<Block,Cl,BPM,Aux>>,
 }
 
 
-impl<Block: BlockT,N:Network<Block>,Cl,BPM,Aux> Stream for BadgerStream<Block,N,Cl,BPM,Aux>
+impl<Block: BlockT,Cl,BPM,Aux> Stream for BadgerStream<Block,Cl,BPM,Aux>
 where
 Cl:NetClient<Block>,
 Block::Hash:Ord,
@@ -2936,7 +2819,7 @@ pub trait SendOut
 }
 
 
-impl<Block: BlockT, N: Network<Block>,Cl,BPM,Aux> SendOut for NetworkBridge<Block, N,Cl,BPM,Aux>
+impl<Block: BlockT, Cl,BPM,Aux> SendOut for NetworkBridge<Block, Cl,BPM,Aux>
 where
 Cl:NetClient<Block>,
 Block::Hash:Ord,
@@ -2948,8 +2831,8 @@ BPM:BlockPusherMaker<Block>,
   {
     for tx in input.into_iter().enumerate()
     {
-      let locked = &self.node;
-      match locked.push_transaction(tx.1, &self.service)
+      
+      match  self.engine.with_lock(|en| self.node.push_transaction(tx.1,en) )
       {
         Ok(_) =>
         {}
@@ -2960,55 +2843,11 @@ BPM:BlockPusherMaker<Block>,
   }
 }
 
-use network::consensus_gossip::ConsensusGossip;
 use runtime_primitives::ConsensusEngineId;
 
-struct NetworkSubtext<'g, 'p, B: BlockT>
-{
-  gossip: &'g mut ConsensusGossip<B>,
-  protocol: &'p mut dyn network::Context<B>,
-  engine_id: ConsensusEngineId,
-}
 
-impl<'g, 'p, B: BlockT> ValidatorContext<B> for NetworkSubtext<'g, 'p, B>
-{
-  fn broadcast_topic(&mut self, topic: B::Hash, force: bool)
-  {
-    self.gossip.broadcast_topic(self.protocol, topic, force);
-  }
 
-  fn broadcast_message(&mut self, topic: B::Hash, message: Vec<u8>, force: bool)
-  {
-    info!("mcast");
-    self.gossip.multicast(
-      self.protocol,
-      topic,
-      ConsensusMessage {
-        data: message,
-        engine_id: self.engine_id.clone(),
-      },
-      force,
-    );
-  }
-
-  fn send_message(&mut self, who: &PeerId, message: Vec<u8>)
-  {
-    self.protocol.send_consensus(
-      who.clone(),
-      vec![ConsensusMessage {
-        engine_id: self.engine_id,
-        data: message,
-      }],
-    );
-  }
-
-  fn send_topic(&mut self, who: &PeerId, topic: B::Hash, force: bool)
-  {
-    self.gossip.send_topic(self.protocol, who, topic, self.engine_id, force);
-  }
-}
-
-impl<Block: BlockT, N: Network<Block>,Cl,BPM,Aux> Sink<Vec<Vec<u8>>> for NetworkBridge<Block, N,Cl,BPM,Aux>
+impl<Block: BlockT, Cl,BPM,Aux> Sink<Vec<Vec<u8>>> for NetworkBridge<Block, Cl,BPM,Aux>
 where
 Cl:NetClient<Block>,
 Block::Hash:Ord,
@@ -3026,8 +2865,8 @@ BPM:BlockPusherMaker<Block>,
   {
     for tx in input.into_iter().enumerate()
     {
-      let locked = &self.node;
-      match locked.push_transaction(tx.1, &self.service)
+      //let locked = &self.node;
+      match  self.engine.with_lock(|en| { self.node.push_transaction(tx.1,en)}  )
       {
         Ok(_) =>
         {}
