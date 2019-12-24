@@ -127,7 +127,6 @@ where
 					let decoded = GossipMessage::decode(&mut &notification.message[..]);
 					if let Err(e) = decoded {
 						trace!("notification error {:?}", e);
-						println!("NOTIFICATION ERROR");
 						return None;
 					}
 					println!("sender in global {:?}", notification.sender);

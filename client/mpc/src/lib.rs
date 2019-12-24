@@ -11,7 +11,7 @@ use curv::{
 	FE, GE,
 };
 use futures::{
-	future::{select, ready, FutureExt, TryFutureExt},
+	future::{ready, select, FutureExt, TryFutureExt},
 	prelude::{Future, Sink, Stream},
 	stream::StreamExt,
 	task::{Context, Poll, Spawn},
@@ -213,10 +213,8 @@ where
 					if state.complete {
 						let mut offchain_storage = self.env.offchain.write();
 
-						let sk = state.local_key.clone().unwrap();
-						let seed = bincode::serialize(&sk).unwrap();
-						// let pk = sk.y_i.pk_to_key_slice();
-						// self.keystore.write().insert_unknown(SECP_KEY_TYPE, &seed, &pk);
+						let lk = state.local_key.clone().unwrap();
+						let seed = bincode::serialize(&lk).unwrap();
 						offchain_storage.set(STORAGE_PREFIX, b"local_key", &seed);
 					}
 
@@ -296,7 +294,15 @@ where
 		threshold: 1,
 		players: 3,
 	};
-	let backend_ = backend.clone();
+
+	let local_peer_id = network.local_peer_id();
+	let bridge = NetworkBridge::new(network, config.clone(), local_peer_id, &executor);
+	let offchain_storage = backend.offchain_storage().expect("need offchain storage");
+
+	if let Some(k) = offchain_storage.get(STORAGE_PREFIX, b"local_key") {
+		println!("{:?}", bincode::deserialize::<Keys>(&k));
+	}
+
 	let streamer = client
 		.clone()
 		.import_notification_stream()
@@ -323,25 +329,19 @@ where
 							offchain_storage.set(STORAGE_PREFIX, &key, &t);
 						}
 					}
-					MpcArgument::KeyGen(id) => {}
+					MpcArgument::KeyGen(id) => {
+						if let Some(mut offchain_storage) = backend.offchain_storage() {
+							//
+						}
+					}
 				}
 			}
 
 			ready(())
 		});
 
-	let local_peer_id = network.local_peer_id();
-	let bridge = NetworkBridge::new(network, config.clone(), local_peer_id, &executor);
-
-	let keygen_work = KeyGenWork::new(
-		client,
-		config,
-		bridge,
-		backend_
-			.offchain_storage()
-			.expect("Need offchain for keygen work"),
-	)
-	.map_err(|e| error!("Error {:?}", e));
+	let keygen_work = KeyGenWork::new(client, config, bridge, offchain_storage)
+		.map_err(|e| error!("Error {:?}", e));
 
 	let worker = select(streamer, keygen_work).then(|_| ready(Ok(())));
 
