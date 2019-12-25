@@ -147,14 +147,10 @@ pub enum MpcArgument {
 	SigGen(RequestId, Vec<u8>),
 }
 
-pub enum MpcCommand {
-	StartKeyGen,
-}
-
 struct KeyGenWork<B, E, Block: BlockT, RA, Storage> {
 	key_gen: Pin<Box<dyn Future<Output = Result<(), Error>> + Send + Unpin>>,
 	env: Arc<Environment<B, E, Block, RA, Storage>>,
-	mpc_command_rx: mpsc::UnboundedReceiver<MpcArgument>,
+	mpc_arg_rx: mpsc::UnboundedReceiver<MpcArgument>,
 }
 
 impl<B, E, Block, RA, Storage> KeyGenWork<B, E, Block, RA, Storage>
@@ -171,7 +167,7 @@ where
 		config: NodeConfig,
 		bridge: NetworkBridge<Block>,
 		offchain: Storage,
-		mpc_command_rx: mpsc::UnboundedReceiver<MpcArgument>,
+		mpc_arg_rx: mpsc::UnboundedReceiver<MpcArgument>,
 	) -> Self {
 		let state = KeyGenState::default();
 
@@ -186,7 +182,7 @@ where
 		let mut work = Self {
 			key_gen: Box::pin(futures::future::pending()),
 			env,
-			mpc_command_rx,
+			mpc_arg_rx,
 		};
 		work.rebuild(true);
 		work
@@ -224,7 +220,7 @@ where
 	fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
 		println!("POLLING IN KEYGEN WORK");
 
-		match self.mpc_command_rx.poll_next_unpin(cx) {
+		match self.mpc_arg_rx.poll_next_unpin(cx) {
 			Poll::Pending => {}
 			Poll::Ready(None) => {
 				// impossible

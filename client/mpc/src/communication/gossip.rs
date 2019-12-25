@@ -181,18 +181,10 @@ impl<Block: BlockT> GossipValidator<Block> {
 			_phantom: PhantomData,
 		}
 	}
-
-	pub fn broadcast(&self, context: &mut dyn ValidatorContext<Block>, msg: Vec<u8>) {
-		let inner = self.inner.read();
-
-		for peer_id in inner.get_other_peers() {
-			context.send_message(&peer_id, msg.clone())
-		}
-	}
 }
 
 impl<Block: BlockT> sc_network_gossip::Validator<Block> for GossipValidator<Block> {
-	fn new_peer(&self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, roles: Roles) {
+	fn new_peer(&self, _context: &mut dyn ValidatorContext<Block>, who: &PeerId, roles: Roles) {
 		if roles != Roles::AUTHORITY {
 			return;
 		}
@@ -214,7 +206,7 @@ impl<Block: BlockT> sc_network_gossip::Validator<Block> for GossipValidator<Bloc
 
 	fn validate(
 		&self,
-		context: &mut dyn ValidatorContext<Block>,
+		_context: &mut dyn ValidatorContext<Block>,
 		who: &PeerId,
 		mut data: &[u8],
 	) -> ValidationResult<Block::Hash> {
