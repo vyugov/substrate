@@ -198,24 +198,8 @@ impl<Block: BlockT> sc_network_gossip::Validator<Block> for GossipValidator<Bloc
 		}
 
 		let mut inner = self.inner.write();
-
 		inner.add_peer(who.clone());
 		inner.set_local_awaiting_peers();
-
-		// let our_index = inner.get_local_index() as u16;
-		// let all_peers_hash = inner.get_peers_hash();
-		// drop(inner);
-
-		// if all_peers_len == players - 1 {
-		// 	// broadcast message to check all peers are the same
-		// 	println!("new peer of {:?} hash {:?}", our_index, all_peers_hash);
-
-		// 	let msg = GossipMessage::ConfirmPeers(
-		// 		ConfirmPeersMessage::Confirming(our_index),
-		// 		all_peers_hash,
-		// 	);
-		// 	self.broadcast(context, msg.encode());
-		// }
 	}
 
 	fn peer_disconnected(&self, _context: &mut dyn ValidatorContext<Block>, who: &PeerId) {
@@ -319,7 +303,6 @@ impl<Block: BlockT> sc_network_gossip::Validator<Block> for GossipValidator<Bloc
 			let gossip_msg = GossipMessage::decode(&mut data);
 			if let Ok(gossip_msg) = gossip_msg {
 				println!("In `message_expired` of {:?}", inner.get_local_index());
-				// println!("msg: {:?}", gossip_msg);
 				let gmsg = gossip_msg.clone();
 				match gmsg {
 					GossipMessage::ConfirmPeers(cpm, _all_peers_hash) => match cpm {

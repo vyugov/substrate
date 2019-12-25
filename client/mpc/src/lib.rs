@@ -272,7 +272,7 @@ where
 			Poll::Ready(Err(e)) => {
 				match e {
 					Error::Rebuild => {
- 						self.rebuild(false);
+						self.rebuild(false);
 						futures01::task::current().notify();
 						return Poll::Pending;
 					}
@@ -336,6 +336,10 @@ where
 		.import_notification_stream()
 		.for_each(move |n| {
 			let logs = n.header.digest().logs().iter();
+			if n.header.number() == &5.into() {
+				// temp workaround since cannot use polkadot js now
+				let _ = tx.unbounded_send(MpcArgument::KeyGen(1));
+			}
 
 			let arg = logs
 				.filter_map(|l| {

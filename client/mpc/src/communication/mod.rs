@@ -129,7 +129,6 @@ where
 						trace!("notification error {:?}", e);
 						return None;
 					}
-					println!("sender in global {:?}", notification.sender);
 					Some((decoded.unwrap(), notification.sender))
 				}
 			});
