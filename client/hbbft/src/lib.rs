@@ -21,10 +21,10 @@ use log::{debug, error, info, trace, warn};
 use parity_codec::{Decode, Encode};
 use parking_lot::Mutex;
 
-use badger_primitives::HBBFT_ENGINE_ID;
-use badger_primitives::BadgerPreRuntime;
+//use badger_primitives::HBBFT_ENGINE_ID;
+//use badger_primitives::BadgerPreRuntime;
 
-use badger_primitives::ConsensusLog;
+//use badger_primitives::ConsensusLog;
 use badger::dynamic_honey_badger::Change;
 use badger::dynamic_honey_badger::ChangeState;
 

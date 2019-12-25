@@ -1618,8 +1618,15 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
           Some(dat) => dat.clone().into(),
           None =>
           {
+            if wkgen.originator==self.config.my_auth_id
+            {
+              self.config.my_peer_id.clone().into()
+            }
+            else
+             {
             info!("Unknown originator for {:?}", &wkgen.originator);
             return (ValidationResult::Discard,true);
+             }
           }
         };
         info!("Originator: {:?}, Peer: {:?}", &wkgen.originator, &orid);
@@ -1634,6 +1641,8 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
               return (ValidationResult::Punish(-2),false);
             }
           };
+          info!("Msg: {:?}",&k_message);
+        
           let acks = step.process_message(&orid, k_message);
           if step.is_done
           {
@@ -1710,8 +1719,15 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
           Some(dat) => dat.clone().into(),
           None =>
           {
+            if bdat.originator==self.config.my_auth_id
+            {
+              self.config.my_peer_id.clone().into()
+            }
+            else
+            {
             info!("Unknown originator for {:?}", &bdat.originator);
             return (ValidationResult::Discard,true);
+            }
           }
         };
         //we actually need to process observer state updates if we want to use SendQueue
@@ -2273,6 +2289,7 @@ Aux:AuxStore+Send+Sync+'static
         }
       }
     }
+    let mut self_directed=Vec::new();
     for (target, msg) in drain
     {
       if let &GossipMessage::Session(ref sdat) = &msg
@@ -2284,10 +2301,15 @@ Aux:AuxStore+Send+Sync+'static
       }
       //let vdata = GossipMessage::BadgerData(BadgeredMessage::new(pair,msg.message)).encode();
       let vdata = msg.encode();
+      let spidw=PeerIdW {0: spid.clone() };
       match target
       {
         LocalTarget::Nodes(node_set) =>
         {
+          if node_set.contains(&spidw)
+          {
+            self_directed.push(vdata.clone());
+          }
           context_val.send_to_set(node_set.iter().map(|x| x.0.clone()).collect(), vdata.clone()); 
           let av_list;
           {
@@ -2312,6 +2334,10 @@ Aux:AuxStore+Send+Sync+'static
         LocalTarget::AllExcept(exclude) =>
         {
           debug!("BaDGER!! AllExcept  {}", exclude.len());
+          if !exclude.contains(&spidw)
+          {
+            self_directed.push(vdata.clone());
+          }
           let clist;
           let mut vallist: Vec<_>;
           context_val.broadcast_except(exclude.iter().map(|x| x.0.clone()).collect(), vdata.clone());
@@ -2361,6 +2387,28 @@ Aux:AuxStore+Send+Sync+'static
         }
       }
     }
+    {
+      //loop self-directed messages... additional mesages will go ou on next flush
+      for data in self_directed.into_iter()
+      {
+        let actions = self.inner.write().process_and_replay(&spid, &data);//TODO: Locks! cannot use handler inside...
+        for (action, msg) in actions.into_iter()
+        {
+          match action
+          {
+            ValidationResult::Maintain(cell) =>
+            {
+              if let Some(mmsg) =msg{
+              context_val.keep(cell,mmsg.encode());
+              }
+            }
+           _ =>{}
+          }
+        }
+      }
+
+
+    }
     info!("BaDGER!! Exit flush {:?}", thread::current().id());
   }
   /// Create a new gossip-validator.
@@ -2402,7 +2450,7 @@ Aux:AuxStore+Send+Sync+'static
      match self.inner.write().push_transaction(tx)
      {
        Ok(_) =>{},
-       Err(e) =>{info!("Error pushing transaction {:?}",e);},
+       Err(e) =>{info!("Error pushing transaction {:?}",e); },
      }
     }
     //send messages out
@@ -2558,11 +2606,9 @@ BPM:BlockPusherMaker<Block>
   ) -> sc_network_ranting::ValidationResult<Block>
   {
     info!("Enter validate {:?}", who);
-    let topic = badger_topic::<Block>();
     let actions = self.inner.write().process_and_replay(who, data);//TODO: Locks! cannot use handler inside...
     let mut ret = sc_network_ranting::ValidationResult::Discard;
-    let mut keep: bool = false; //a hack. TODO?
-
+    
     for (action, msg) in actions.into_iter()
     {
       match action

@@ -34,7 +34,7 @@ use sc_service::{Service, NetworkStatus};
 
 use hb_node_runtime::{GenesisConfig,RuntimeApi};
                                     //use primitives::Pair;
-use keygen::{self};
+//use keygen::{self};
 use sp_runtime::traits::Block as BlockT;
 
 use std::sync::Arc;
@@ -216,8 +216,8 @@ macro_rules! new_full {
 		node_key,
 		dev_seed,
 	  )?;    
-	  let mpc = keygen::run_task(service.client(), back, service.network(), service.keystore(), service.spawn_task_handle())?;
-	  service.spawn_essential_task(mpc);
+	//  let mpc = keygen::run_task(service.client(), back, service.network(), service.keystore(), service.spawn_task_handle())?;
+	 // service.spawn_essential_task(mpc);
      
 			service.spawn_essential_task(badger.map(|_| Ok::<(), ()>(())).compat());
 		}
