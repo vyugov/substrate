@@ -28,11 +28,11 @@ use gossip::{GossipMessage, GossipValidator, MessageWithReceiver, MessageWithSen
 use message::{ConfirmPeersMessage, KeyGenMessage, SignMessage};
 
 pub(crate) fn hash_topic<B: BlockT>(hash: u64) -> B::Hash {
-	<<B::Header as HeaderT>::Hashing as HashT>::hash(&hash.to_le_bytes())
+	string_topic::<B>(&hash.to_le_bytes())
 }
 
-pub(crate) fn string_topic<B: BlockT>(input: &str) -> B::Hash {
-	<<B::Header as HeaderT>::Hashing as HashT>::hash(input.as_bytes())
+pub(crate) fn string_topic<B: BlockT>(input: &[u8]) -> B::Hash {
+	<<B::Header as HeaderT>::Hashing as HashT>::hash(input)
 }
 
 struct MessageSender<Block: BlockT> {
@@ -117,7 +117,7 @@ where
 		impl Stream<Item = MessageWithSender>,
 		impl Sink<MessageWithReceiver, Error = Error>,
 	) {
-		let topic = string_topic::<B>("hash"); // related with `fn validate` in gossip.rs
+		let topic = string_topic::<B>(b"hash"); // related with `fn validate` in gossip.rs
 
 		let incoming = self
 			.gossip_engine
@@ -170,5 +170,5 @@ impl<B: BlockT> Clone for NetworkBridge<B> {
 	}
 }
 
-// #[cfg(test)]
-// mod tests;
+#[cfg(test)]
+mod tests;

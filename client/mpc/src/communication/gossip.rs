@@ -1,3 +1,4 @@
+
 use std::{
 	collections::VecDeque,
 	marker::PhantomData,
@@ -40,6 +41,7 @@ pub struct Inner {
 	next_rebroadcast: Instant,
 }
 
+#[allow(dead_code)]
 impl Inner {
 	fn new(config: NodeConfig, local_peer_id: PeerId) -> Self {
 		let mut peers = Peers::default();
@@ -212,7 +214,7 @@ impl<Block: BlockT> sc_network_gossip::Validator<Block> for GossipValidator<Bloc
 	) -> ValidationResult<Block::Hash> {
 		let gossip_msg = GossipMessage::decode(&mut data);
 		if let Ok(gossip_msg) = gossip_msg {
-			let topic = super::string_topic::<Block>("hash");
+			let topic = super::string_topic::<Block>(b"hash");
 			match gossip_msg {
 				// GossipMessage::ConfirmPeers(_, _) => {
 				// 	return ValidationResult::ProcessAndDiscard(topic);

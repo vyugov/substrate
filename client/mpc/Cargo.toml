@@ -41,3 +41,8 @@ features =  ["ec_secp256k1"]
 [dependencies.multi-party-ecdsa]
 git = "https://github.com/KZen-networks/multi-party-ecdsa"
 tag = "v0.2.9"
+
+
+[dev-dependencies]
+sp-keyring = { path = "../../primitives/keyring" }
+sc-network-test = { path = "../network/test" }

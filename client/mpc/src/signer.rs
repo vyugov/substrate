@@ -7,26 +7,20 @@ use std::{
 };
 
 use codec::{Decode, Encode};
-use curv::GE;
-use futures::channel::mpsc;
-use futures::prelude::{Future, Sink, Stream, TryStream};
-use futures::stream::{FilterMap, StreamExt, TryStreamExt};
+use futures::prelude::{Future, Sink, Stream};
+use futures::stream::StreamExt;
 use futures::task::{Context, Poll};
-use log::{debug, error, info, warn};
+use log::{error, info};
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{Keys, Parameters};
 
-use sc_client::Client;
 use sc_client_api::{backend::Backend, BlockchainEvents, CallExecutor};
 use sc_network::PeerId;
 use sc_network_gossip::Network;
-use sp_blockchain::{Error as ClientError, HeaderBackend, Result as ClientResult};
 use sp_core::{offchain::OffchainStorage, Blake2Hasher, H256};
-use sp_runtime::generic::BlockId;
-use sp_runtime::traits::{Block as BlockT, NumberFor, ProvideRuntimeApi};
+use sp_runtime::traits::{Block as BlockT};
 
 use super::{
-	ConfirmPeersMessage, Environment, Error, GossipMessage, KeyGenMessage, MessageWithSender,
-	PeerIndex, SignMessage,
+	ConfirmPeersMessage, Environment, Error, GossipMessage, KeyGenMessage, MessageWithSender, PeerIndex,
 };
 
 struct Buffered<Item, S>
@@ -205,16 +199,10 @@ where
 		let proof_msg = KeyGenMessage::Proof(i, proof);
 		let validator = self.env.bridge.validator.inner.read();
 		let hash = validator.get_peers_hash();
-		self.global_out
-			.push((GossipMessage::KeyGen(proof_msg, hash), None));
+		self.global_out.push((GossipMessage::KeyGen(proof_msg, hash), None));
 	}
 
-	fn handle_cpm(
-		&mut self,
-		cpm: ConfirmPeersMessage,
-		sender: PeerId,
-		all_peers_hash: u64,
-	) -> bool {
+	fn handle_cpm(&mut self, cpm: ConfirmPeersMessage, sender: PeerId, all_peers_hash: u64) -> bool {
 		let players = self.env.config.players;
 
 		match cpm {
@@ -335,10 +323,7 @@ where
 						.unwrap();
 					let share = secret_shares[index].clone();
 
-					println!(
-						"vss and share {:?} \n {:?}\n of {:?}",
-						vss, secret_shares, index
-					);
+					println!("vss and share {:?} \n {:?}\n of {:?}", vss, secret_shares, index);
 
 					state.vsss.insert(index as PeerIndex, vss.clone());
 					state.secret_shares.insert(index as PeerIndex, share);
@@ -346,10 +331,7 @@ where
 					drop(state);
 
 					self.global_out.push((
-						GossipMessage::KeyGen(
-							KeyGenMessage::VSS(index as PeerIndex, vss),
-							all_peers_hash,
-						),
+						GossipMessage::KeyGen(KeyGenMessage::VSS(index as PeerIndex, vss), all_peers_hash),
 						None,
 					));
 
@@ -387,9 +369,7 @@ where
 
 				state.proofs.insert(from_index, proof.clone());
 
-				if state.proofs.len() == players as usize
-					&& state.decommits.len() == players as usize
-				{
+				if state.proofs.len() == players as usize && state.decommits.len() == players as usize {
 					let params = Parameters {
 						threshold: self.env.config.threshold,
 						share_count: self.env.config.players,
@@ -400,9 +380,7 @@ where
 
 					let mut validator = self.env.bridge.validator.inner.write();
 
-					if Keys::verify_dlog_proofs(&params, proofs.as_slice(), points.as_slice())
-						.is_ok()
-					{
+					if Keys::verify_dlog_proofs(&params, proofs.as_slice(), points.as_slice()).is_ok() {
 						info!("Key generation complete");
 						println!("key gen complete");
 						state.complete = true;

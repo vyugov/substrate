@@ -49,6 +49,7 @@ impl Default for Peers {
 	}
 }
 
+#[allow(dead_code)]
 impl Peers {
 	pub fn add(&mut self, who: PeerId) {
 		let base58_id = who.to_base58();
