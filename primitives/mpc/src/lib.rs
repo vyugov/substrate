@@ -29,6 +29,27 @@ pub type RequestId = u64;
 
 pub type AuthorityId = crypto::Public;
 
+#[derive(Clone, Decode, Encode, RuntimeDebug)]
+pub enum MpcRequest {
+	KeyGen(RequestId),
+	SigGen(RequestId, Vec<u8>),
+}
+
+pub fn get_storage_key(arg: MpcRequest) -> Vec<u8> {
+	let mut k = Vec::new();
+	match arg {
+		MpcRequest::KeyGen(id) => {
+			k.extend(b"keygen/");
+			k.extend(&id.to_le_bytes());
+		}
+		MpcRequest::SigGen(id, _) => {
+			k.extend(b"siggen/");
+			k.extend(&id.to_le_bytes());
+		}
+	};
+	k
+}
+
 // sp_api::decl_runtime_apis! {
 // 	pub trait MpcApi {
 // 		fn test();

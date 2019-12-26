@@ -20,7 +20,13 @@ use system::{
 	offchain::{CreateTransaction, SubmitSignedTransaction},
 };
 
-pub use sp_mpc::{crypto, ConsensusLog, KEY_TYPE, MPC_ENGINE_ID};
+pub use sp_mpc::{crypto, get_storage_key, ConsensusLog, MpcRequest, KEY_TYPE, MPC_ENGINE_ID};
+
+#[derive(Encode, Decode)]
+enum MpcResult {
+	KeyGen { id: u64, pk: Vec<u8> },
+	SigGen { id: u64, sig: Vec<u8> },
+}
 
 pub trait Trait: system::Trait {
 	type Event: From<Event<Self>> + Into<<Self as system::Trait>::Event>;
