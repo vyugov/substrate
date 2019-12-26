@@ -1,9 +1,9 @@
 
 use std::vec::Vec;
 
-use sp_offchain::STORAGE_PREFIX;
+use crate::RequestId;
 
-fn get_storage_key(id: u64) -> Vec<u8>{
+fn get_storage_key(id: RequestId) -> Vec<u8>{
     let mut k = Vec::new();
     k.extend(&id.to_le_bytes());
     k

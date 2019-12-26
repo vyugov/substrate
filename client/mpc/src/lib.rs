@@ -1,5 +1,3 @@
-#![feature(async_closure)]
-
 use std::{
 	collections::BTreeMap, fmt::Debug, hash::Hash, marker::PhantomData, pin::Pin, sync::Arc,
 	thread, time::Duration,
@@ -46,7 +44,7 @@ use sp_mpc::{ConsensusLog, RequestId, MPC_ENGINE_ID, SECP_KEY_TYPE};
 mod communication;
 mod periodic_stream;
 mod signer;
-// mod utils;
+mod utils;
 
 use communication::{
 	gossip::{GossipMessage, MessageWithSender},

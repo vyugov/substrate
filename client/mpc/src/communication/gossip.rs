@@ -1,4 +1,3 @@
-
 use std::{
 	collections::VecDeque,
 	marker::PhantomData,
@@ -8,7 +7,6 @@ use std::{
 
 use codec::{Decode, Encode};
 use log::{error, info, trace, warn};
-use serde::{Deserialize, Serialize};
 
 use sc_network::{config::Roles, PeerId};
 use sc_network_gossip::{GossipEngine, MessageIntent, ValidationResult, ValidatorContext};
@@ -17,13 +15,12 @@ use sp_runtime::traits::Block as BlockT;
 use super::{
 	message::{ConfirmPeersMessage, KeyGenMessage, SignMessage},
 	peer::{PeerInfo, PeerState, Peers},
-	string_topic,
 };
 use crate::NodeConfig;
 
 const REBROADCAST_AFTER: Duration = Duration::from_secs(30);
 
-#[derive(Debug, Clone, Encode, Decode)]
+#[derive(Debug, Clone, Encode, Decode, PartialEq)]
 pub enum GossipMessage {
 	ConfirmPeers(ConfirmPeersMessage, u64), // hash of all peers
 	KeyGen(KeyGenMessage, u64),
@@ -214,7 +211,7 @@ impl<Block: BlockT> sc_network_gossip::Validator<Block> for GossipValidator<Bloc
 	) -> ValidationResult<Block::Hash> {
 		let gossip_msg = GossipMessage::decode(&mut data);
 		if let Ok(gossip_msg) = gossip_msg {
-			let topic = super::string_topic::<Block>(b"hash");
+			let topic = super::bytes_topic::<Block>(b"hash");
 			match gossip_msg {
 				// GossipMessage::ConfirmPeers(_, _) => {
 				// 	return ValidationResult::ProcessAndDiscard(topic);
@@ -226,9 +223,7 @@ impl<Block: BlockT> sc_network_gossip::Validator<Block> for GossipValidator<Bloc
 		ValidationResult::Discard
 	}
 
-	fn message_allowed<'a>(
-		&'a self,
-	) -> Box<dyn FnMut(&PeerId, MessageIntent, &Block::Hash, &[u8]) -> bool + 'a> {
+	fn message_allowed<'a>(&'a self) -> Box<dyn FnMut(&PeerId, MessageIntent, &Block::Hash, &[u8]) -> bool + 'a> {
 		// rebroadcasted message
 		let (inner, do_rebroadcast) = {
 			use parking_lot::RwLockWriteGuard;

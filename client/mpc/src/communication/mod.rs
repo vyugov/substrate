@@ -27,11 +27,7 @@ use crate::{Error, NodeConfig};
 use gossip::{GossipMessage, GossipValidator, MessageWithReceiver, MessageWithSender};
 use message::{ConfirmPeersMessage, KeyGenMessage, SignMessage};
 
-pub(crate) fn hash_topic<B: BlockT>(hash: u64) -> B::Hash {
-	string_topic::<B>(&hash.to_le_bytes())
-}
-
-pub(crate) fn string_topic<B: BlockT>(input: &[u8]) -> B::Hash {
+pub(crate) fn bytes_topic<B: BlockT>(input: &[u8]) -> B::Hash {
 	<<B::Header as HeaderT>::Hashing as HashT>::hash(input)
 }
 
@@ -117,7 +113,7 @@ where
 		impl Stream<Item = MessageWithSender>,
 		impl Sink<MessageWithReceiver, Error = Error>,
 	) {
-		let topic = string_topic::<B>(b"hash"); // related with `fn validate` in gossip.rs
+		let topic = bytes_topic::<B>(b"hash"); // related with `fn validate` in gossip.rs
 
 		let incoming = self
 			.gossip_engine

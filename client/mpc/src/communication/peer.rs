@@ -1,11 +1,9 @@
-use std::cmp::{min, Ordering};
 use std::collections::{hash_map::DefaultHasher, BTreeSet, HashMap};
-use std::convert::From;
 use std::hash::{Hash, Hasher};
 use std::iter::Iterator;
 use std::str::FromStr;
 
-use sc_network::{config::Roles, PeerId};
+use sc_network::PeerId;
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum PeerState {

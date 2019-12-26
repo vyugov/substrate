@@ -3,7 +3,7 @@ use std::sync::Arc;
 use codec::Encode;
 use futures::channel::{mpsc, oneshot};
 use futures::compat::{Compat, Compat01As03};
-use futures::future::{FutureExt, Join};
+use futures::future::{FutureExt, Join, TryFutureExt};
 use futures::prelude::{Future, Sink, Stream, TryFuture, TryStream};
 use futures::sink::SinkExt;
 use futures::stream::{FilterMap, StreamExt, TryStreamExt};
@@ -92,7 +92,7 @@ impl Tester {
 					if pred(item) {
 						return Poll::Ready(Ok(s.take().unwrap()));
 					}
-				} // Poll::Pending => return Poll::Pending,
+				}
 			}
 		})
 	}
@@ -111,12 +111,13 @@ fn make_test_network(executor: &impl futures::task::Spawn) -> impl Future<Output
 	let id = PeerId::random();
 	let bridge = super::NetworkBridge::new(net.clone(), config, id, executor);
 
-	futures::future::lazy(move |_| Tester {
+	futures::future::ready(Tester {
 		gossip_validator: bridge.validator.clone(),
 		net_handle: bridge,
 		events: rx,
 	})
 }
+
 struct NoopContext;
 
 impl sc_network_gossip::ValidatorContext<Block> for NoopContext {
@@ -131,17 +132,14 @@ fn test_confirm_peer_message() {
 	let id = PeerId::random();
 	let threads_pool = futures::executor::ThreadPool::new().unwrap();
 
-	let global_topic = super::string_topic::<Block>(b"hash");
-
 	let test = make_test_network(&threads_pool)
-		.then(async move |tester| {
+		.then(move |tester| {
 			tester
 				.gossip_validator
 				.new_peer(&mut NoopContext, &id, config::Roles::AUTHORITY);
-
-			(tester, id)
+			futures::future::ready((tester, id))
 		})
-		.then(async move |(tester, id)| {
+		.then(move |(tester, id)| {
 			let (global_in, _) = tester.net_handle.global();
 
 			let all_hash = {
@@ -149,15 +147,29 @@ fn test_confirm_peer_message() {
 				inner.get_peers_hash()
 			};
 			let sender_id = id.clone();
+
 			let msg_to_send = GossipMessage::ConfirmPeers(ConfirmPeersMessage::Confirming(0), all_hash);
+			let msg_to_send_clone = msg_to_send.clone();
 
 			let send_message = tester.filter_network_events(move |event| match event {
 				Event::EventStream(sender) => {
+					let _ = sender.unbounded_send(NetworkEvent::NotificationStreamOpened {
+						remote: sender_id.clone(),
+						engine_id: MPC_ENGINE_ID,
+						roles: config::Roles::FULL,
+					});
+
 					let _ = sender.unbounded_send(NetworkEvent::NotificationsReceived {
 						messages: vec![(MPC_ENGINE_ID, msg_to_send.encode().into())],
 						remote: sender_id.clone(),
 					});
 
+					// let _ = sender.unbounded_send(NetworkEvent::NotificationStreamOpened {
+					// 	remote: sc_network::PeerId::random(),
+					// 	engine_id: MPC_ENGINE_ID,
+					// 	roles: config::Roles::FULL,
+					// });
+					println!("send ok");
 					true
 				}
 				_ => false,
@@ -165,26 +177,16 @@ fn test_confirm_peer_message() {
 
 			let sender_id = id.clone();
 
-			let handle_in = global_in
-				.map(move |(msg, sender_opt)| {
-					match msg {
-						GossipMessage::ConfirmPeers(ConfirmPeersMessage::Confirming(from), hash) => {
-							assert_eq!(from, 0);
-							assert_eq!(hash, all_hash);
-						}
-						_ => panic!("invalid msg"),
-					}
-
+			let handle_in = global_in.into_future() // get (item, tail_stream)
+				.map(move |(item, _)| {
+					println!("recv ok");
+					let (msg, sender_opt) = item.unwrap();
+					assert_eq!(msg, msg_to_send_clone);
 					assert_eq!(sender_opt.unwrap(), sender_id.clone());
-				})
-				.into_future();
+				});
 
-			futures::future::join(send_message, handle_in)
-			// .map_err(|_| panic!("could not watch for gossip message"))
-			// .map_ok(|_| ())
+			futures::future::join(send_message , handle_in)
 		});
 
-	// let mut runtime = Runtime::new().unwrap();
-	// let _ = runtime.block_on(test);
-	futures::executor::block_on(test);
+	let _ = futures::executor::block_on(test);
 }

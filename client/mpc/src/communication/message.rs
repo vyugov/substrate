@@ -1,5 +1,6 @@
 use std::str;
 
+use bincode;
 use codec::{Decode, Encode, Error as CodecError, Input};
 use curv::cryptographic_primitives::proofs::sigma_dlog::DLogProof;
 use curv::cryptographic_primitives::secret_sharing::feldman_vss::VerifiableSS;
@@ -8,7 +9,6 @@ use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{
 	KeyGenBroadcastMessage1 as KeyGenCommit, KeyGenDecommitMessage1 as KeyGenDecommit,
 };
 use serde::{Deserialize, Serialize};
-use serde_json;
 
 pub type PeerIndex = u16;
 
@@ -19,6 +19,7 @@ pub enum KeyGenMessage {
 	SecretShare(PeerIndex, FE),
 	Proof(PeerIndex, DLogProof),
 }
+
 impl KeyGenMessage {
 	pub fn get_index(&self) -> PeerIndex {
 		match *self {
@@ -34,10 +35,7 @@ impl PartialEq for KeyGenMessage {
 	fn eq(&self, other: &Self) -> bool {
 		match (self, other) {
 			(Self::CommitAndDecommit(ia, ca, da), Self::CommitAndDecommit(ib, cb, db)) => {
-				ia == ib
-					&& ca.com == cb.com && ca.e == cb.e
-					&& da.blind_factor == db.blind_factor
-					&& da.y_i == db.y_i
+				ia == ib && ca.com == cb.com && ca.e == cb.e && da.blind_factor == db.blind_factor && da.y_i == db.y_i
 			}
 			(Self::VSS(ia, vssa), Self::VSS(ib, vssb)) => ia == ib && vssa == vssb,
 			(Self::SecretShare(ia, ssa), Self::SecretShare(ib, ssb)) => ia == ib && ssa == ssb,
@@ -49,21 +47,19 @@ impl PartialEq for KeyGenMessage {
 
 impl Encode for KeyGenMessage {
 	fn encode(&self) -> Vec<u8> {
-		let encoded = serde_json::to_string(&self).unwrap();
-		let bytes = encoded.as_bytes();
-		Encode::encode(&bytes)
+		let encoded = bincode::serialize(&self).unwrap();
+		Encode::encode(&encoded)
 	}
 }
 
 impl Decode for KeyGenMessage {
 	fn decode<I: Input>(value: &mut I) -> Result<Self, CodecError> {
 		let decoded: Vec<u8> = Decode::decode(value)?;
-		let s = str::from_utf8(&decoded).unwrap();
-		Ok(serde_json::from_str(s).unwrap())
+		bincode::deserialize(&decoded).map_err(|_| CodecError::from("bincode error"))
 	}
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum SignMessage {
 	BroadCast,
 	Decommit,
@@ -72,21 +68,19 @@ pub enum SignMessage {
 
 impl Encode for SignMessage {
 	fn encode(&self) -> Vec<u8> {
-		let encoded = serde_json::to_string(&self).unwrap();
-		let bytes = encoded.as_bytes();
-		Encode::encode(&bytes)
+		let encoded = bincode::serialize(&self).unwrap();
+		Encode::encode(&encoded)
 	}
 }
 
 impl Decode for SignMessage {
 	fn decode<I: Input>(value: &mut I) -> Result<Self, CodecError> {
 		let decoded: Vec<u8> = Decode::decode(value)?;
-		let s = str::from_utf8(&decoded).unwrap();
-		Ok(serde_json::from_str(s).unwrap())
+		bincode::deserialize(&decoded).map_err(|_| CodecError::from("bincode error"))
 	}
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Encode, Decode)]
+#[derive(Clone, Debug, Serialize, Deserialize, Encode, Decode, PartialEq)]
 pub enum ConfirmPeersMessage {
 	Confirming(PeerIndex), // from_index
 	Confirmed(String),
