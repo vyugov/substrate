@@ -17,11 +17,9 @@ use sc_client_api::{backend::Backend, BlockchainEvents, CallExecutor};
 use sc_network::PeerId;
 use sc_network_gossip::Network;
 use sp_core::{offchain::OffchainStorage, Blake2Hasher, H256};
-use sp_runtime::traits::{Block as BlockT};
+use sp_runtime::traits::Block as BlockT;
 
-use super::{
-	ConfirmPeersMessage, Environment, Error, GossipMessage, KeyGenMessage, MessageWithSender, PeerIndex,
-};
+use super::{ConfirmPeersMessage, Environment, Error, GossipMessage, KeyGenMessage, MessageWithSender, PeerIndex};
 
 struct Buffered<Item, S>
 where

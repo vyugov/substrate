@@ -36,7 +36,7 @@ use sp_offchain::STORAGE_PREFIX;
 use sp_runtime::generic::OpaqueDigestItemId;
 use sp_runtime::traits::{Block as BlockT, Header};
 
-use sp_mpc::{ConsensusLog, MpcRequest, RequestId, MPC_ENGINE_ID, SECP_KEY_TYPE};
+use sp_mpc::{get_storage_key, ConsensusLog, MpcRequest, RequestId, MPC_ENGINE_ID, SECP_KEY_TYPE};
 
 mod communication;
 mod periodic_stream;
@@ -311,10 +311,6 @@ where
 	let bridge = NetworkBridge::new(network, config.clone(), local_peer_id, &executor);
 	let offchain_storage = backend.offchain_storage().expect("need offchain storage");
 
-	if let Some(k) = offchain_storage.get(STORAGE_PREFIX, b"local_key") {
-		println!("{:?}", bincode::deserialize::<Keys>(&k));
-	}
-
 	let (tx, rx) = mpsc::unbounded();
 
 	let streamer = client.clone().import_notification_stream().for_each(move |n| {
@@ -334,9 +330,10 @@ where
 		if let Some(arg) = arg {
 			match arg {
 				MpcRequest::SigGen(id, mut data) => {
-					let _ = tx.unbounded_send(MpcRequest::SigGen(id, data.clone()));
+					let req = MpcRequest::SigGen(id, data.clone());
+					let _ = tx.unbounded_send(req.clone());
 					if let Some(mut offchain_storage) = backend.offchain_storage() {
-						let key = id.to_le_bytes();
+						let key = get_storage_key(req);
 						info!("key {:?} data {:?}", key, data);
 						let mut t = vec![1u8];
 						t.append(&mut data);
@@ -344,7 +341,6 @@ where
 					}
 				}
 				kg @ MpcRequest::KeyGen(_) => {
-					println!("{:?}", kg);
 					let _ = tx.unbounded_send(kg);
 				}
 			}

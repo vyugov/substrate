@@ -32,7 +32,7 @@ pub type AuthorityId = crypto::Public;
 #[derive(Clone, Decode, Encode, RuntimeDebug)]
 pub enum MpcRequest {
 	KeyGen(RequestId),
-	SigGen(RequestId, Vec<u8>),
+	SigGen(RequestId, Vec<u8>), // id, pub key, data
 }
 
 pub fn get_storage_key(arg: MpcRequest) -> Vec<u8> {
