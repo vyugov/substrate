@@ -20,18 +20,18 @@ use hex;
 use log::{debug, error, info, trace, warn};
 use parity_codec::{Decode, Encode};
 use parking_lot::Mutex;
-
+use futures03::channel::mpsc;
 //use badger_primitives::HBBFT_ENGINE_ID;
 //use badger_primitives::BadgerPreRuntime;
 
 //use badger_primitives::ConsensusLog;
-use badger::dynamic_honey_badger::Change;
-use badger::dynamic_honey_badger::ChangeState;
+//use badger::dynamic_honey_badger::Change;
+//use badger::dynamic_honey_badger::ChangeState;
 
 use consensus_common::evaluation;
 use inherents::InherentIdentifier;
 use keystore::KeyStorePtr;
-use runtime_primitives::traits::Hash as THash;
+//use runtime_primitives::traits::Hash as THash;
 use runtime_primitives::traits::{
 	BlakeTwo256, Block as BlockT, Header, NumberFor, ProvideRuntimeApi,
 };
@@ -152,12 +152,14 @@ where
 	}
 }
 
+//Block:BlockT
+pub type ImportTx<Block:BlockT> =mpsc::UnboundedSender<(Block::Hash,NumberFor::<Block>)>;
 
 pub struct BadgerBlockImport<B, E, Block: BlockT<Hash=H256>, RA, SC> {
 	pub inner: Arc<Client<B, E, Block, RA>>,
 	pub select_chain: SC,
 	pub authority_set: aux_store::BadgerSharedAuthoritySet,
-//	send_voter_commands: mpsc::UnboundedSender<VoterCommand<Block::Hash, NumberFor<Block>>>,
+	pub send_on_import: ImportTx<Block>,
 //	consensus_changes: SharedConsensusChanges<Block::Hash, NumberFor<Block>>,
 }
 
@@ -169,6 +171,7 @@ BadgerBlockImport<B, E, Block, RA, SC>
 			inner: self.inner.clone(),
 			select_chain: self.select_chain.clone(),
 			authority_set: self.authority_set.clone(),
+			send_on_import:self.send_on_import.clone(),
 		}
 	}
 }
@@ -182,14 +185,14 @@ BadgerBlockImport<B, E, Block, RA, SC>
 		inner: Arc<Client<B, E, Block, RA>>,
 		select_chain: SC,
 		authority_set:  aux_store::BadgerSharedAuthoritySet,
-		//send_voter_commands: mpsc::UnboundedSender<VoterCommand<Block::Hash, NumberFor<Block>>>,
+		send_on_import:ImportTx<Block>,
 		//consensus_changes: SharedConsensusChanges<Block::Hash, NumberFor<Block>>,
 	) -> BadgerBlockImport<B, E, Block, RA, SC> {
 		BadgerBlockImport {
 			inner,
 			select_chain,
 			authority_set,
-			//send_voter_commands,
+			send_on_import,
 			//consensus_changes,
 		}
 	}
@@ -204,6 +207,7 @@ impl<B, E, Block: BlockT<Hash=H256>, RA, SC> BlockImport<Block>
 		E: CallExecutor<Block, Blake2Hasher> + 'static + Clone + Send + Sync,
 		DigestFor<Block>: Encode,
 		RA: Send + Sync,
+		SC: SelectChain<Block> + Clone,
 {
 	type Error = ConsensusError;
 
@@ -235,7 +239,57 @@ impl<B, E, Block: BlockT<Hash=H256>, RA, SC> BlockImport<Block>
 	    // Block is part of the initial sync with the network.
 	    BlockOrigin::NetworkInitialSync => {
 			  //ignore?
-			  return Ok(ImportResult::AlreadyInChain);
+			  let  justification = match block.justification.clone()
+			  {
+				  Some(jst) =>{jst},
+				  None => {return Ok(ImportResult::AlreadyInChain);}
+			  };
+
+			 // info!("Sync Block Justification: {:?}",&justification);
+			  let bh=block.header.hash().clone();
+			  let bn=block.header.number().clone();
+			  
+			  if self.authority_set.verify_full_justification::<Block>(justification)
+			  {
+				let chain_head = match self.select_chain.best_chain() {
+					Ok(x) => x,
+					Err(e) => {
+						warn!(target: "formation", "Unable to author block, no best block header: {:?}", &e);
+						return Err(ConsensusError::ClientImport(e.to_string()).into());
+					}
+				};
+				if *chain_head.number()+1.into()==bn
+				{
+					info!("Importing EXTERNAL");
+				  let mut nblock=block;
+				  nblock.finalized=true;
+				  	/*BlockImportParams {
+					origin: BlockOrigin::NetworkInitialSync,
+					header: block.header,
+					justification: block.justification,
+					post_digests: block.,
+					body: Some(new_body),
+					finalized: false,
+					auxiliary: Vec::new(),
+					fork_choice: ForkChoiceStrategy::LongestChain,
+					allow_missing_state: false,
+					import_existing: false,
+				};*/
+
+			  let import_result = (&*self.inner).import_block(nblock, new_cache);
+			  match self.send_on_import.unbounded_send((bh,bn))
+			  {
+				  Ok(_)=>{},
+				  Err(e)=>{info!("Send failed with {:?}",e)},
+			  }
+			  return import_result;
+			  }
+			  }
+			  else
+			  {
+				return Err( ConsensusError::ClientImport("Justification invalid".to_string()).into());	  
+			  }
+
 	          },
 	// Block was broadcasted on the network.
 	BlockOrigin::NetworkBroadcast => {
@@ -580,11 +634,14 @@ where
 use crate::aux_store::GenesisAuthoritySetProvider;
 
 
+//Block:BlockT
+pub type ImportRx<Block:BlockT>= mpsc::UnboundedReceiver<(Block::Hash,NumberFor::<Block>)>;
+
 pub fn block_importer<B, E, Block: BlockT<Hash=H256>, RA, SC>(
 	client: Arc<Client<B, E, Block, RA>>,
 	genesis_authorities_provider: &dyn GenesisAuthoritySetProvider<Block>,
 	select_chain: SC,
-) -> Result<BadgerBlockImport<B, E, Block, RA, SC>, ClientError>
+) -> Result< ( BadgerBlockImport<B, E, Block, RA, SC>,ImportRx<Block> ,)  , ClientError>
 where
 	B: Backend<Block, Blake2Hasher> + 'static,
 	E: CallExecutor<Block, Blake2Hasher> + 'static + Clone + Send + Sync,
@@ -605,12 +662,14 @@ where
 		}
 	)?;
 
-	
-	Ok(		BadgerBlockImport::new(
+	let (import_commands_tx, import_commands_rx) = mpsc::unbounded();
+
+	Ok(	(	BadgerBlockImport::new(
 			client.clone(),
 			select_chain.clone(),
 			persistent_data.clone(),
-		),
+			import_commands_tx.clone(),),
+			import_commands_rx)
 		
 	)
 }
@@ -1148,6 +1207,7 @@ pub fn run_honey_badger<B, E, Block: BlockT<Hash = H256>, N, RA, SC, X, I, A,Sp>
 	selch: SC,
 	keystore: KeyStorePtr,
 	executor:Sp,
+	receiver:ImportRx<Block>,
 	_node_key:Option<String>,
 	_dev_seed:Option<String>
 ) -> ClientResult<impl Future<Output = ()> + Send + Unpin>
@@ -1253,6 +1313,13 @@ where
 	
 	let cblock_import = block_import.clone();
 	let ping_sel = selch.clone();
+    let sec_net=net_arc.clone(); 
+	let importer=receiver.for_each(move |(hash,num)|
+	{
+		info!("External block import: {:?} {:?}",&hash,&num);
+	 sec_net.on_block_imported(num);
+	 future::ready(())
+	});
 	let receiver = blk_out.for_each(move |batch| {
 		net_arc.process_batch(batch);
 		 
@@ -1273,7 +1340,7 @@ where
 //	let secr:SecretKey=bincode::deserialize(&keystore.read().key_pair_by_type::<AuthorityPair>(&ap.into(), app_crypto::key_types::HB_NODE).unwrap().to_raw_vec()).unwrap();
 //	info!("Badger AUTH  private {:?}",&secr);
 	
-	let with_start = network_startup.then(move |()| futures03::future::join(sender, receiver));
+	let with_start = network_startup.then(move |()|futures03::future::join(futures03::future::join(sender, receiver),importer));
 	let ping_client = client.clone();
 	// Delay::new(Duration::from_secs(1)).then(|_| {
 	let ping =interval_at(Instant::now(),Duration::from_millis(11500)).for_each(move |_| {
@@ -1336,38 +1403,5 @@ where
 		pinged,
 	)
 	.then(|_| future::ready(())))
-	/*let ping_lesser = Interval::new(Duration::from_millis(1000)).for_each(move |_| {
-		info!("ping");
-				let mut chain_head = match ping_sel.best_chain()
-		{
-			Ok(x) => x,
-			Err(e) =>
-			{
-				warn!(target: "formation", "Unable to author block, no best block header: {:?}", e);
-				return future::ready(());
-			}
-		};
-	let mut parent_hash = chain_head.hash();
-		let mut pnumber = *chain_head.number();
-		let mut parent_id = BlockId::hash(parent_hash);
 
-		let inherent_data = match inherent_data_providers.create_inherent_data()
-		{
-			Ok(id) => id,
-			Err(err) => return future::ready(()), //future::err(err),
-		};
-	let inh = ping_client.runtime_api().inherent_extrinsics_with_context(
-			&parent_id,
-			ExecutionContext::BlockConstruction,
-			inherent_data,
-		);
-			info!("ping end");
-		future::ready(())
-		});
-
-	let ready_on_exit= on_exit.then(|_| {
-				info!("READY");
-				future::ready(())
-			});
-	Ok(  futures03::future::select( ping_lesser,ready_on_exit)  .then(|_| future::ready(())))*/
 }

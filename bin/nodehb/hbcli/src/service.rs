@@ -94,7 +94,7 @@ macro_rules! new_full_start {
 		type RpcExtension = jsonrpc_core::IoHandler<substrate_rpc::Metadata>;
 		//let mut import_setup = None;
 		let inherent_data_providers = inherents::InherentDataProviders::new();
-		let mut import_setup = None;
+		let mut import_setup =None;
 		let builder = sc_service::ServiceBuilder::new_full::<
 			hb_node_primitives::Block, hb_node_runtime::RuntimeApi, hb_node_executor::Executor
 		>($config)?
@@ -113,9 +113,9 @@ macro_rules! new_full_start {
 			.with_import_queue(|_config, client,  select_chain, _transaction_pool| {
         #[allow(deprecated)]
         // let fprb = Box::new(DummyFinalityProofRequestBuilder::default()) as Box<_>;
-		let block_import = badger::block_importer(client.clone(), &*client.clone(), select_chain.unwrap(),).expect("Invalid setup. QWOP.");
+		let (block_import, import_rx) = badger::block_importer(client.clone(), &*client.clone(), select_chain.unwrap(),).expect("Invalid setup. QWOP.");
 		//let justification_import = block_import.clone();
-		import_setup=Some(block_import.clone());
+		import_setup=Some( (block_import.clone(),import_rx));
         badger_import_queue::<_, _, Public, Signature>(
           Box::new(block_import),
           None,
@@ -163,7 +163,7 @@ macro_rules! new_full {
 		let participates_in_consensus = is_authority && !$config.sentry_mode;
 
 		let (builder, import_setup, inherent_data_providers) = new_full_start!($config);
-    let back = builder.backend().clone();
+   // let back = builder.backend().clone();
 		
 		// Dht event channel from the network to the authority discovery module. Use bounded channel to ensure
 		// back-pressure. Authority discovery is triggering one event per authority within the current authority set.
@@ -196,7 +196,7 @@ macro_rules! new_full {
 		  name: Some(node_name.to_string()),
           batch_size:20,  
 	  };
-	  let b_i=import_setup.expect("Should be initialized by now");
+	  let (b_i,i_rx)=import_setup.expect("Should be initialized");
       let badger = run_honey_badger(
         client,
 		t_pool,
@@ -213,6 +213,7 @@ macro_rules! new_full {
         select_chain,
 		service.keystore(),
 		service.spawn_task_handle(),
+		i_rx,
 		node_key,
 		dev_seed,
 	  )?;    

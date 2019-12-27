@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
+use gossip::BadgerSyncGossip;
 use gossip::BadgerJustification;
 use runtime_primitives::Justification;
 use consensus_common::{self, BlockImportParams, BlockOrigin, ForkChoiceStrategy, SelectChain, Error as ConsensusError,};
@@ -28,7 +29,7 @@ use client::{
 };
 use sc_network_ranting::ValidationResult;
 use badger_primitives::ConsensusLog;
-
+use gossip::BadgerSyncData;
 use gossip::{BadgerFullJustification,BadgerAuthCommit};
 use substrate_primitives::{Blake2Hasher,};
 use hash_db::Hasher;
@@ -129,6 +130,11 @@ pub fn badger_session<B: BlockT>() -> B::Hash
 {
   <<B::Header as HeaderT>::Hashing as HashT>::hash(format!("badger-mushroom-session-data").as_bytes())
 }
+
+pub fn badger_sync<B: BlockT>() -> B::Hash
+{
+  <<B::Header as HeaderT>::Hashing as HashT>::hash(format!("badger-mushroom-sync-data").as_bytes())
+}
 pub fn badger_justification<B: BlockT>(bh: B::Hash) -> B::Hash
 {
  // <<B::Header as HeaderT>::Hashing as HashT>::hash(format!("badger-mushroom-block_justification").as_bytes())
@@ -137,7 +143,7 @@ pub fn badger_justification<B: BlockT>(bh: B::Hash) -> B::Hash
 
 
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
-pub enum LocalTarget
+pub enum LocalTarget<B:BlockT>
 {
   /// The message must be sent to the node with the given ID.
   Nodes(BTreeSet<NodeId>),
@@ -145,9 +151,10 @@ pub enum LocalTarget
   /// Useful for sending messages to observer nodes that aren't
   /// present in a node's `all_ids()` list.
   AllExcept(BTreeSet<NodeId>),
+  Keep(B::Hash),
 }
 
-impl From<Target<NodeId>> for LocalTarget
+impl<B:BlockT> From<Target<NodeId>> for LocalTarget<B>
 {
   fn from(t: Target<NodeId>) -> Self
   {
@@ -160,7 +167,7 @@ impl From<Target<NodeId>> for LocalTarget
   }
 }
 
-impl Into<Target<NodeId>> for LocalTarget
+impl<B:BlockT> Into<Target<NodeId>> for LocalTarget<B>
 {
   fn into(self) -> Target<NodeId>
   {
@@ -169,17 +176,18 @@ impl Into<Target<NodeId>> for LocalTarget
       // LocalTarget::All => Target::All,
       LocalTarget::Nodes(n) => Target::Nodes(n),
       LocalTarget::AllExcept(set) => Target::AllExcept(set),
+      LocalTarget::Keep(_) => Target::AllExcept(BTreeSet::new()),
     }
   }
 }
 
 #[derive(Eq, PartialEq, Debug, Encode, Decode)]
-pub struct SourcedMessage<D: ConsensusProtocol>
+pub struct SourcedMessage<D: ConsensusProtocol,B:BlockT>
 where
   D::NodeId: Encode + Decode + Clone,
 {
   sender_id: D::NodeId,
-  target: LocalTarget,
+  target: LocalTarget<B>,
   message: Vec<u8>,
 }
 
@@ -206,7 +214,7 @@ where
   /// Incoming messages from other nodes that this node has not yet handled.
   // in_queue: VecDeque<SourcedMessage<D>>,
   /// Outgoing messages to other nodes.
-  pub out_queue: VecDeque<SourcedMessage<D>>,
+  pub out_queue: VecDeque<SourcedMessage<D,B>>,
   /// The values this node has output so far, with timestamps.
   pub outputs: VecDeque<D::Output>,
   _block: PhantomData<B>,
@@ -461,6 +469,9 @@ where
 {
   /// Waiting for all initial validators to be connected
   AwaitingValidators,
+
+  /// Block numbers should be aligned to start batch processing
+  InitialSync,
   /// Running genesis keygen
   KeyGen(KeyGenState),
   /// Running completed Badger node
@@ -478,6 +489,32 @@ pub struct JustificationCollector<B:BlockT>
 }
 use network::ClientHandle as NetClient;
 pub use sp_blockchain::{HeaderBackend,HeaderMetadata};
+
+pub struct BatchBlockMechanics<B:BlockT>
+{
+  queued_block:Option<B>, //block awaiting finalization
+  overflow:VecDeque<BadgerTransaction>,
+  queued_batches:VecDeque<BatchType>,
+  pending_batch:Option<BatchType>,
+
+}
+pub struct ValidatorSync<B:BlockT>
+{
+  pub best_block_num: NumberFor<B>,
+  pub best_block_hash: B::Hash,
+  pub id:AuthorityId,
+}
+pub struct BadgerSyncState<B:BlockT>
+{
+//  pub total_best_block_num: NumberFor<B>,
+//  pub total_best_block_hash: B::Hash,
+//  pub our_best_block_num: NumberFor<B>,//we might not be a validator... 
+//  pub our_best_block_hash: B::Hash,
+  pub initial_sync_done:bool,
+  pub validators:Vec<ValidatorSync<B>>
+}
+
+
 pub struct BadgerStateMachine<B: BlockT, D,Cl,BPM,Aux>
 where
   D: ConsensusProtocol<NodeId = NodeId>, //specialize to avoid some of the confusion
@@ -500,10 +537,9 @@ where
   pub client: Arc<Cl>,
   pub block_maker:BPM,
   pub aux_backend:Aux,
-  queued_block:RwLock<Option<B>>, //block awaiting finalization
-	overflow:RwLock<VecDeque<BadgerTransaction>>,
-  queued_batches:RwLock<VecDeque<BatchType>>,
-  pub output_message_buffer:Vec<(LocalTarget, GossipMessage<B>)>,
+  pub mech:BatchBlockMechanics<B>,
+  pub sync_state:BadgerSyncState<B>,
+  pub output_message_buffer:Vec<(LocalTarget<B>, GossipMessage<B>)>,
   pub finalizer: Box<dyn FnMut( &B::Hash,Option<Justification>)->bool+Send+Sync>,
 }
 
@@ -806,12 +842,33 @@ Aux:AuxStore+Send+Sync+'static,
       client:client.clone(),
       aux_backend:astore,
       block_maker:bbld,
-      overflow:RwLock::new(VecDeque::new()),
-      queued_batches:RwLock::new(VecDeque::new()),
-      queued_block:RwLock::new(None),
+      mech: BatchBlockMechanics {
+        queued_block:None,
+        overflow:VecDeque::new(),
+        queued_batches:VecDeque::new(),
+        pending_batch:None,
+      },
+      sync_state:
+        BadgerSyncState {
+          initial_sync_done:false,
+          validators:Vec::new()
+        }
+      ,
       finalizer:finalizer,
       output_message_buffer:Vec::new(),
     }
+    /*pub struct ValidatorSync<B:BlockT>
+{
+  pub best_block_num: NumberFor<B>,
+  pub best_block_hash: B::Hash,
+}
+pub struct BadgerSyncState<B:BlockT>
+{
+  pub total_best_block_num: NumberFor<B>,
+  pub total_best_block_hash: B::Hash,
+  pub initial_sync_done:bool,
+  pub validators:Vec<ValidatorSync<B>>
+}*/
   }
   pub fn process_extracted(&mut self,logs:Vec<ExtractedLogs<B>>,)
   {
@@ -929,29 +986,38 @@ Aux:AuxStore+Send+Sync+'static,
   }
   pub fn consume_batch(&mut self, batch:BatchType)
   {
-    if self.queued_block.read().is_some()
     {
-      self.queued_batches.write().push_back(batch);
-      return;
-    }
-    match self.batch_to_block(batch) {
-    BatchProcResult::EmitJustification(hash,alist,logs) => 
-     {   
-      self.initiate_block_justification(hash,alist);
-      self.process_extracted(logs);
-       },
-     BatchProcResult::Completed(logs) =>{ self.process_extracted(logs); },
-     _ =>{}
+      self.mech.queued_batches.push_back(batch);
+      if  self.mech.queued_block.is_some()
+      {
+        return;
       }
+      let mbatch=self.mech.queued_batches.pop_front();
+      if let Some(batch)=mbatch
+      {
+     
+        match self.batch_to_block(batch) 
+        {
+        BatchProcResult::EmitJustification(hash,alist,logs) => 
+         {   
+          self.initiate_block_justification(hash,alist);
+          self.process_extracted(logs);
+           },
+         BatchProcResult::Completed(logs) =>{ self.process_extracted(logs); },
+         _ =>{}
+          }
+      }
+    }
 
   }
 
-  pub fn pre_finalize(&mut self, hash: &B::Hash,just: Justification) -> BatchProcResult<B>
+  pub fn pre_finalize(&mut self, hash: &B::Hash,justne: BadgerFullJustification<B>) -> BatchProcResult<B>
   {
-	 
+   
+    let lmech=&mut self.mech;
 	  let mblock;
 	  {
-	  mblock=std::mem::replace(&mut *self.queued_block.write(),None);
+	  mblock=std::mem::replace(&mut lmech.queued_block,None);
 	  }
      
 
@@ -1021,21 +1087,26 @@ Aux:AuxStore+Send+Sync+'static,
 				let eh = import_block.header.parent_hash().clone();
         if let Err(e) =  self.block_maker.import_block(import_block)
 				{
-					warn!(target: "badger", "Error with block built on {:?}: ",eh, );
+					warn!(target: "badger", "Error with block built on {:?}: {:?}",eh, e);
 				 }
 			}
 			{
-			if !(self.finalizer)(hash,Some(just))
+			if !(self.finalizer)(hash,Some(justne.encode()))
 			{
         warn!("Failed finalization...");
 				return BatchProcResult::Nothing;
-			}
+      }
+      let  pair = self.cached_origin.clone().unwrap();
+      let gsp=BadgerSyncGossip::new(&pair,justne,pnumber);
+      self.output_message_buffer.push((LocalTarget::AllExcept(BTreeSet::new()),GossipMessage::SyncGossip(gsp.clone())));
+      self.output_message_buffer.push((LocalTarget::Keep(badger_sync::<B>()),GossipMessage::SyncGossip(gsp)));
+
 		   }
     
 			{
         let mbatch;
         {
-          mbatch=self.queued_batches.write().pop_front();
+          mbatch=lmech.queued_batches.pop_front();
         }
 			if let Some(batch)=mbatch
 			{
@@ -1048,15 +1119,20 @@ Aux:AuxStore+Send+Sync+'static,
     BatchProcResult::Nothing
   }
 
-pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
+pub fn batch_to_block(&mut self, batch:BatchType ) ->BatchProcResult<B>
     {  
+      //let lmech=&mut self.mech;
+
     let mut inherent_digests = generic::Digest { logs: vec![] };
+    {
+    self.mech.pending_batch=Some(batch.clone());
+    }
     {
     info!(
       "Processing batch with epoch {:?} of {:?} transactions  and {:?} overflow into block",
       batch.epoch(),
       batch.len(),			
-      self.overflow.read().len());
+      self.mech.overflow.len());
        }
      let auth_list;
      {
@@ -1102,7 +1178,7 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
     let parent_id = BlockId::hash(parent_hash);
 
     {
-      let mut locked=self.overflow.write();
+      let mut locked=&mut self.mech.overflow;
     let block=  match self.block_maker.process_all(parent_id,inherent_digests,&mut locked,batch.into_tx_iter())
       {
         Ok(val) => val,
@@ -1130,7 +1206,7 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
       let header_hash = block.header().hash();
       //self.handler.emit_justification(&header_hash,auth_list.clone());
       {
-        *self.queued_block.write()=Some(block)
+        self.mech.queued_block=Some(block)
         
       }
       BatchProcResult::EmitJustification(header_hash,auth_list,elogs)
@@ -1154,6 +1230,33 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
       self.cached_origin = Some(pair);
     }
   }
+  pub fn imported_block_number(&mut self,num: NumberFor::<B>)
+  {
+    {
+      
+  
+      
+      if let Some(ref block)= &self.mech.queued_block
+      {
+        let cur_num=block.header().number();
+        if num<*cur_num
+        {
+          //we have imported block that overwrote already finalized one....
+           panic!("Refinalizing the block should not happen");
+        }
+          //need to shift up one... discard currrent block and rebuild...
+        //otherwise, recreate the block and hope for the best...
+
+        let extr_batch=std::mem::replace(&mut self.mech.pending_batch,None);
+        if extr_batch.is_none()
+        {
+          panic!("Invalid state: block pending but batch unset");
+        }
+        info!("Imported block number {:?}, shifting up... ",&num);
+      }
+    }
+        
+  }
   pub fn process_justification(n_jst:BadgerJustification<B>, existing:&mut JustificationCollector<B>)
   {
     //self.load_origin();
@@ -1171,9 +1274,48 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
       }
     }
   }
- 
+ pub fn verify_full_justification(&self,just:&BadgerSyncData<B> ) ->bool
+ {
+  
+   if just.num>self.client.info().chain.best_number+1.into()
+   {
+     info!("Cannot validate justification due to possible authority set change..");
+     return false;
+   }
+   if just.num+1.into()<self.client.info().chain.best_number
+   {
+     info!("Justification too old, too lazy to validate");
+     return false;
+   }
+   if !just.justification.verify()
+   {
+     return false;
+   }
+
+  let mut count_total=0;
+  let mut count_accepted=0;
+  for authority in self.persistent.authority_set.inner.read().current_authorities.iter()
+  {
+    count_total+=1;
+    if just.justification.commits.iter().find( |x| 
+      {
+       x.validator==*authority
+    } ).is_some()
+    {
+      count_accepted+=1;
+    }
+  }
+  let tolerated= count_total - badger::util::max_faulty(count_total);
+   
+  count_accepted>=tolerated
+   }
   pub fn check_justification_completion(&mut self,hkey: &B::Hash)->BatchProcResult<B>
   {
+    if !self.is_authority()
+    {
+      //an observer uses a different mechanism... 
+      return  BatchProcResult::Nothing;
+    }
     let  existing= match self.justification_collector.get_mut(hkey)
     {
       Some(k) => k,
@@ -1194,7 +1336,7 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
         commits: existing.justification.drain(..).map(|x| BadgerAuthCommit{validator:x.validator,sgn:x.sgn}).collect()
       };
 
-      let res=self.pre_finalize(hkey,full.encode());
+      let res=self.pre_finalize(hkey,full);
 
       info!("Justification complete for {:?}",hkey);
       
@@ -1202,6 +1344,7 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
       {
         (*tpl).0+=1;
       }
+      //retain only justifications for some recent blocks
       self.delayed_justifications.retain(|x| x.0<MAX_DELAYED_JUSTIFICATIONS);
       res
     }
@@ -1211,7 +1354,7 @@ pub fn batch_to_block(&mut self, batch:BatchType) ->BatchProcResult<B>
     }
   }
 
-  pub fn extract_state(&mut self)->Vec<(LocalTarget,GossipMessage<B>)>
+  pub fn extract_state(&mut self)->Vec<(LocalTarget<B>,GossipMessage<B>)>
   {
 //self.output_message_buffer
 std::mem::replace(&mut self.output_message_buffer,Vec::new())
@@ -1250,6 +1393,8 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
 //////////////////////////////////////
     let mut n_hash=hkey;
     let mut n_list=auth_list;
+    
+      //let locked=self.
     loop 
     {
     info!("Emitting Justification {:?}",&n_hash);
@@ -1292,7 +1437,12 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
        self.delayed_justifications=remaining;
        Self::process_justification(n_jst.clone(), existing);
       }
+      if self.is_authority() //don't emit if we are not authority
+      {
+      self.output_message_buffer.push((LocalTarget::Keep(n_jst.hash.clone()), GossipMessage::JustificationData(n_jst.clone())) );
+     
       self.output_message_buffer.push((LocalTarget::AllExcept(BTreeSet::new()), GossipMessage::JustificationData(n_jst)) );
+      }
      
       let cres =self.check_justification_completion(&hkey);
       match cres
@@ -1306,8 +1456,8 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
        BatchProcResult::Nothing =>{ break; }
       }
       
+    
     }
-
 
 /////////////////////////
 
@@ -1331,7 +1481,7 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
   {
     match &mut self.state
     {
-      BadgerState::AwaitingValidators | BadgerState::AwaitingJoinPlan | BadgerState::KeyGen(_) =>
+      BadgerState::AwaitingValidators | BadgerState::AwaitingJoinPlan | BadgerState::KeyGen(_) | BadgerState::InitialSync =>
       {
         match self.queue_transaction(tx)
         {
@@ -1359,7 +1509,7 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
     }
   }
 
-  pub fn proceed_to_badger(&mut self) -> Vec<(LocalTarget, GossipMessage<B>)>
+  pub fn proceed_to_badger(&mut self) -> Vec<(LocalTarget<B>, GossipMessage<B>)>
   {
     self.load_origin();
 
@@ -1389,8 +1539,75 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
     }
     Vec::new()
   }
+  pub fn proceed_to_sync(&mut self) -> Vec<(LocalTarget<B>, GossipMessage<B>)>
+  {
+    let ln = self.persistent.authority_set.inner.read().current_authorities.len();
+    let mut cur;
+    {
+      let iaset = self.persistent.authority_set.inner.read();
+      cur = iaset
+        .current_authorities
+        .iter()
+        .filter(|&n| self.peers.inverse.contains_key(n))
+        .count();
+      if self.is_authority() &&
+        !self
+          .peers
+          .inverse
+          .contains_key(&self.cached_origin.as_ref().unwrap().public())
+      {
+        cur = cur + 1;
+      }
+    }
+    let info = self.client.info().chain;
+    let best_number = info.best_number;
+    let b_id=BlockId::Hash(info.best_hash);
+    let hd=self.client.justification(&b_id);
+    	/// Get block justification.
+	//fn justification(&self, id: &BlockId<Block>) -> Result<Option<Justification>, Error>;
+   let cur_just= match hd
+    {
+      Ok(opt) =>
+      {
+        if let Some(just)=opt
+        {
+           let our_just:Result<BadgerFullJustification<B>,_>=Decode::decode(&mut &just[..]);
+           match our_just
+           {
+            Ok(jst) =>{jst},
+            Err(_) =>
+            {
+              panic!("We have invalid justification encoding in non-genesis block");
+            }
+           }
+        }
+        else
+        {
+          if best_number==0.into()
+          {
+             //genesis...
+             BadgerFullJustification
+             {
+               hash:info.best_hash,
+               commits:Vec::new(),
+             }
+          }
+          else
+          {
+            panic!("We managed to import unjustified block");
+          }
+        }
+      }
+      Err(_) =>{ panic!("We don't know our best block!");}
+     };
+     let pair=self.cached_origin.as_ref().unwrap();
+     let gossip=BadgerSyncGossip::new(pair,cur_just,best_number,);
+    
+    self.state = BadgerState::InitialSync;
+  vec![ (LocalTarget::Keep(badger_sync::<B>()), GossipMessage::SyncGossip(gossip.clone())),(LocalTarget::AllExcept(BTreeSet::new()), GossipMessage::SyncGossip(gossip)) ] 
+  }
 
-  pub fn proceed_to_keygen(&mut self) -> Vec<(LocalTarget, GossipMessage<B>)>
+  pub fn proceed_to_keygen(&mut self) -> Vec<(LocalTarget<B>, GossipMessage<B>)>
   {
     self.load_origin();
 
@@ -1531,7 +1748,82 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
     let aset = self.persistent.authority_set.inner.read();
     aset.current_authorities.contains(&aset.self_id)
   }
+  pub fn is_sync_complete(&self,our_num:NumberFor<B>) ->bool
+  {
+    let mut cnt=0;
+for vrf in self.sync_state.validators.iter()
+{
+  if our_num!=vrf.best_block_num 
+  {
 
+    return false;
+  }
+  cnt=cnt+1;
+}
+//TODO: make sync possible if some authorities are missing? 
+return self.persistent.authority_set.inner.read().current_authorities.len()==cnt;
+
+  }
+pub fn process_sync_message (&mut self, sync:BadgerSyncGossip<B>) ->bool
+{
+  let info = self.client.info().chain;
+  let our_best=info.best_number;
+let our_hash=info.best_hash;
+  if !sync.verify()
+  {
+  return self.is_sync_complete(our_best);
+  }
+  {
+  let aset = self.persistent.authority_set.inner.read();
+    if !aset.current_authorities.contains(&sync.source)
+    {
+      /// sync from non-authority, ignoring... 
+      return self.is_sync_complete(our_best);
+    }
+  }
+  let info=self.client.info().chain;
+
+if sync.data.num<our_best
+{
+  info!("Discarding older sync theirs: {:?} ours: {:?}",&sync.data.num,&our_best);
+  return self.is_sync_complete(our_best);
+}
+
+if self.verify_full_justification(&sync.data)
+{
+   if let Some(ref mut vrf)=self.sync_state.validators.iter_mut().find( |x| x.id==sync.source )
+   {
+    if vrf.best_block_num<sync.data.num
+    {
+      vrf.best_block_num=sync.data.num;
+      vrf.best_block_hash=sync.data.justification.hash;
+    }
+   }
+   else
+   {
+    self.sync_state.validators.push(
+      ValidatorSync
+      {
+    best_block_hash: sync.data.justification.hash,
+      best_block_num:sync.data.num,
+      id:sync.source,
+      }
+    )
+   }
+   return self.is_sync_complete(our_best);
+}
+else
+{
+  info!("Discarding invalid justification");
+  return self.is_sync_complete(our_best);
+}
+  
+  //self.sync_state
+  /*  pub total_best_block_num: NumberFor<B>,
+  pub total_best_block_hash: B::Hash,
+  pub initial_sync_done:bool,
+  pub validators:Vec<ValidatorSync<B>>*/
+}
   pub fn process_decoded_message(&mut self, message: &GossipMessage<B>) -> (ValidationResult<B>,bool)
   {
     let cset_id;
@@ -1549,7 +1841,7 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
         if ses_msg.ses.ses_id == cset_id
         //??? needs session versions
         {
-          let mut ret_msgs: Vec<(LocalTarget, GossipMessage<B>)> = Vec::new();
+          let mut ret_msgs: Vec<(LocalTarget<B>, GossipMessage<B>)> = Vec::new();
           self
             .peers
             .update_id(&ses_msg.ses.peer_id.0, ses_msg.ses.session_key.clone());
@@ -1592,7 +1884,7 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
         else if ses_msg.ses.ses_id < cset_id
         {
           //discard
-          return return (ValidationResult::Punish(0),false);
+          return (ValidationResult::Punish(0),false);
         }
         else if ses_msg.ses.ses_id > cset_id + 1
         {
@@ -1603,7 +1895,60 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
         {
           return (ValidationResult::Discard,true);
         }
-      }
+      },
+      GossipMessage::SyncGossip(sync) =>
+      {
+        match &self.state
+        {
+          BadgerState::AwaitingValidators =>
+          {
+          //hmm. might as well register it?
+          self.process_sync_message(sync.clone());
+          return (ValidationResult::Discard,false);
+          },
+          BadgerState::AwaitingJoinPlan =>
+          {
+            self.process_sync_message(sync.clone());
+            return (ValidationResult::Discard,false);
+          },
+          BadgerState::InitialSync => 
+          {
+            if self.process_sync_message(sync.clone())
+            {
+            let mut ret_msgs = self.proceed_to_keygen();
+            self.output_message_buffer.append(&mut ret_msgs);
+            }
+            return (ValidationResult::Discard,false);
+          },
+          BadgerState::KeyGen(_)=>
+          {
+            return (ValidationResult::Discard,true);
+          },
+          BadgerState::Badger(_node)=>
+          {
+            if !self.is_authority()
+            {
+               //for observers, use this as justifier...
+              if  self.verify_full_justification(&sync.data)
+              {
+              if let Some(ref block)=&self.mech.queued_block
+               {
+                   if block.header().hash()==sync.data.justification.hash 
+                   {
+                     let bhash=block.header().hash().clone();
+
+                    self.pre_finalize(&bhash, sync.data.justification.clone());
+                   }
+               }
+              }
+            }
+            return (ValidationResult::Discard,false);
+
+          }
+        }
+
+      },
+
       GossipMessage::KeygenData(wkgen) =>
       {
         info!("Got Keygen message!");
@@ -1778,6 +2123,11 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
         {
           return (ValidationResult::Punish(-8),false);
         }
+        if !self.is_authority()
+         {
+           // observers use Sync as verifiactions...
+          return (ValidationResult::Discard,false);
+         }
         let b_id=BlockId::Hash(just.hash);
         let hd=self.client.header(&b_id);
         let info = self.client.info().chain;
@@ -1807,6 +2157,8 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
            Some(existing) => {
              info!("Some exists");
             Self::process_justification(just.clone(),existing);
+            {
+         
             match self.check_justification_completion(&hkey)
             {
              BatchProcResult::Completed(logs) =>
@@ -1822,6 +2174,7 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
                  },
                  
                 
+            }
             }
 
            },
@@ -2236,6 +2589,10 @@ Block::Hash:Ord,
 BPM:BlockPusherMaker<Block>,
 Aux:AuxStore+Send+Sync+'static
 {
+  pub fn on_block_imported(&self,num:NumberFor::<Block>)
+  {
+    self.inner.write().imported_block_number(num);
+  }
   fn send_message(
     &self, who: &PeerId, vdata: Vec<u8>, context_val: &mut dyn ValidatorContext<Block>,
   )
@@ -2243,7 +2600,7 @@ Aux:AuxStore+Send+Sync+'static
     context_val.send_single(who, vdata);
   }
   fn flush_message(
-    &self, additional: &mut Vec<(LocalTarget, GossipMessage<Block>)>,  context_val:&mut dyn ValidatorContext<Block>,   )
+    &self, additional: &mut Vec<(LocalTarget<Block>, GossipMessage<Block>)>,  context_val:&mut dyn ValidatorContext<Block>,   )
   {
     info!("BaDGER!! Enter flush {:?}", thread::current().id());
     // let topic = badger_topic::<Block>();
@@ -2304,6 +2661,10 @@ Aux:AuxStore+Send+Sync+'static
       let spidw=PeerIdW {0: spid.clone() };
       match target
       {
+        LocalTarget::Keep(cell) =>
+        {
+          context_val.keep(cell,vdata);
+        },
         LocalTarget::Nodes(node_set) =>
         {
           if node_set.contains(&spidw)
@@ -2471,7 +2832,7 @@ Aux:AuxStore+Send+Sync+'static
   }
   
 
-  pub fn do_emit_justification(&self,hash:&Block::Hash, net:  &mut dyn ValidatorContext<Block>,auth_list:AuthorityList)
+/*  pub fn do_emit_justification(&self,hash:&Block::Hash, net:  &mut dyn ValidatorContext<Block>,auth_list:AuthorityList)
   {
     if !self.is_validator()
     {
@@ -2486,8 +2847,7 @@ Aux:AuxStore+Send+Sync+'static
       self.flush_message(&mut Vec::new(), net);
      }
 
-
-  }
+  }*/
   pub fn do_vote_validators(&self, auths: Vec<AuthorityId>, net:  &mut dyn ValidatorContext<Block>) -> Result<(), Error>
   {
     if !self.is_validator()
@@ -2761,6 +3121,10 @@ B::Hash:Ord,
 Aux:AuxStore+Send+Sync+'static,
 BPM:BlockPusherMaker<B>+'static,
 {
+  pub fn on_block_imported(&self,num:NumberFor::<B>)
+  {
+  self.node.on_block_imported(num);
+  }
   /// Create a new NetworkBridge to the given NetworkService. Returns the service
   /// handle and a future that must be polled to completion to finish startup.
   /// If a voter set state is given it registers previous round votes with the
