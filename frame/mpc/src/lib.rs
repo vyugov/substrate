@@ -92,7 +92,7 @@ decl_module! {
 			Ok(())
 		}
 
-		pub fn save_sig(origin, req_id: u64, data: Vec<u8>) -> DispatchResult {
+		pub fn save_sig(origin, req_id: u64, pk_id: u64, sig: Vec<u8>) -> DispatchResult {
 			let who = ensure_signed(origin)?; // more restriction?
 			ensure!(<Requests>::exists(req_id), "req id does not exist");
 			ensure!(!<Results>::exists(req_id), "req id exists");
@@ -104,7 +104,7 @@ decl_module! {
 			<Requests>::remove(req_id);
 
 			// save res
-			<Results>::insert(req_id, MpcResult::SigGen { req_id, pk_id: 0, sig: data });
+			<Results>::insert(req_id, MpcResult::SigGen { req_id, pk_id, sig });
 			Self::deposit_event(RawEvent::MpcResponse(
 				req_id, who
 			));
@@ -120,7 +120,7 @@ decl_module! {
 				debug::warn!("key {:?}", key);
 				if let Some(value) = local_storage_get(StorageKind::PERSISTENT, &key) {
 					// StorageKind::LOCAL ?
-					// Self::submit_result(id, value);
+					Self::call_save_sig(id, 0, value);
 					debug::warn!("insert ok");
 				} else {
 					debug::warn!("nothing");
@@ -154,7 +154,6 @@ decl_event!(
 
 impl<T: Trait> Module<T> {
 	fn submit_signed(call: Call<T>) {
-		// let call = Call::save_sig(id, data);
 		let res = T::SubmitTransaction::submit_signed(call);
 
 		if res.is_empty() {
@@ -162,6 +161,16 @@ impl<T: Trait> Module<T> {
 		} else {
 			debug::info!("Sent transactions from: {:?}", res);
 		}
+	}
+
+	fn call_save_sig(req_id: u64, pk_id: u64, sig: Vec<u8>) {
+		let call = Call::save_sig(req_id, pk_id, sig);
+		Self::submit_signed(call);
+	}
+
+	fn call_save_key(req_id: u64, pk: Vec<u8>) {
+		let call = Call::save_key(req_id, pk);
+		Self::submit_signed(call);
 	}
 
 	fn is_authority(who: &T::AccountId) -> bool {
