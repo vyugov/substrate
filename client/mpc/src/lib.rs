@@ -44,7 +44,7 @@ mod signer;
 
 use communication::{
 	gossip::{GossipMessage, MessageWithSender},
-	message::{ConfirmPeersMessage, KeyGenMessage, PeerIndex, SignMessage},
+	message::{ConfirmPeersMessage, KeyGenMessage, PeerIndex, SigGenMessage},
 	NetworkBridge,
 };
 use periodic_stream::PeriodicStream;

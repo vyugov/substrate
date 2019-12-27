@@ -13,7 +13,7 @@ use sc_network_gossip::{GossipEngine, MessageIntent, ValidationResult, Validator
 use sp_runtime::traits::Block as BlockT;
 
 use super::{
-	message::{ConfirmPeersMessage, KeyGenMessage, SignMessage},
+	message::{ConfirmPeersMessage, KeyGenMessage, SigGenMessage},
 	peer::{PeerInfo, PeerState, Peers},
 };
 use crate::NodeConfig;
@@ -24,7 +24,7 @@ const REBROADCAST_AFTER: Duration = Duration::from_secs(30);
 pub enum GossipMessage {
 	ConfirmPeers(ConfirmPeersMessage, u64), // hash of all peers
 	KeyGen(KeyGenMessage, u64),
-	Sign(SignMessage),
+	SigGen(SigGenMessage),
 }
 
 pub type MessageWithSender = (GossipMessage, Option<PeerId>);

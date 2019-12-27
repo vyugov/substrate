@@ -12,9 +12,7 @@ use log::{error, info, trace};
 use sc_network::message::generic::{ConsensusMessage, Message};
 use sc_network::{NetworkService, PeerId};
 use sc_network_gossip::{GossipEngine, Network, TopicNotification};
-use sp_runtime::traits::{
-	Block as BlockT, DigestFor, Hash as HashT, Header as HeaderT, NumberFor, ProvideRuntimeApi,
-};
+use sp_runtime::traits::{Block as BlockT, DigestFor, Hash as HashT, Header as HeaderT, NumberFor, ProvideRuntimeApi};
 
 use sp_mpc::MPC_ENGINE_ID;
 
@@ -25,7 +23,7 @@ mod peer;
 use crate::{Error, NodeConfig};
 
 use gossip::{GossipMessage, GossipValidator, MessageWithReceiver, MessageWithSender};
-use message::{ConfirmPeersMessage, KeyGenMessage, SignMessage};
+use message::ConfirmPeersMessage;
 
 pub(crate) fn bytes_topic<B: BlockT>(input: &[u8]) -> B::Hash {
 	<<B::Header as HeaderT>::Hashing as HashT>::hash(input)
@@ -115,19 +113,14 @@ where
 	) {
 		let topic = bytes_topic::<B>(b"hash"); // related with `fn validate` in gossip.rs
 
-		let incoming = self
-			.gossip_engine
-			.messages_for(topic)
-			.filter_map(|notification| {
-				async {
-					let decoded = GossipMessage::decode(&mut &notification.message[..]);
-					if let Err(e) = decoded {
-						trace!("notification error {:?}", e);
-						return None;
-					}
-					Some((decoded.unwrap(), notification.sender))
-				}
-			});
+		let incoming = self.gossip_engine.messages_for(topic).filter_map(|notification| async {
+			let decoded = GossipMessage::decode(&mut &notification.message[..]);
+			if let Err(e) = decoded {
+				trace!("notification error {:?}", e);
+				return None;
+			}
+			Some((decoded.unwrap(), notification.sender))
+		});
 
 		let outgoing = MessageSender {
 			network: self.gossip_engine.clone(),
@@ -143,15 +136,12 @@ where
 		let all_peers_len = inner.get_peers_len();
 		let players = inner.get_players() as usize;
 		if all_peers_len != players {
-			return
+			return;
 		}
 
 		let our_index = inner.get_local_index() as u16;
 		let all_peers_hash = inner.get_peers_hash();
-		let msg = GossipMessage::ConfirmPeers(
-			ConfirmPeersMessage::Confirming(our_index),
-			all_peers_hash
-		);
+		let msg = GossipMessage::ConfirmPeers(ConfirmPeersMessage::Confirming(our_index), all_peers_hash);
 		let peers = inner.get_other_peers();
 		self.gossip_engine.send_message(peers, msg.encode());
 	}

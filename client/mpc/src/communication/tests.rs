@@ -20,7 +20,7 @@ use sp_runtime::ConsensusEngineId;
 
 use super::{
 	gossip::{GossipMessage, GossipValidator},
-	message::{ConfirmPeersMessage, KeyGenMessage, SignMessage},
+	message::ConfirmPeersMessage,
 };
 
 use crate::NodeConfig;
@@ -177,7 +177,8 @@ fn test_confirm_peer_message() {
 
 			let sender_id = id.clone();
 
-			let handle_in = global_in.into_future() // get (item, tail_stream)
+			let handle_in = global_in
+				.into_future() // get (item, tail_stream)
 				.map(move |(item, _)| {
 					println!("recv ok");
 					let (msg, sender_opt) = item.unwrap();
@@ -185,7 +186,7 @@ fn test_confirm_peer_message() {
 					assert_eq!(sender_opt.unwrap(), sender_id.clone());
 				});
 
-			futures::future::join(send_message , handle_in)
+			futures::future::join(send_message, handle_in)
 		});
 
 	let _ = futures::executor::block_on(test);
