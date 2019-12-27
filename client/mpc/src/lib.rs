@@ -36,7 +36,7 @@ use sp_offchain::STORAGE_PREFIX;
 use sp_runtime::generic::OpaqueDigestItemId;
 use sp_runtime::traits::{Block as BlockT, Header};
 
-use sp_mpc::{get_storage_key, ConsensusLog, MpcRequest, RequestId, MPC_ENGINE_ID, SECP_KEY_TYPE};
+use sp_mpc::{get_storage_key, ConsensusLog, MpcRequest, OffchainStorageType, RequestId, MPC_ENGINE_ID};
 
 mod communication;
 mod periodic_stream;
@@ -323,17 +323,17 @@ where
 		let arg = logs
 			.filter_map(|l| l.try_to::<ConsensusLog>(OpaqueDigestItemId::Consensus(&MPC_ENGINE_ID)))
 			.find_map(|l| match l {
-				ConsensusLog::RequestForSig(id, data) => Some(MpcRequest::SigGen(id, data)),
+				ConsensusLog::RequestForSig(req_id, pk_id, data) => Some(MpcRequest::SigGen(req_id, pk_id, data)),
 				ConsensusLog::RequestForKey(id) => Some(MpcRequest::KeyGen(id)),
 			});
 
 		if let Some(arg) = arg {
 			match arg {
-				MpcRequest::SigGen(id, mut data) => {
-					let req = MpcRequest::SigGen(id, data.clone());
-					let _ = tx.unbounded_send(req.clone());
+				MpcRequest::SigGen(req_id, pk_id, mut data) => {
+					let req = MpcRequest::SigGen(req_id, pk_id, data.clone());
+					let _ = tx.unbounded_send(req);
 					if let Some(mut offchain_storage) = backend.offchain_storage() {
-						let key = get_storage_key(req);
+						let key = get_storage_key(req_id, OffchainStorageType::Signature);
 						info!("key {:?} data {:?}", key, data);
 						let mut t = vec![1u8];
 						t.append(&mut data);

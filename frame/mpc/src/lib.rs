@@ -20,12 +20,12 @@ use system::{
 	offchain::{CreateTransaction, SubmitSignedTransaction},
 };
 
-pub use sp_mpc::{crypto, get_storage_key, ConsensusLog, MpcRequest, KEY_TYPE, MPC_ENGINE_ID};
+pub use sp_mpc::{crypto, get_storage_key, ConsensusLog, MpcRequest, OffchainStorageType, KEY_TYPE, MPC_ENGINE_ID};
 
 #[derive(Encode, Decode)]
 pub enum MpcResult {
-	KeyGen { id: u64, pk: Vec<u8> },
-	SigGen { id: u64, sig: Vec<u8> },
+	KeyGen { req_id: u64, pk: Vec<u8> },
+	SigGen { req_id: u64, pk_id: u64, sig: Vec<u8> },
 }
 
 pub trait Trait: system::Trait {
@@ -42,7 +42,7 @@ decl_storage! {
 
 		Results get(fn result_of): map u64 => Option<MpcResult>;
 
-		Requests get(fn request_of): map u64 => Option<MpcRequest>; // TODO: request timeout
+		Requests get(fn request_of): map u64 => Option<MpcRequest>; // TODO: request timeout?
 
 		PendingReqIds: BTreeSet<u64>;
 
@@ -69,7 +69,14 @@ decl_module! {
 			Ok(())
 		}
 
-		fn request_sig(origin, req_id: u64, data: Vec<u8>) -> DispatchResult {
+		pub fn save_key(origin, req_id: u64, data: Vec<u8>) -> DispatchResult {
+			let _who = ensure_signed(origin)?;
+			ensure!(<Requests>::exists(req_id), "req id does not exist");
+			ensure!(!<Results>::exists(req_id), "req id exists");
+			Ok(())
+		}
+
+		fn request_sig(origin, req_id: u64, pk_id: u64, data: Vec<u8>) -> DispatchResult {
 			let who = ensure_signed(origin)?;
 			ensure!(!<Requests>::exists(req_id), "req id exists");
 			ensure!(!<Results>::exists(req_id), "req id exists");
@@ -77,8 +84,8 @@ decl_module! {
 			<PendingReqIds>::mutate(|ids| {
 				ids.insert(req_id);
 			});
-			<Requests>::insert(req_id, MpcRequest::SigGen(req_id, data.clone()));
-			Self::send_siggen_log(req_id, data);
+			<Requests>::insert(req_id, MpcRequest::SigGen(req_id, pk_id, data.clone()));
+			Self::send_siggen_log(req_id, pk_id, data);
 			Self::deposit_event(RawEvent::MpcRequest(
 				req_id, who
 			));
@@ -97,7 +104,7 @@ decl_module! {
 			<Requests>::remove(req_id);
 
 			// save res
-			<Results>::insert(req_id, MpcResult::SigGen { id: req_id, sig: data });
+			<Results>::insert(req_id, MpcResult::SigGen { req_id, pk_id: 0, sig: data });
 			Self::deposit_event(RawEvent::MpcResponse(
 				req_id, who
 			));
@@ -109,12 +116,11 @@ decl_module! {
 			debug::RuntimeLogger::init();
 			let req_ids = PendingReqIds::get();
 			for id in req_ids {
-				let arg = <Requests>::get(id).unwrap();
-				let key = get_storage_key(arg);
+				let key = get_storage_key(id, OffchainStorageType::Signature);
 				debug::warn!("key {:?}", key);
 				if let Some(value) = local_storage_get(StorageKind::PERSISTENT, &key) {
 					// StorageKind::LOCAL ?
-					Self::submit_result(id, value);
+					// Self::submit_result(id, value);
 					debug::warn!("insert ok");
 				} else {
 					debug::warn!("nothing");
@@ -147,8 +153,8 @@ decl_event!(
 );
 
 impl<T: Trait> Module<T> {
-	fn submit_result(id: u64, data: Vec<u8>) {
-		let call = Call::save_sig(id, data);
+	fn submit_signed(call: Call<T>) {
+		// let call = Call::save_sig(id, data);
 		let res = T::SubmitTransaction::submit_signed(call);
 
 		if res.is_empty() {
@@ -166,8 +172,8 @@ impl<T: Trait> Module<T> {
 		Self::deposit_log(ConsensusLog::RequestForKey(id));
 	}
 
-	fn send_siggen_log(id: u64, data: Vec<u8>) {
-		Self::deposit_log(ConsensusLog::RequestForSig(id, data));
+	fn send_siggen_log(req_id: u64, pk_id: u64, data: Vec<u8>) {
+		Self::deposit_log(ConsensusLog::RequestForSig(req_id, pk_id, data));
 	}
 
 	fn deposit_log(log: ConsensusLog) {
