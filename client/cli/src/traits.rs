@@ -15,6 +15,7 @@
 // along with Substrate.  If not, see <http://www.gnu.org/licenses/>.
 
 use structopt::{StructOpt, clap::App};
+use crate::params::SharedParams;
 
 /// Something that can augment a clap app with further parameters.
 /// `derive(StructOpt)` is implementing this function by default, so a macro `impl_augment_clap!`
@@ -22,6 +23,12 @@ use structopt::{StructOpt, clap::App};
 pub trait AugmentClap: StructOpt {
 	/// Augment the given clap `App` with further parameters.
 	fn augment_clap<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b>;
+}
+
+/// Supports getting common params.
+pub trait GetSharedParams {
+	/// Returns shared params if any.
+	fn shared_params(&self) -> Option<&SharedParams>;
 }
 
 /// Macro for implementing the `AugmentClap` trait.
@@ -35,10 +42,4 @@ macro_rules! impl_augment_clap {
 			}
 		}
 	}
-}
-
-/// Returns the log filter given by the user as commandline argument.
-pub trait GetLogFilter {
-	/// Returns the set log filter.
-	fn get_log_filter(&self) -> Option<String>;
 }

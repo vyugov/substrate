@@ -95,7 +95,7 @@ pub trait Network<B: BlockT> {
 	/// somewhere else.
 	fn announce(&self, block: B::Hash, associated_data: Vec<u8>);
 }
-
+use sc_network::NetworkStateInfo;
 impl<B: BlockT, S: NetworkSpecialization<B>, H: ExHashT> Network<B> for Arc<NetworkService<B, S, H>> {
 	fn event_stream(&self) -> Box<dyn futures01::Stream<Item = Event, Error = ()> + Send> {
 		Box::new(NetworkService::event_stream(self))

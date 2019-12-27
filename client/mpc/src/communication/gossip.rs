@@ -7,7 +7,6 @@ use std::{
 
 use codec::{Decode, Encode};
 use log::{error, info, trace, warn};
-use serde::{Deserialize, Serialize};
 
 use sc_network::{config::Roles, PeerId};
 use sc_network_gossip::{GossipEngine, MessageIntent, ValidationResult, ValidatorContext};
@@ -16,12 +15,12 @@ use sp_runtime::traits::Block as BlockT;
 use super::{
 	message::{ConfirmPeersMessage, KeyGenMessage, SignMessage},
 	peer::{PeerInfo, PeerState, Peers},
-	string_topic,
 };
+use crate::NodeConfig;
 
 const REBROADCAST_AFTER: Duration = Duration::from_secs(30);
 
-#[derive(Debug, Clone, Encode, Decode)]
+#[derive(Debug, Clone, Encode, Decode, PartialEq)]
 pub enum GossipMessage {
 	ConfirmPeers(ConfirmPeersMessage, u64), // hash of all peers
 	KeyGen(KeyGenMessage, u64),
@@ -35,12 +34,13 @@ pub struct Inner {
 	local_peer_id: PeerId,
 	local_peer_info: PeerInfo,
 	peers: Peers,
-	config: crate::NodeConfig,
+	config: NodeConfig,
 	next_rebroadcast: Instant,
 }
 
+#[allow(dead_code)]
 impl Inner {
-	fn new(config: crate::NodeConfig, local_peer_id: PeerId) -> Self {
+	fn new(config: NodeConfig, local_peer_id: PeerId) -> Self {
 		let mut peers = Peers::default();
 		peers.add(local_peer_id.clone());
 
@@ -59,6 +59,10 @@ impl Inner {
 
 	fn del_peer(&mut self, who: &PeerId) {
 		self.peers.del(who);
+	}
+
+	pub fn get_players(&self) -> u16 {
+		self.config.players
 	}
 
 	pub fn get_peers_len(&self) -> usize {
@@ -170,56 +174,23 @@ pub struct GossipValidator<Block: BlockT> {
 }
 
 impl<Block: BlockT> GossipValidator<Block> {
-	pub fn new(config: crate::NodeConfig, local_peer_id: PeerId) -> Self {
+	pub fn new(config: NodeConfig, local_peer_id: PeerId) -> Self {
 		Self {
 			inner: parking_lot::RwLock::new(Inner::new(config, local_peer_id)),
 			_phantom: PhantomData,
 		}
 	}
-
-	pub fn broadcast(&self, context: &mut dyn ValidatorContext<Block>, msg: Vec<u8>) {
-		let inner = self.inner.read();
-
-		for peer_id in inner.get_other_peers() {
-			context.send_message(&peer_id, msg.clone())
-		}
-	}
 }
 
 impl<Block: BlockT> sc_network_gossip::Validator<Block> for GossipValidator<Block> {
-	fn new_peer(&self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, roles: Roles) {
+	fn new_peer(&self, _context: &mut dyn ValidatorContext<Block>, who: &PeerId, roles: Roles) {
 		if roles != Roles::AUTHORITY {
 			return;
 		}
 
 		let mut inner = self.inner.write();
-
-		let players = inner.config.players as usize;
-		let all_peers_len = inner.get_peers_len();
-
-		if all_peers_len >= players {
-			panic!("peers enough");
-			// don't take > n peers
-			return;
-		}
-
 		inner.add_peer(who.clone());
 		inner.set_local_awaiting_peers();
-
-		let our_index = inner.get_local_index() as u16;
-		let all_peers_hash = inner.get_peers_hash();
-		drop(inner);
-
-		if all_peers_len == players - 1 {
-			// broadcast message to check all peers are the same
-			println!("new peer of {:?} hash {:?}", our_index, all_peers_hash);
-
-			let msg = GossipMessage::ConfirmPeers(
-				ConfirmPeersMessage::Confirming(our_index),
-				all_peers_hash,
-			);
-			self.broadcast(context, msg.encode());
-		}
 	}
 
 	fn peer_disconnected(&self, _context: &mut dyn ValidatorContext<Block>, who: &PeerId) {
@@ -234,13 +205,13 @@ impl<Block: BlockT> sc_network_gossip::Validator<Block> for GossipValidator<Bloc
 
 	fn validate(
 		&self,
-		context: &mut dyn ValidatorContext<Block>,
+		_context: &mut dyn ValidatorContext<Block>,
 		who: &PeerId,
 		mut data: &[u8],
 	) -> ValidationResult<Block::Hash> {
 		let gossip_msg = GossipMessage::decode(&mut data);
 		if let Ok(gossip_msg) = gossip_msg {
-			let topic = super::string_topic::<Block>("hash");
+			let topic = super::bytes_topic::<Block>(b"hash");
 			match gossip_msg {
 				// GossipMessage::ConfirmPeers(_, _) => {
 				// 	return ValidationResult::ProcessAndDiscard(topic);
@@ -252,9 +223,7 @@ impl<Block: BlockT> sc_network_gossip::Validator<Block> for GossipValidator<Bloc
 		ValidationResult::Discard
 	}
 
-	fn message_allowed<'a>(
-		&'a self,
-	) -> Box<dyn FnMut(&PeerId, MessageIntent, &Block::Hash, &[u8]) -> bool + 'a> {
+	fn message_allowed<'a>(&'a self) -> Box<dyn FnMut(&PeerId, MessageIntent, &Block::Hash, &[u8]) -> bool + 'a> {
 		// rebroadcasted message
 		let (inner, do_rebroadcast) = {
 			use parking_lot::RwLockWriteGuard;
@@ -323,7 +292,6 @@ impl<Block: BlockT> sc_network_gossip::Validator<Block> for GossipValidator<Bloc
 			let gossip_msg = GossipMessage::decode(&mut data);
 			if let Ok(gossip_msg) = gossip_msg {
 				println!("In `message_expired` of {:?}", inner.get_local_index());
-				// println!("msg: {:?}", gossip_msg);
 				let gmsg = gossip_msg.clone();
 				match gmsg {
 					GossipMessage::ConfirmPeers(cpm, _all_peers_hash) => match cpm {

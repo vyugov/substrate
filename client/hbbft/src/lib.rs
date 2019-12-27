@@ -229,7 +229,7 @@ impl<B, E, Block: BlockT<Hash=H256>, RA, SC> BlockImport<Block>
 			Ok(blockchain::BlockStatus::Unknown) => {},
 			Err(e) => return Err(ConsensusError::ClientImport(e.to_string()).into()),
 		}
-           info!("BLOCK Origin {:?}",block.origin);
+           info!("BLOCK Origin {:?} for {:?}",block.origin,hash);
 		//we only import our own blocks, though catch up may be necessary later on
 		match block.origin
 		{

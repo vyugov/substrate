@@ -1110,6 +1110,7 @@ pub struct BadgerSyncState<B:BlockT>
         }
 			if let Some(batch)=mbatch
 			{
+        info!("Additional batch");
 				return  self.batch_to_block(batch)
 			}
 	     	}
