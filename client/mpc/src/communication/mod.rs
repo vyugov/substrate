@@ -22,7 +22,7 @@ mod peer;
 
 use crate::{Error, NodeConfig};
 
-use gossip::{GossipMessage, GossipValidator, MessageWithReceiver, MessageWithSender};
+use gossip::{GossipMessage, GossipValidator, MessageWithReceiver, MessageWithSender, RequestId};
 use message::ConfirmPeersMessage;
 
 pub(crate) fn bytes_topic<B: BlockT>(input: &[u8]) -> B::Hash {
@@ -130,7 +130,7 @@ where
 		(incoming.boxed(), outgoing)
 	}
 
-	pub fn start_key_gen(&self) {
+	pub fn start_key_gen(&self, _id: RequestId) {
 		let inner = self.validator.inner.read();
 
 		let all_peers_len = inner.get_peers_len();

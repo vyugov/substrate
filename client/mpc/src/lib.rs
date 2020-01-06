@@ -189,7 +189,7 @@ where
 	fn handle_command(&mut self, command: MpcRequest) {
 		match command {
 			MpcRequest::KeyGen(id) => {
-				self.env.bridge.start_key_gen();
+				self.env.bridge.start_key_gen(id);
 			}
 			_ => {}
 		}

@@ -421,7 +421,7 @@ where
 				drop(validator);
 				return self.handle_kgm(kgm, all_peers_hash);
 			}
-			GossipMessage::SigGen(_) => {}
+			GossipMessage::SigGen(_, _) => {}
 		}
 
 		true

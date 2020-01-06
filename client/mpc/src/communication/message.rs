@@ -30,11 +30,11 @@ pub enum KeyGenMessage {
 
 impl KeyGenMessage {
 	pub fn get_index(&self) -> PeerIndex {
-		match *self {
-			Self::CommitAndDecommit(index, _, _) => index,
-			Self::VSS(index, _) => index,
-			Self::SecretShare(index, _) => index,
-			Self::Proof(index, _) => index,
+		match self {
+			Self::CommitAndDecommit(index, _, _) => *index,
+			Self::VSS(index, _) => *index,
+			Self::SecretShare(index, _) => *index,
+			Self::Proof(index, _) => *index,
 		}
 	}
 }
