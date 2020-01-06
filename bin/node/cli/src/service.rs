@@ -142,7 +142,8 @@ macro_rules! new_full {
 		let participates_in_consensus = is_authority && !$config.sentry_mode;
 
 		let (builder, mut import_setup, inherent_data_providers) = new_full_start!($config);
-		let back = builder.backend().clone();
+
+		let backend = builder.backend().clone();
 		let service = builder.with_network_protocol(|_| Ok(crate::service::NodeProtocol::new()))?
 			.with_finality_proof_provider(|client, backend|
 				Ok(Arc::new(grandpa::FinalityProofProvider::new(backend, client)) as _)
@@ -174,7 +175,7 @@ macro_rules! new_full {
 
 			let mpc = sc_mpc::run_mpc_task(
 				service.client(),
-				back,
+				backend,
 				service.network(),
 				service.spawn_task_handle()
 			)?;

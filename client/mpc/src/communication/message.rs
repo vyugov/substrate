@@ -2,11 +2,19 @@ use std::str;
 
 use bincode;
 use codec::{Decode, Encode, Error as CodecError, Input};
-use curv::cryptographic_primitives::proofs::sigma_dlog::DLogProof;
-use curv::cryptographic_primitives::secret_sharing::feldman_vss::VerifiableSS;
-use curv::FE;
-use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{
-	KeyGenBroadcastMessage1 as KeyGenCommit, KeyGenDecommitMessage1 as KeyGenDecommit,
+use curv::{
+	cryptographic_primitives::{
+		proofs::{sigma_correct_homomorphic_elgamal_enc::HomoELGamalProof, sigma_dlog::DLogProof},
+		secret_sharing::feldman_vss::VerifiableSS,
+	},
+	FE,// GE,
+};
+use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::{
+	mta::{MessageA, MessageB},
+	party_i::{
+		KeyGenBroadcastMessage1 as KeyGenCommit, KeyGenDecommitMessage1 as KeyGenDecommit, Phase5ADecom1, Phase5Com1,
+		Phase5Com2, Phase5DDecom2, SignBroadcastPhase1, SignDecommitPhase1,
+	},
 };
 use serde::{Deserialize, Serialize};
 
@@ -22,11 +30,11 @@ pub enum KeyGenMessage {
 
 impl KeyGenMessage {
 	pub fn get_index(&self) -> PeerIndex {
-		match *self {
-			Self::CommitAndDecommit(index, _, _) => index,
-			Self::VSS(index, _) => index,
-			Self::SecretShare(index, _) => index,
-			Self::Proof(index, _) => index,
+		match self {
+			Self::CommitAndDecommit(index, _, _) => *index,
+			Self::VSS(index, _) => *index,
+			Self::SecretShare(index, _) => *index,
+			Self::Proof(index, _) => *index,
 		}
 	}
 }
@@ -59,24 +67,34 @@ impl Decode for KeyGenMessage {
 	}
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub enum SignMessage {
-	BroadCast,
-	Decommit,
-	Proof,
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum SigGenMessage {
+	Round1(SignBroadcastPhase1, MessageA),
+	Round2(MessageB, MessageB), // mb gamma, mb w
+	Round3(FE),
+	Round4(SignDecommitPhase1),
+	Round5(Phase5Com1, Phase5ADecom1, HomoELGamalProof),
+	Round6(Phase5Com2, Phase5DDecom2),
+	Round7(FE),
 }
 
-impl Encode for SignMessage {
+impl Encode for SigGenMessage {
 	fn encode(&self) -> Vec<u8> {
 		let encoded = bincode::serialize(&self).unwrap();
 		Encode::encode(&encoded)
 	}
 }
 
-impl Decode for SignMessage {
+impl Decode for SigGenMessage {
 	fn decode<I: Input>(value: &mut I) -> Result<Self, CodecError> {
 		let decoded: Vec<u8> = Decode::decode(value)?;
 		bincode::deserialize(&decoded).map_err(|_| CodecError::from("bincode error"))
+	}
+}
+
+impl PartialEq for SigGenMessage {
+	fn eq(&self, other: &Self) -> bool {
+		self.encode() == other.encode()
 	}
 }
 

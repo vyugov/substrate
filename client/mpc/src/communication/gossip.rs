@@ -13,18 +13,30 @@ use sc_network_gossip::{ MessageIntent, ValidationResult, ValidatorContext};//Go
 use sp_runtime::traits::Block as BlockT;
 
 use super::{
-	message::{ConfirmPeersMessage, KeyGenMessage, SignMessage},
+	message::{ConfirmPeersMessage, KeyGenMessage, SigGenMessage},
 	peer::{PeerInfo, PeerState, Peers},
 };
 use crate::NodeConfig;
 
 const REBROADCAST_AFTER: Duration = Duration::from_secs(30);
 
+pub type RequestId = u64;
+
 #[derive(Debug, Clone, Encode, Decode, PartialEq)]
 pub enum GossipMessage {
-	ConfirmPeers(ConfirmPeersMessage, u64), // hash of all peers
-	KeyGen(KeyGenMessage, u64),
-	Sign(SignMessage),
+	ConfirmPeers(ConfirmPeersMessage, RequestId),
+	KeyGen(KeyGenMessage, RequestId),
+	SigGen(SigGenMessage, RequestId),
+}
+
+impl GossipMessage {
+	pub fn get_req_id(&self) -> RequestId {
+		match self {
+			GossipMessage::ConfirmPeers(_, id) => *id,
+			GossipMessage::KeyGen(_, id) => *id,
+			GossipMessage::SigGen(_, id) => *id,
+		}
+	}
 }
 
 pub type MessageWithSender = (GossipMessage, Option<PeerId>);
@@ -211,13 +223,8 @@ impl<Block: BlockT> sc_network_gossip::Validator<Block> for GossipValidator<Bloc
 	) -> ValidationResult<Block::Hash> {
 		let gossip_msg = GossipMessage::decode(&mut data);
 		if let Ok(gossip_msg) = gossip_msg {
-			let topic = super::bytes_topic::<Block>(b"hash");
-			match gossip_msg {
-				// GossipMessage::ConfirmPeers(_, _) => {
-				// 	return ValidationResult::ProcessAndDiscard(topic);
-				// }
-				_ => {}
-			}
+			let req_id = gossip_msg.get_req_id();
+			let topic = super::bytes_topic::<Block>(&req_id.to_le_bytes());
 			return ValidationResult::ProcessAndKeep(topic);
 		}
 		ValidationResult::Discard
@@ -240,7 +247,7 @@ impl<Block: BlockT> sc_network_gossip::Validator<Block> for GossipValidator<Bloc
 			(RwLockWriteGuard::downgrade(inner), do_rebroadcast)
 		};
 
-		Box::new(move |_who, intent, _topic, mut data| {
+		Box::new(move |who, intent, _topic, mut data| {
 			println!("In `message_allowed` rebroadcast: {:?}", do_rebroadcast);
 
 			if let MessageIntent::PeriodicRebroadcast = intent {
@@ -250,6 +257,10 @@ impl<Block: BlockT> sc_network_gossip::Validator<Block> for GossipValidator<Bloc
 			let players = inner.config.players as usize;
 			if inner.peers.len() < players {
 				return true;
+			}
+
+			if !inner.peers.contains_peer_id(&who) {
+				return false;
 			}
 
 			let gossip_msg = GossipMessage::decode(&mut data);
@@ -349,7 +360,7 @@ impl<Block: BlockT> sc_network_gossip::Validator<Block> for GossipValidator<Bloc
 
 						return our_hash != all_peers_hash || sender_id.is_none();
 					}
-					_ => return true,
+					GossipMessage::SigGen(_, _) => return false,
 				}
 			}
 			true

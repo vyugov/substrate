@@ -141,7 +141,7 @@ macro_rules! new_full_start {
 macro_rules! new_full {
 	($config:expr, $with_startup_data: expr) => {{
 		use futures::sync::mpsc;
-		use network::DhtEvent;
+		//use network::DhtEvent;
     //use futures::Future;
     //let nconf_name = $config.n_conf_file.clone();
     let node_name = $config.name.clone();
@@ -169,8 +169,8 @@ macro_rules! new_full {
 		// back-pressure. Authority discovery is triggering one event per authority within the current authority set.
 		// This estimates the authority set size to be somewhere below 10 000 thereby setting the channel buffer size to
 		// 10 000.
-		let (dht_event_tx, _dht_event_rx) =
-			mpsc::channel::<DhtEvent>(10_000);
+		//let (dht_event_tx, _dht_event_rx) =
+		//	mpsc::channel::<DhtEvent>(10_000);
       let service = builder
       .with_network_protocol(|_| Ok(crate::service::NodeProtocol::new()))?
       .with_opt_finality_proof_provider(|_client, _| Ok(None))?
