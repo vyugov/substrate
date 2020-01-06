@@ -174,7 +174,6 @@ macro_rules! new_full {
       let service = builder
       .with_network_protocol(|_| Ok(crate::service::NodeProtocol::new()))?
       .with_opt_finality_proof_provider(|_client, _| Ok(None))?
-      .with_dht_event_tx(dht_event_tx)?
       .build()?;
 
 		//($with_startup_data)(&block_import, &babe_link);

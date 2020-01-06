@@ -1400,12 +1400,12 @@ pub fn batch_to_block(&mut self, batch:BatchType ) ->BatchProcResult<B>
  pub fn verify_full_justification(&self,just:&BadgerSyncData<B> ) ->bool
  {
   
-   if just.num>self.client.info().chain.best_number+1.into()
+   if just.num>self.client.info().best_number+1.into()
    {
      info!("Cannot validate justification due to possible authority set change..");
      return false;
    }
-   if just.num+1.into()<self.client.info().chain.best_number
+   if just.num+1.into()<self.client.info().best_number
    {
      info!("Justification too old, too lazy to validate");
      return false;
@@ -1666,7 +1666,7 @@ std::mem::replace(&mut self.output_message_buffer,Vec::new())
   {
    // let ln = self.persistent.authority_set.inner.read().current_authorities.len();
  
-    let info = self.client.info().chain;
+    let info = self.client.info();
     let best_number = info.best_number;
     let b_id=BlockId::Hash(info.best_hash);
     let hd=self.client.justification(&b_id);
@@ -1873,7 +1873,7 @@ return self.persistent.authority_set.inner.read().current_authorities.len()==cnt
   }
 pub fn process_sync_message (&mut self, sync:BadgerSyncGossip<B>) ->bool
 {
-  let info = self.client.info().chain;
+  let info = self.client.info();
   let our_best=info.best_number;
 //let our_hash=info.best_hash;
   if !sync.verify()
@@ -2237,7 +2237,7 @@ else
          }
         let b_id=BlockId::Hash(just.hash);
         let hd=self.client.header(&b_id);
-        let info = self.client.info().chain;
+        let info = self.client.info();
         let finalized_number = info.finalized_number;
 
         match hd 
@@ -2304,7 +2304,7 @@ else
   {
     let b_id=BlockId::Hash(hash);
     let hd=self.client.header(&b_id);
-    let info = self.client.info().chain;
+    let info = self.client.info();
     let finalized_number = info.finalized_number;
     match hd 
     {
