@@ -560,10 +560,10 @@ impl<B: BlockT> ConsensusGossip<B> {
 
 
 
-			let msgdata=match rmsg.route
+			let msgdata=match &rmsg.route
 			{
             // broadcast to all except
-			RoutingInfo::BroadcastExclude(excluded) =>
+			RoutingInfo::BroadcastExclude(ref excluded) =>
 			{
 			 if excluded.iter().find(|x| x.0==self.self_id ).is_some()
 			 {
@@ -577,7 +577,7 @@ impl<B: BlockT> ConsensusGossip<B> {
 			 }
 			}
 	        // target a subset
-			RoutingInfo::Targeted(set) => 
+			RoutingInfo::Targeted(ref set) => 
 			{
 				if set.iter().find(|x| x.0==self.self_id ).is_none()
 				{
@@ -618,7 +618,21 @@ impl<B: BlockT> ConsensusGossip<B> {
 					continue;
 				}
 			};
-
+			match rmsg.route
+			{
+ // broadcast to all except
+ RoutingInfo::BroadcastExclude(excluded) =>
+ {
+  	  self.broadcast_except(protocol,engine_id.clone(),excluded.iter().map(|x| x.0.clone()).collect(),msgdata.clone(), true,false);	
+ }
+ // target a subset
+ RoutingInfo::Targeted(set) => 
+ {
+		 self.send_to_set(protocol,engine_id.clone(),set.iter().map(|x| x.0.clone()).collect(),msgdata.clone(),true,false);   
+ },
+ // Specific to a local node
+ RoutingInfo::Specific =>  { },
+			}
 			if let Entry::Occupied(mut entry) = self.live_message_sinks.entry(engine_id) {
 				debug!(target: "gossip", "Pushing consensus message to sinks.");
 				entry.get_mut().retain(|sink| {

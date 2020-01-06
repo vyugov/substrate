@@ -1291,17 +1291,14 @@ pub fn batch_to_block(&mut self, batch:BatchType ) ->BatchProcResult<B>
     return;
   }
 
-    if !self.mech.queued_block.is_some()
+    if self.mech.queued_block.is_none()
     {
       let blk= B::new(bli.header,bli.body.unwrap());
       self.mech.queued_block=Some(blk);
     }
     
 
-    if let Some(ref qblock)=&self.mech.queued_block
-    {
 
-       
         match  self.pre_finalize(&chash, temp.justification)
         {
           BatchProcResult::Completed(elogs) =>{self.process_extracted(elogs); info!("Imported Block with completed result");},
@@ -1314,12 +1311,7 @@ pub fn batch_to_block(&mut self, batch:BatchType ) ->BatchProcResult<B>
            }
         }
      
-    }
-    else
-    {
-   warn!("Should not reach here");
-   return;
-    }
+
     if let Some(extr_batch)=ebatch
     {
 
