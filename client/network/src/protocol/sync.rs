@@ -642,6 +642,7 @@ impl<B: BlockT> ChainSync<B> {
 	pub fn on_block_data
 		(&mut self, who: PeerId, request: BlockRequest<B>, response: BlockResponse<B>) -> Result<OnBlockData<B>, BadPeer>
 	{
+		info!("On block data: req: {:?} resp:{:?}",&request,&response);
 		let new_blocks: Vec<IncomingBlock<B>> =
 			if let Some(peer) = self.peers.get_mut(&who) {
 				let mut blocks = response.blocks;
@@ -650,6 +651,7 @@ impl<B: BlockT> ChainSync<B> {
 					blocks.reverse()
 				}
 				self.is_idle = false;
+				info!("Peer sync state: {:?}",&peer.state);
 				match &mut peer.state {
 					PeerSyncState::DownloadingNew(start_block) => {
 						self.blocks.clear_peer_download(&who);
@@ -687,7 +689,7 @@ impl<B: BlockT> ChainSync<B> {
 					PeerSyncState::AncestorSearch(num, state) => {
 						let matching_hash = match (blocks.get(0), self.client.block_hash(*num)) {
 							(Some(block), Ok(maybe_our_block_hash)) => {
-								trace!(target: "sync", "Got ancestry block #{} ({}) from peer {}", num, block.hash, who);
+								info!(target: "sync", "Got ancestry block #{} ({}) from peer {}", num, block.hash, who);
 								maybe_our_block_hash.filter(|x| x == &block.hash)
 							},
 							(None, _) => {
@@ -760,7 +762,7 @@ impl<B: BlockT> ChainSync<B> {
 			};
 
 		if let Some((h, n)) = new_blocks.last().and_then(|b| b.header.as_ref().map(|h| (&b.hash, *h.number()))) {
-			trace!(target:"sync", "Accepted {} blocks ({:?}) with origin {:?}", new_blocks.len(), h, origin);
+			info!(target:"sync", "Accepted {} blocks ({:?}) with origin {:?}", new_blocks.len(), h, origin); //trace
 			self.on_block_queued(h, n)
 		}
 
@@ -1144,7 +1146,7 @@ impl<B: BlockT> ChainSync<B> {
 		self.best_queued_hash = info.best_hash;
 		self.best_queued_number = std::cmp::max(info.best_number, self.best_imported_number);
 		self.is_idle = false;
-		debug!(target:"sync", "Restarted with {} ({})", self.best_queued_number, self.best_queued_hash);
+		trace!(target:"sync", "Restarted with {} ({})", self.best_queued_number, self.best_queued_hash);
 		let old_peers = std::mem::replace(&mut self.peers, HashMap::new());
 		old_peers.into_iter().filter_map(move |(id, p)| {
 			match self.new_peer(id.clone(), p.best_hash, p.best_number) {

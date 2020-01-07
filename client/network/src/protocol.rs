@@ -1449,6 +1449,7 @@ impl<B: BlockT, S: NetworkSpecialization<B>, H: ExHashT> Protocol<B, S, H> {
 		count: usize,
 		results: Vec<(Result<BlockImportResult<NumberFor<B>>, BlockImportError>, B::Hash)>
 	) {
+		warn!("ON BLocks Processed");
 		let results = self.sync.on_blocks_processed(
 			imported,
 			count,

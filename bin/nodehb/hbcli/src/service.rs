@@ -140,7 +140,7 @@ macro_rules! new_full_start {
 /// concrete types instead.
 macro_rules! new_full {
 	($config:expr, $with_startup_data: expr) => {{
-		use futures::sync::mpsc;
+	//	use futures::sync::mpsc;
 		//use network::DhtEvent;
     //use futures::Future;
     //let nconf_name = $config.n_conf_file.clone();

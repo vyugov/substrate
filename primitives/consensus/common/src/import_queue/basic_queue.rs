@@ -330,7 +330,7 @@ fn import_many_blocks<B: BlockT, V: Verifier<B>>(
 		_ => Default::default(),
 	};
 
-	trace!(target: "sync", "Starting import of {} blocks {}", count, blocks_range);
+	info!(target: "sync", "Starting import of {} blocks {}", count, blocks_range); //trace
 
 	let mut imported = 0;
 	let mut results = vec![];

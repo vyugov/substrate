@@ -94,11 +94,11 @@ use sp_std::{result, cmp,vec::Vec};
 use codec::Encode;
 #[cfg(feature = "std")]
 use codec::Decode;
-#[cfg(feature = "std")]
-use sp_inherents::ProvideInherentData;
+//#[cfg(feature = "std")]/
+//use sp_inherents::ProvideInherentData;
 use sp_timestamp::OnTimestampSet;
-#[cfg(feature = "std")]
-use log::info;
+//#[cfg(feature = "std")]
+//use log::info;
 
 
 use frame_support::{Parameter, decl_storage, decl_module};

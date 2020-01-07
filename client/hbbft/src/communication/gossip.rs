@@ -15,8 +15,8 @@ use std::collections::HashMap;
 use substrate_primitives::crypto::Pair; //RuntimeAppPublic
                                         //use std::time::{ Instant};//Duration
 
-use runtime_primitives::traits::NumberFor;
 use app_crypto::RuntimeAppPublic;
+use runtime_primitives::traits::NumberFor;
 
 //const REBROADCAST_AFTER: Duration = Duration::from_secs(60 * 5);
 //const CATCH_UP_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -43,68 +43,66 @@ pub enum GossipMessage<Block: BlockT>
   /// Justification data emitted when the new block needs to be confirmed
   JustificationData(BadgerJustification<Block>),
 
-  /// Full block justification data to facilitate initial sync 
-  SyncGossip(BadgerSyncGossip<Block>)
+  /// Full block justification data to facilitate initial sync
+  SyncGossip(BadgerSyncGossip<Block>),
 }
 
-#[derive(Encode, Decode, Debug,Clone)]
-pub struct BadgerJustification<Block: BlockT> 
+#[derive(Encode, Decode, Debug, Clone)]
+pub struct BadgerJustification<Block: BlockT>
 {
-	pub hash: Block::Hash,
-  pub validator:AuthorityId,
+  pub hash: Block::Hash,
+  pub validator: AuthorityId,
   pub sgn: AuthoritySignature,
 }
 
-
-
-
-#[derive(Encode, Decode, Debug,Clone)]
-pub struct BadgerAuthCommit 
+#[derive(Encode, Decode, Debug, Clone)]
+pub struct BadgerAuthCommit
 {
-  pub validator:AuthorityId,
+  pub validator: AuthorityId,
   pub sgn: AuthoritySignature,
 }
 
-
-#[derive(Encode, Decode, Debug,Clone)]
-pub struct BadgerFullJustification<Block: BlockT> 
+#[derive(Encode, Decode, Debug, Clone)]
+pub struct BadgerFullJustification<Block: BlockT>
 {
-	pub hash: Block::Hash,
-  pub commits:Vec<BadgerAuthCommit>,
+  pub hash: Block::Hash,
+  pub commits: Vec<BadgerAuthCommit>,
 }
 
-
-#[derive(Encode, Decode, Debug,Clone)]
-pub struct BadgerSyncData<Block: BlockT> 
+#[derive(Encode, Decode, Debug, Clone)]
+pub struct BadgerSyncData<Block: BlockT>
 {
- pub  num:NumberFor::<Block>,
-  pub justification:BadgerFullJustification<Block>
+  pub num: NumberFor<Block>,
+  pub justification: BadgerFullJustification<Block>,
 }
 
-#[derive(Encode, Decode, Debug,Clone)]
-pub struct BadgerSyncGossip<Block: BlockT> 
+#[derive(Encode, Decode, Debug, Clone)]
+pub struct BadgerSyncGossip<Block: BlockT>
 {
- pub data:BadgerSyncData<Block>,
- pub source:AuthorityId,
- pub sgn:AuthoritySignature
+  pub data: BadgerSyncData<Block>,
+  pub source: AuthorityId,
+  pub sgn: AuthoritySignature,
 }
 
 impl<Block: BlockT> BadgerSyncGossip<Block>
 {
   pub fn verify(&self) -> bool
   {
-    if ! self.data.justification.verify() {return false};
-    badger_primitives::app::Public::verify(&self.source, &self.data.encode(), &self.sgn)
-
-  }
-  pub fn new(originator: &AuthorityPair, just:BadgerFullJustification<Block>,num: NumberFor::<Block> ) -> BadgerSyncGossip<Block>
-  {
-    let bsd=BadgerSyncData
+    if !self.data.justification.verify()
     {
-      num:num,
-      justification:just,
+      return false;
     };
-    let sig=originator.sign(&bsd.encode());
+    badger_primitives::app::Public::verify(&self.source, &self.data.encode(), &self.sgn)
+  }
+  pub fn new(
+    originator: &AuthorityPair, just: BadgerFullJustification<Block>, num: NumberFor<Block>,
+  ) -> BadgerSyncGossip<Block>
+  {
+    let bsd = BadgerSyncData {
+      num: num,
+      justification: just,
+    };
+    let sig = originator.sign(&bsd.encode());
     BadgerSyncGossip {
       data: bsd,
       source: originator.public(),
@@ -113,25 +111,21 @@ impl<Block: BlockT> BadgerSyncGossip<Block>
   }
 }
 
-
-
 impl<Block: BlockT> BadgerFullJustification<Block>
 {
   pub fn verify(&self) -> bool
   {
-    let enc=self.hash.encode();
-    for commit in self.commits.iter(){
-     if ! badger_primitives::app::Public::verify(&commit.validator, &enc, &commit.sgn)
-     {
-       return false;
-     }
+    let enc = self.hash.encode();
+    for commit in self.commits.iter()
+    {
+      if !badger_primitives::app::Public::verify(&commit.validator, &enc, &commit.sgn)
+      {
+        return false;
+      }
     }
     return true;
-   
   }
 }
-
-
 
 impl<Block: BlockT> BadgerJustification<Block>
 {
@@ -141,7 +135,7 @@ impl<Block: BlockT> BadgerJustification<Block>
   }
 }
 
-impl<B:BlockT> GossipMessage<B>
+impl<B: BlockT> GossipMessage<B>
 {
   pub fn verify(&self) -> bool
   {
@@ -150,8 +144,8 @@ impl<B:BlockT> GossipMessage<B>
       GossipMessage::BadgerData(data) => data.verify(),
       GossipMessage::KeygenData(data) => data.verify(),
       GossipMessage::Session(data) => data.verify(),
-      GossipMessage::JustificationData(data) =>data.verify(),
-      GossipMessage::SyncGossip(data) =>data.verify(),
+      GossipMessage::JustificationData(data) => data.verify(),
+      GossipMessage::SyncGossip(data) => data.verify(),
     }
   }
 }

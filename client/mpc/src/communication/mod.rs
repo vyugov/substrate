@@ -1,18 +1,15 @@
 use std::{ pin::Pin, sync::Arc};//future, marker::Unpin,
 
 use codec::{Decode, Encode};
-//use futures::channel::oneshot::{self, Canceled};
-//use futures::compat::{Compat, Compat01As03};
-//use futures::future::FutureExt;
 use futures::prelude::{ Sink, Stream, };//Future,TryStream
 use futures::stream::{ StreamExt}; //FilterMap TryStreamExt
 use futures::task::{Context, Poll};
 use log::{ trace};//error, info
 
-use sc_network::message::generic::{ConsensusMessage, Message};
-use sc_network::{NetworkService, PeerId};
-use sc_network_gossip::{GossipEngine, Network, TopicNotification};
-use sp_runtime::traits::{Block as BlockT, DigestFor, Hash as HashT, Header as HeaderT, NumberFor, ProvideRuntimeApi};
+//use sc_network::message::generic::{ConsensusMessage, Message};
+use sc_network::{ PeerId}; //NetworkService
+use sc_network_gossip::{GossipEngine, Network, }; //TopicNotification
+use sp_runtime::traits::{Block as BlockT,  Hash as HashT, Header as HeaderT, }; //DigestFor NumberFor, ProvideRuntimeApi
 
 use sp_mpc::MPC_ENGINE_ID;
 

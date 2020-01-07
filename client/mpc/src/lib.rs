@@ -1,10 +1,10 @@
 use std::{
-	collections::BTreeMap, fmt::Debug, hash::Hash, marker::PhantomData, pin::Pin, sync::Arc, thread, time::Duration,
-};
+	collections::BTreeMap, fmt::Debug,  pin::Pin, sync::Arc, 
+}; //hash::Hash, marker::PhantomData,  thread, time::Duration,
 
 use curv::{
 	cryptographic_primitives::{proofs::sigma_dlog::DLogProof, secret_sharing::feldman_vss::VerifiableSS},
-	elliptic::curves::traits::ECPoint,
+	//elliptic::curves::traits::ECPoint,
 	FE, GE,
 };
 use futures::{
@@ -22,10 +22,10 @@ use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2018::party_i::{
 use parking_lot::RwLock;
 
 use sc_client::Client;
-use sc_client_api::{backend::Backend, BlockchainEvents, CallExecutor, ExecutionStrategy};
+use sc_client_api::{backend::Backend, BlockchainEvents, CallExecutor, }; //ExecutionStrategy
 //use sc_keystore::KeyStorePtr;
 use sc_network::{NetworkService, NetworkStateInfo, PeerId};
-use sc_network_gossip::{ Network as GossipNetwork, TopicNotification}; //GossipEngine
+use sc_network_gossip::{ Network as GossipNetwork, }; //GossipEngine TopicNotification
 use sp_blockchain::{Error as ClientError,  Result as ClientResult}; //HeaderBackend
 use sp_core::{
 //	ecdsa::Pair,StorageKind
@@ -44,7 +44,7 @@ mod signer;
 
 use communication::{
 	gossip::{GossipMessage, MessageWithSender},
-	message::{ConfirmPeersMessage, KeyGenMessage, PeerIndex, SigGenMessage},
+	message::{ConfirmPeersMessage, KeyGenMessage, PeerIndex, }, //SigGenMessage
 	NetworkBridge,
 };
 use periodic_stream::PeriodicStream;
