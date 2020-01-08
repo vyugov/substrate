@@ -8,9 +8,6 @@ use sc_api::AuxStore;
 //use runtime_primitives::app_crypto::RuntimeAppPublic;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 //use std::convert::TryInto;
-use std::marker::PhantomData;
-use std::pin::Pin;
-use std::sync::Arc;
 use badger::dynamic_honey_badger::ChangeState;
 use badger_primitives::BadgerPreRuntime;
 use consensus_common::evaluation;
@@ -22,6 +19,9 @@ use runtime_primitives::traits::{NumberFor, One};
 use runtime_primitives::Justification;
 use sc_network_ranting::Network as RantingNetwork;
 use sc_network_ranting::RawMessage;
+use std::marker::PhantomData;
+use std::pin::Pin;
+use std::sync::Arc;
 
 use badger_primitives::ConsensusLog;
 use gossip::BadgerSyncData;
@@ -1333,15 +1333,15 @@ where
       {
         self.process_extracted(elogs);
         info!("Imported Block with completed result");
-      },
+      }
       BatchProcResult::Nothing =>
-      {},
+      {}
       BatchProcResult::EmitJustification(hash, list, elogs) =>
       {
         self.process_extracted(elogs);
         self.initiate_block_justification(hash, list);
         info!("Processed block with new block created");
-      },
+      }
     }
 
     if let Some(extr_batch) = ebatch
@@ -1352,7 +1352,7 @@ where
          BatchProcResult::Nothing => {},
          BatchProcResult::EmitJustification(hash,list,elogs) =>
           {
-            self.process_extracted(elogs); 
+            self.process_extracted(elogs);
             self.initiate_block_justification(hash, list);
             info!("Processed block with new block created");
           }
@@ -1398,7 +1398,7 @@ where
          BatchProcResult::Nothing => {},
          BatchProcResult::EmitJustification(hash,list,elogs) =>
           {
-            self.process_extracted(elogs); 
+            self.process_extracted(elogs);
             self.initiate_block_justification(hash, list);
             info!("Processed block with new block created");
           }
@@ -2871,14 +2871,14 @@ where
             info!("Allex lock success");
 
             let peers = &locked.peers;
-            vallist = locked //do I still need this? 
+            vallist = locked //do I still need this?
               .persistent
               .authority_set
               .inner
               .read()
               .current_authorities
-              .iter().filter(|x|
-              {
+              .iter()
+              .filter(|x| {
                 if **x == locked.config.my_auth_id
                 {
                   true

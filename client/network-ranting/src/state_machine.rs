@@ -16,7 +16,6 @@
 
 use std::collections::{HashMap, HashSet, hash_map::Entry};
 use std::sync::Arc;
-use std::iter;
 use std::time;
 use log::{trace, debug};
 use futures::channel::mpsc;
@@ -77,17 +76,7 @@ struct MessageEntry<B: BlockT>
   message: RawMessage,
 }
 
-/// The reason for sending out the message.
-#[derive(Eq, PartialEq, Copy, Clone)]
-#[cfg_attr(test, derive(Debug))]
-pub enum MessageIntent {
-	/// Requested broadcast.
-	Broadcast,
-	/// Requested broadcast to all peers.
-	ForcedBroadcast,
-	/// Periodic rebroadcast of all messages to all peers.
-	PeriodicRebroadcast,
-}
+
 
 #[derive(Eq, PartialEq, Copy, Clone)]
 pub enum ValidationResult<B: BlockT>
@@ -116,11 +105,6 @@ pub enum RoutingInfo
 	Specific
 }
 
-impl MessageIntent {
-	fn broadcast() -> MessageIntent {
-		MessageIntent::Broadcast
-	}
-}
 
 #[derive(Encode, Decode)]
 pub struct RoutedMessage
@@ -543,7 +527,7 @@ impl<B: BlockT> ConsensusGossip<B> {
 			  Ok(dat) =>{dat},
 			  Err(e) =>
 			  {
-			trace!(target:"gossip", "Ignored malformed message from {}", who);
+			trace!(target:"gossip", "Ignored malformed message from {}: {:?}", who,e);
 			protocol.report_peer(who.clone(), rep::MALFORMED_GOSSIP); 
 			continue;
 			

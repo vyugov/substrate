@@ -1,16 +1,9 @@
-//use std::collections::BTreeMap;
-//use std::fs::File;
 use std::marker::{Send, Sync};
-//use std::path::PathBuf;
 use std::pin::Pin;
-//use std::str::FromStr;
 use badger::crypto::SecretKeyShare;
 use std::{fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration, time::Instant};
 
-//use app_crypto::hbbft_thresh::Pair as HBPair;
-//use threshold_crypto::serde_impl::SerdeSecret;
 use bincode;
-use futures03::channel::mpsc;
 use futures03::future::Future;
 use futures03::prelude::*;
 use futures03::task::Poll;
@@ -19,32 +12,21 @@ use hex;
 use log::{debug, info, trace, warn};
 use parity_codec::{Decode, Encode};
 use parking_lot::Mutex;
-//use badger_primitives::HBBFT_ENGINE_ID;
-//use badger_primitives::BadgerPreRuntime;
-
-//use badger_primitives::ConsensusLog;
-//use badger::dynamic_honey_badger::Change;
-//use badger::dynamic_honey_badger::ChangeState;
-
-//use consensus_common::evaluation;
 use inherents::InherentIdentifier;
 use keystore::KeyStorePtr;
-//use runtime_primitives::traits::Hash as THash;
 use runtime_primitives::traits::{Block as BlockT, Header, NumberFor, ProvideRuntimeApi};
 
 use block_builder::BlockBuilderApi;
 use runtime_primitives::{
-  generic::{self, BlockId}, //OpaqueDigestItemId
+  generic::{self, BlockId}, 
   Justification,
 };
-//use block_primitives::ApplyError;
 pub mod communication;
 use crate::communication::Network;
 use badger::ConsensusProtocol;
-use badger_primitives::HBBFT_AUTHORITIES_KEY; //AuthorityId,AuthorityPair
+use badger_primitives::HBBFT_AUTHORITIES_KEY;
 use std::iter;
 
-//use client::backend::Backend;
 use sp_blockchain::{Error as ClientError, Result as ClientResult};
 
 use client::blockchain::HeaderBackend;
@@ -66,18 +48,14 @@ use inherents::{InherentData, InherentDataProviders};
 use sc_api::{AuxStore, Backend};
 use sp_api::ConstructRuntimeApi;
 use std::collections::HashMap;
-//use network::PeerId;
 use runtime_primitives::traits::DigestFor;
-//use runtime_primitives::generic::DigestItem;
 use substrate_primitives::{storage::StorageKey, Blake2Hasher, ExecutionContext, H256};
 use substrate_telemetry::{telemetry, CONSENSUS_INFO, CONSENSUS_WARN};
-//use transaction_pool::txpool::{self};
 use crate::communication::SendOut;
 use txp::InPoolTransaction;
 use txp::TransactionPool;
 
 pub const INHERENT_IDENTIFIER: InherentIdentifier = *b"snakeshr";
-//use hash_db::Hasher;
 use communication::BlockPusherMaker;
 use network::ClientHandle as NetClient;
 pub type BadgerImportQueue<B> = BasicQueue<B>;
@@ -172,7 +150,6 @@ impl<B, E, Block: BlockT<Hash = H256>, RA, SC> BadgerBlockImport<B, E, Block, RA
     select_chain: SC,
     authority_set: aux_store::BadgerSharedAuthoritySet,
     send_on_import: ImportTx<Block>,
-    //consensus_changes: SharedConsensusChanges<Block::Hash, NumberFor<Block>>,
   ) -> BadgerBlockImport<B, E, Block, RA, SC>
   {
     BadgerBlockImport {
@@ -180,7 +157,6 @@ impl<B, E, Block: BlockT<Hash = H256>, RA, SC> BadgerBlockImport<B, E, Block, RA
       select_chain,
       authority_set,
       send_on_import,
-      //consensus_changes,
     }
   }
 }
@@ -233,9 +209,9 @@ where
           info!("Unfinalizing block, rejecting?");
           return Ok(ImportResult::AlreadyInChain);
         }
-        //match 
+        //match
         self.send_on_import.call(block);
-      /*  {
+        /*  {
           Ok(_) =>
           {}
           Err(e) =>
@@ -245,7 +221,7 @@ where
           }
         }*/
         //let import_result = (&*self.inner).import_block(block, new_cache);
-       // return import_result;
+        // return import_result;
         return Ok(ImportResult::AlreadyInChain);
         // info!("Sync Block Justification: {:?}",&justification);
         // let bh=block.header.hash().clone();
@@ -596,42 +572,42 @@ use crate::aux_store::GenesisAuthoritySetProvider;
 //Block:BlockT
 pub type BlockSentInfo<Block> = BlockImportParams<Block>;
 
-pub trait AssignedCaller<Block:BlockT>
+pub trait AssignedCaller<Block: BlockT>
 {
-   fn call(&self,block: BlockSentInfo<Block>);
-   fn assign(&self,new_call:Box<dyn Fn(BlockSentInfo<Block>)+Send+Sync>);
+  fn call(&self, block: BlockSentInfo<Block>);
+  fn assign(&self, new_call: Box<dyn Fn(BlockSentInfo<Block>) + Send + Sync>);
 }
 //#[derive(Clone)]
-pub struct DefCall<Block:BlockT>
+pub struct DefCall<Block: BlockT>
 {
-  call:parking_lot::RwLock<Option<Box<dyn Fn(BlockSentInfo<Block>)+Send+Sync>>>,
+  call: parking_lot::RwLock<Option<Box<dyn Fn(BlockSentInfo<Block>) + Send + Sync>>>,
 }
-impl<Block:BlockT> DefCall<Block>
+impl<Block: BlockT> DefCall<Block>
 {
-  pub fn new()->Arc<Self>
+  pub fn new() -> Arc<Self>
   {
-    Arc::new(
-      DefCall{call:parking_lot::RwLock::new(None)}
-    )
+    Arc::new(DefCall {
+      call: parking_lot::RwLock::new(None),
+    })
   }
-} 
+}
 
-impl<Block:BlockT> AssignedCaller<Block> for  Arc<DefCall<Block>>
+impl<Block: BlockT> AssignedCaller<Block> for Arc<DefCall<Block>>
 {
-   fn call(&self,block: BlockSentInfo<Block>)
+  fn call(&self, block: BlockSentInfo<Block>)
   {
-    if let Some(ref cl)=*self.call.read()
+    if let Some(ref cl) = *self.call.read()
     {
-    cl(block);
+      cl(block);
     }
   }
-   fn assign(&self,new_call:Box<dyn Fn(BlockSentInfo<Block>)+Send+Sync>)
+  fn assign(&self, new_call: Box<dyn Fn(BlockSentInfo<Block>) + Send + Sync>)
   {
-       *self.call.write()=Some(new_call);
+    *self.call.write() = Some(new_call);
   }
 }
-pub type ImportRx<Block> = Arc<DefCall<Block>>;//mpsc::UnboundedReceiver<BlockSentInfo<Block>>;
-pub type ImportTx<Block> = Arc<DefCall<Block>>;//mpsc::UnboundedSender<BlockSentInfo<Block>>;
+pub type ImportRx<Block> = Arc<DefCall<Block>>; //mpsc::UnboundedReceiver<BlockSentInfo<Block>>;
+pub type ImportTx<Block> = Arc<DefCall<Block>>; //mpsc::UnboundedSender<BlockSentInfo<Block>>;
 
 pub fn block_importer<B, E, Block: BlockT<Hash = H256>, RA, SC>(
   client: Arc<Client<B, E, Block, RA>>, genesis_authorities_provider: &dyn GenesisAuthoritySetProvider<Block>,
@@ -654,8 +630,8 @@ where
     Ok(authorities)
   })?;
 
- // let (import_commands_tx, import_commands_rx) = mpsc::unbounded();
-let caller=DefCall::new();
+  // let (import_commands_tx, import_commands_rx) = mpsc::unbounded();
+  let caller = DefCall::new();
   Ok((
     BadgerBlockImport::new(
       client.clone(),
@@ -712,7 +688,6 @@ where
   pub fn process_data(
     block_builder: &mut BlockBuilder<Block, Client<B, E, Block, RA>>, pending: &mut BadgerTransaction,
   ) -> BlockPushResult
-//pub fn process_data(&self, block_builder:&mut BlockBuilder<Block,Client<B, E, Block, RA>>,pending:&mut BadgerTransaction)->BlockPushResult
   {
     let data: Result<<Block as BlockT>::Extrinsic, _> = Decode::decode(&mut pending.as_slice());
     let data = match data
@@ -978,36 +953,18 @@ where
     Cwrap {
       client: cclient.clone(),
     },
-    &executor, //,finalizer: Box<dyn FnMut( &B::Hash,Option<Justification>)->bool+Send+Sync>,
+    &executor,
   );
   let net_arc = Arc::new(network_bridge);
   let blk_out = BadgerStream { wrap: net_arc.clone() };
-  //let tx_in=net_arc.clone();
-
-  //	register_finality_tracker_inherent_data_provider(client.clone(), &inherent_data_providers)?;
-  /*let bjqueue=communication::BadgerJustificationQueue
-  {
-     client: client.clone(),
-    block_import:block_import.clone(),
-    handler: handler,
-    selch:selch.clone(),
-    queued_block:RwLock::new(None),
-    overflow:RwLock::new(VecDeque::new()),
-    queued_batches:RwLock::new(VecDeque::new()),
-    finalizer: RwLock::new(mjust),
-  };*/
-
   let txcopy = net_arc.clone();
   let tx_in_arc = txcopy.clone();
-
-  //let (btf_send_tx, mut btf_send_rx) = mpsc::unbounded::<RpcMessage>();
   let tx_out = TxStream {
     transaction_pool: t_pool.clone(),
     client: client.clone(),
   };
   let sender = tx_out.for_each(move |data: std::vec::Vec<std::vec::Vec<u8>>| {
     {
-      //let mut lock = tx_in_arc;
       match tx_in_arc.send_out(data)
       {
         Ok(_) =>
@@ -1021,7 +978,6 @@ where
     future::ready(())
   });
 
-  //let cblock_import = block_import.clone();
   let ping_sel = selch.clone();
   let sec_net = net_arc.clone();
   /*let importer = receiver.for_each(move |blki| {
@@ -1030,20 +986,17 @@ where
       &blki.header.hash(),
       &blki.header.number()
     );
-    sec_net.on_block_imported(blki); 
+    sec_net.on_block_imported(blki);
     future::ready(())
   });*/
-  receiver.assign(Box::new(move |blki|
-  
-  {
+  receiver.assign(Box::new(move |blki| {
     info!(
       "External block import: {:?} {:?}",
       &blki.header.hash(),
       &blki.header.number()
     );
     sec_net.on_block_imported(blki);
-  }
-  ));
+  }));
 
   let batch_receiver = blk_out.for_each(move |batch| {
     net_arc.process_batch(batch);
@@ -1051,27 +1004,13 @@ where
     future::ready(())
   });
 
-  //.map(|_| ()).map_err(|e|
-  //    {
-  //			warn!("BADGER failed: {:?}", e);
-  //			telemetry!(CONSENSUS_WARN; "afg.badger_failed"; "e" => ?e);
-  //		}) ;
-
-  //	use hex_literal::*;
-  //	use substrate_primitives::crypto::Pair;
-  //	let ap:app_crypto::hbbft_thresh::Public=hex!["946252149ad70604cf41e4b30db13861c919d7ed4e8f9bd049958895c6151fab8a9b0b027ad3372befe22c222e9b733f"].into();
-
-  //	let secr:SecretKey=bincode::deserialize(&keystore.read().key_pair_by_type::<AuthorityPair>(&ap.into(), app_crypto::key_types::HB_NODE).unwrap().to_raw_vec()).unwrap();
-  //	info!("Badger AUTH  private {:?}",&secr);
-
-  let with_start =
-  network_startup.then(move |()| futures03::future::join(sender, batch_receiver));
- //   network_startup.then(move |()| futures03::future::join(futures03::future::join(sender, receiver), importer));
+  let with_start = network_startup.then(move |()| futures03::future::join(sender, batch_receiver));
+  //   network_startup.then(move |()| futures03::future::join(futures03::future::join(sender, receiver), importer));
 
   let ping_client = client.clone();
   // Delay::new(Duration::from_secs(1)).then(|_| {
   let ping = interval_at(Instant::now(), Duration::from_millis(11500)).for_each(move |_| {
-    //put inherents here for now
+    //put inherents here for now TODO: decide what to do with inherents.
     let chain_head = match ping_sel.best_chain()
     {
       Ok(x) => x,
