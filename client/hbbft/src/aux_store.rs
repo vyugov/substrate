@@ -15,7 +15,7 @@
 // along with Substrate.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Schema for stuff in the aux-db.
-
+use std::collections::{BTreeMap,};
 use parity_codec::{Decode, Encode};
 use parking_lot::RwLock;
 use runtime_primitives::Justification;
@@ -30,6 +30,7 @@ use badger_primitives::{AuthorityList, EraId};
 use keystore::KeyStorePtr;
 use log::info;
 use runtime_primitives::traits::Block as BlockT;
+use sc_peerid_wrapper::PeerIdW;
 //use crate::authorities::{AuthoritySet, SharedAuthoritySet, PendingChange, DelayKind};
 
 use substrate_primitives::crypto::Pair;
@@ -40,6 +41,8 @@ const AUTHORITY_SET_KEY: &[u8] = b"hbbft_authorities";
 
 const VOTE_KEY: &[u8] = b"hbbft_current_vote"; //to save current vote for change?  change is a list of public keys, same as auth set
 
+const PEER_MAP_KEY: &[u8] = b"hbbft_peer_to_auth_map";
+
 const CURRENT_VERSION: u32 = 0;
 
 #[derive(Debug, Clone, Encode, Decode)]
@@ -49,6 +52,8 @@ pub struct AuthoritySet
   pub self_id: AuthorityId,
   pub era: EraId,
 }
+
+
 
 pub(crate) fn load_decode<B: AuxStore, T: Decode>(backend: &B, key: &[u8]) -> ClientResult<Option<T>>
 {
@@ -120,6 +125,83 @@ pub struct BadgerPersistentData
   pub change_vote: Option<BadgerSharedAuthoritySet>,
 }
 
+pub struct BadgerAuthorityMap<I:AuxStore>
+{
+ pub auths:BTreeMap<PeerIdW,AuthorityId>,
+ backend: Arc<I>
+}
+
+impl<I:AuxStore>  BadgerAuthorityMap<I>
+{
+  pub fn load_or_create(backend:Arc<I>) ->RwLock<Self>
+  {
+    let map= match load_decode(&*backend, PEER_MAP_KEY)
+    {
+    Ok(res) => match res
+    {
+      Some(mres) => mres,
+      None => BTreeMap::new()
+    },
+    Err(_) =>
+    {
+      BTreeMap::new()
+
+    }
+
+    };
+    RwLock::new(BadgerAuthorityMap
+    {
+      auths: map,
+      backend:backend.clone()
+    })
+  }
+  pub fn save(&mut self)
+  {
+    match self.backend.insert_aux(&[(PEER_MAP_KEY, self.auths.encode().as_slice())], &[])
+    {
+     Ok(_) => {},
+     Err(e) =>info!("Error saving auth map into database: {:?}",e),
+    };
+  }
+  pub fn insert(&mut self,peer:&PeerIdW,auth:&AuthorityId)
+  {
+    if let Some( current)= self.auths.get_mut(peer)
+    {
+      if current==auth //no change
+      {
+        return;
+      }
+      (*current)=auth.clone();
+    }
+    else
+    {
+       self.auths.insert(peer.clone(),auth.clone());
+    }
+    self.save();
+  }
+  pub fn get_auth(&self,peer:&PeerIdW)->Option<AuthorityId>
+  {
+   match self.auths.get(peer)
+   {
+     Some(k) =>Some(k.clone()),
+     None =>None
+   }
+  }
+  pub fn get_peer(&self,auth:&AuthorityId)->Option<PeerIdW>
+  {
+   match self.auths.iter().find ( | (_,v) | *v==auth )
+   {
+     Some(k) =>Some(k.0.clone()),
+     None =>None
+   }
+  }
+  pub fn get_peer_list(&self,list:&AuthorityList)-> Vec<PeerIdW>
+  {
+    list.iter().filter_map( |auth| self.auths.iter().find ( | (_,v) | *v==auth ).map( |(k,_)| k.clone()) ).collect()
+  }
+}
+
+/// Added so that I could access authority set without initializing whole badger
 pub fn loads_auth_set<B, G>(backend: &B, genesis_authorities: G) -> ClientResult<BadgerSharedAuthoritySet>
 where
   B: AuxStore,

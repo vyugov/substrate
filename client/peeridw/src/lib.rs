@@ -18,6 +18,34 @@ use network::PeerId;
 #[repr(transparent)]
 pub struct PeerIdW(pub PeerId);
 
+pub trait PeerIdTrait {}
+
+
+pub trait IsSamePeer<PId:PeerIdTrait>
+{
+  fn is_same_peer(&self,peer:&PId) ->bool;
+}
+
+impl PeerIdTrait for PeerIdW {}
+impl PeerIdTrait for PeerId {}
+impl IsSamePeer<PeerId> for PeerIdW
+{
+  fn is_same_peer(&self,peer:&PeerId) ->bool
+  {
+    self.0==*peer
+  }
+}
+
+
+impl IsSamePeer<PeerIdW> for PeerId
+{
+  fn is_same_peer(&self,peer:&PeerIdW) ->bool
+  {
+    *self==peer.0
+  }
+}
+
+
 impl PartialOrd for PeerIdW
 {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering>

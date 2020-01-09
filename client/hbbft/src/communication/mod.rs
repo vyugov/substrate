@@ -3,6 +3,7 @@ use badger::queueing_honey_badger::QueueingHoneyBadger;
 use badger::sender_queue::{Message as BMessage, SenderQueue};
 use badger::sync_key_gen::{Ack, AckOutcome, Part, PartOutcome, PubKeyMap, SyncKeyGen}; //AckFault
 use keystore::KeyStorePtr;
+use std::convert::TryInto;
 use runtime_primitives::generic::BlockId;
 use sc_api::AuxStore;
 //use runtime_primitives::app_crypto::RuntimeAppPublic;
@@ -63,7 +64,7 @@ use substrate_telemetry::{telemetry, CONSENSUS_DEBUG};
 pub mod gossip;
 
 use crate::Error;
-
+use sc_peerid_wrapper::IsSamePeer;
 pub const MAX_DELAYED_JUSTIFICATIONS: u64 = 10;
 //use badger_primitives::NodeId;
 use sc_peerid_wrapper::PeerIdW;
@@ -197,7 +198,6 @@ where
   //peers: Peers,
   //authorities: Vec<AuthorityId>,
   //config: crate::Config,
-  //next_rebroadcast: Instant,
   /// Incoming messages from other nodes that this node has not yet handled.
   // in_queue: VecDeque<SourcedMessage<D>>,
   /// Outgoing messages to other nodes.
@@ -1409,18 +1409,22 @@ where
     }
     self.output_message_buffer.append(&mut drain);
   }
-  pub fn get_era(&self)->u64
+  pub fn get_full_epoch(&self)-> (u64,u64)
   {
     match &self.state
     {
     BadgerState::Badger(ref node) =>
      {
-      node.algo.inner().epoch().0
+      node.algo.inner().epoch()
      },
      _ => 
      {
       let info = self.client.info();
       let best_number = info.best_number;
+      let epoch:u64 =match TryInto::<u64>::try_into(best_number){
+        Ok(d) =>d,
+        Err(_) => (0 as u64)
+      };
       let b_id = BlockId::Hash(info.best_hash);
       let hd = self.client.justification(&b_id);
       let cur_just = match hd
@@ -1436,7 +1440,7 @@ where
               Err(_) =>
               {
                 warn!("We have invalid justification encoding in non-genesis block");
-                return 0;
+                return (0,epoch);
               }
             }
           }
@@ -1445,7 +1449,7 @@ where
             if best_number == 0.into()
             {
               //genesis...
-              return 0;
+              return (0,0);
             }
             else
             {
@@ -1456,10 +1460,11 @@ where
         Err(_) =>
         {
           warn!("We don't know our best block!");
-          return 0;
+          
+          return (0,epoch);
         }
       };
-      cur_just.block_id.era
+      (cur_just.block_id.era,epoch)
 
       }
     }
@@ -1475,7 +1480,7 @@ where
     //////////////////////////////////////
     let mut n_hash = hkey;
     let mut n_list = auth_list;
-let era=self.get_era();
+let era=self.get_full_epoch().0;
     //let locked=self.
     loop
     {
@@ -1596,7 +1601,7 @@ let era=self.get_era();
   pub fn proceed_to_badger(&mut self) -> Vec<(LocalTarget<B>, GossipMessage<B>)>
   {
     self.load_origin();
-
+     let (era,epoch)=self.get_full_epoch();
     let node: BadgerNode<B, QHB> = BadgerNode::<B, QHB>::new(
       self.config.batch_size as usize,
       self.config.secret_share.clone(),
@@ -1606,6 +1611,9 @@ let era=self.get_era();
       self.config.my_peer_id.clone(),
       self.keystore.clone(),
       &self.peers,
+      era,
+      epoch
+
     );
     self.state = BadgerState::Badger(node);
     let bypass: Vec<_> = self.queued_transactions.drain(..).collect();
@@ -2494,7 +2502,7 @@ impl<B: BlockT> BadgerNode<B, QHB>
 {
   pub fn new(
     batch_size: usize, sks: Option<SecretKeyShare>, validator_set: AuthorityList, pkset: PublicKeySet,
-    auth_id: AuthorityId, self_id: PeerId, keystore: KeyStorePtr, peers: &Peers,
+    auth_id: AuthorityId, self_id: PeerId, keystore: KeyStorePtr, peers: &Peers,initial_era:u64,initial_epoch:u64
   ) -> BadgerNode<B, QHB>
   {
     let mut rng = OsRng::new().unwrap();
@@ -2540,7 +2548,7 @@ impl<B: BlockT> BadgerNode<B, QHB>
       })
       .collect();
      
-    let dhb = DynamicHoneyBadger::builder().build(ni, secr, Arc::new(val_map));
+    let dhb = DynamicHoneyBadger::builder().era(initial_era).epoch(initial_epoch).build(ni, secr, Arc::new(val_map));
     let (qhb, qhb_step) = QueueingHoneyBadger::builder(dhb)
       .batch_size(batch_size)
       .build(&mut rng)
@@ -2578,6 +2586,72 @@ impl<B: BlockT> BadgerNode<B, QHB>
     };
     node
   }
+ pub fn restart_at_era_epoch(&mut self,new_era:u64,new_epoch:u64, auth_id: AuthorityId,self_id: PeerId, keystore: KeyStorePtr, peers: &Peers) ->Result<(),()>
+ {
+   if new_era!=self.algo.inner().epoch().0
+   {
+     info!("Cannot restart with new era, use JoinPlan or such");
+     return Err(());
+   }
+   let mut rng = OsRng::new().unwrap();
+  let netinf=self.algo.inner().netinfo().clone();
+  let sks=netinf.secret_key_share();
+  let secr: SecretKey = match keystore
+  .read()
+  .key_pair_by_type::<AuthorityPair>(&auth_id, app_crypto::key_types::HB_NODE)
+{
+  Ok(key) => bincode::deserialize(&key.to_raw_vec()).expect("Stored key should be correct"),
+  Err(_) => panic!("SHould really have key at this point"),
+};
+  let batch_size=self.algo.inner().batch_size();
+  let mut val_map:BTreeMap<PeerIdW,PublicKey>=BTreeMap::new();
+  for id in netinf.all_ids()
+  {
+    if id.is_same_peer(&self_id)
+    {
+      val_map.insert(self_id.clone().into(), auth_id.clone().into());
+    }
+    else
+    {
+      let nid = &peers.inner.get(&id.0).expect("All authorities should have loaded!").id;
+      if let Some(ref idd)=nid
+      {
+        val_map.insert(id.clone().into(), (*idd).clone().into());
+      }
+      
+    }
+}; 
+  let dhb = DynamicHoneyBadger::builder().era(new_era).epoch(new_epoch).build(netinf, secr, Arc::new(val_map));
+  let (qhb, qhb_step) = QueueingHoneyBadger::builder(dhb)
+    .batch_size(batch_size)
+    .build(&mut rng)
+    .expect("instantiate QueueingHoneyBadger");
+
+    // this is where  observers kind of belong?
+  let (sq, mut step) =
+      SenderQueue::builder(qhb, peers.inner.keys().map(|x| (*x).clone().into())).build(self_id.clone().into());
+      let output = step.extend_with(qhb_step, |fault| fault, BMessage::from);
+      assert!(output.is_empty());
+      let out_queue = step
+        .messages
+        .into_iter()
+        .map(|msg| {
+          let ser_msg = bincode::serialize(&msg.message).expect("serialize");
+          SourcedMessage {
+            sender_id: sq.our_id().clone(),
+            target: msg.target.into(),
+            message: ser_msg,
+          }
+        })
+        .collect();
+      let outputs = step.output.into_iter().collect();
+      info!("BaDGER!! ReInitializing node");
+      self.algo=sq;
+      self.out_queue=out_queue;
+      self.outputs=outputs;
+  Ok(())
+ }
+
   fn process_step(
     &mut self, step: badger::sender_queue::Step<DynamicHoneyBadger<Vec<BadgerTransaction>, NodeId>>,
   ) -> Result<(), &'static str>
