@@ -60,6 +60,7 @@ pub const HBBFT_AUTHORITIES_MAP_KEY: &'static [u8] = b":honey_badger_auth_map";
 pub type AuthorityList = Vec<AuthorityId>;
 
 pub type SetId = u32;
+pub type EraId = u64;
 use codec::{self as codec, Decode, Encode, }; //Error, Codec
 
 

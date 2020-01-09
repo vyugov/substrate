@@ -18,12 +18,6 @@ use substrate_primitives::crypto::Pair; //RuntimeAppPublic
 use app_crypto::RuntimeAppPublic;
 use runtime_primitives::traits::NumberFor;
 
-//const REBROADCAST_AFTER: Duration = Duration::from_secs(60 * 5);
-//const CATCH_UP_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
-//const CATCH_UP_PROCESS_TIMEOUT: Duration = Duration::from_secs(15);
-/// Maximum number of rounds we are behind a peer before issuing a
-/// catch up request.
-//const CATCH_UP_THRESHOLD: u64 = 2;
 
 //const KEEP_RECENT_ROUNDS: usize = 3;
 
@@ -47,10 +41,20 @@ pub enum GossipMessage<Block: BlockT>
   SyncGossip(BadgerSyncGossip<Block>),
 }
 
+#[derive(Encode, Decode, Debug, Clone,PartialEq,Eq)]
+pub struct BadgerBlockId<Block: BlockT>
+{
+  pub hash: Block::Hash,
+
+  /// Authority era
+  pub era:u64
+}
+
+
 #[derive(Encode, Decode, Debug, Clone)]
 pub struct BadgerJustification<Block: BlockT>
 {
-  pub hash: Block::Hash,
+  pub block_id:BadgerBlockId<Block>,
   pub validator: AuthorityId,
   pub sgn: AuthoritySignature,
 }
@@ -65,7 +69,7 @@ pub struct BadgerAuthCommit
 #[derive(Encode, Decode, Debug, Clone)]
 pub struct BadgerFullJustification<Block: BlockT>
 {
-  pub hash: Block::Hash,
+  pub block_id:BadgerBlockId<Block>,
   pub commits: Vec<BadgerAuthCommit>,
 }
 
@@ -115,7 +119,7 @@ impl<Block: BlockT> BadgerFullJustification<Block>
 {
   pub fn verify(&self) -> bool
   {
-    let enc = self.hash.encode();
+    let enc = self.block_id.encode();
     for commit in self.commits.iter()
     {
       if !badger_primitives::app::Public::verify(&commit.validator, &enc, &commit.sgn)
@@ -131,7 +135,7 @@ impl<Block: BlockT> BadgerJustification<Block>
 {
   pub fn verify(&self) -> bool
   {
-    badger_primitives::app::Public::verify(&self.validator, &self.hash.encode(), &self.sgn)
+    badger_primitives::app::Public::verify(&self.validator, &self.block_id.encode(), &self.sgn)
   }
 }
 
@@ -180,7 +184,7 @@ impl BadgeredMessage
 #[derive(Debug, Encode, Decode)]
 pub struct SessionData
 {
-  pub ses_id: u32,
+  pub ses_id: u64,
   pub session_key: AuthorityId,
   pub peer_id: PeerIdW,
 }

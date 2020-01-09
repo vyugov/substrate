@@ -9,6 +9,7 @@ use sc_api::AuxStore;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 //use std::convert::TryInto;
 use badger::dynamic_honey_badger::ChangeState;
+use badger::Epoched;
 use badger_primitives::BadgerPreRuntime;
 use consensus_common::evaluation;
 use consensus_common::{self, BlockImportParams, BlockOrigin, ForkChoiceStrategy};
@@ -22,7 +23,7 @@ use sc_network_ranting::RawMessage;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
-
+use gossip::BadgerBlockId;
 use badger_primitives::ConsensusLog;
 use gossip::BadgerSyncData;
 use gossip::{BadgerAuthCommit, BadgerFullJustification};
@@ -536,7 +537,7 @@ pub struct BadgerAuxCrypto
 {
   pub secret_share: Option<SerdeSecret<SecretKeyShare>>,
   pub key_set: PublicKeySet,
-  pub set_id: u32,
+  pub era: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -556,153 +557,7 @@ Block::Hash:Ord,
 }*/
 use crate::aux_store;
 
-/*
-impl<B, N,Cl> BadgerHandler<B> for BadgerContainer<B, N,Cl>
-where
-  B: BlockT,
-  N: Network<B>,
-  Cl:NetClient<B>,
-  B::Hash:Ord,
-{
 
-  fn get_current_authorities(&self)->AuthorityList
-  {
-    let cloned:Vec<_>;
-    {
-    let locked=self.val.inner.read();
-    cloned=locked.persistent.authority_set.inner.read().current_authorities.iter().cloned().collect();
-    }
-    cloned
-  }
-
-  fn emit_justification(&self,hash:&B::Hash,auth_list:AuthorityList)
-  {
-  {
-    let locked=self.val.inner.read();
-    if !locked.is_authority() { return;}
-  }
-  self.val.do_emit_justification(hash, &self.network,auth_list)
-  }
-  fn vote_for_validators<SBe>(&self, auths: Vec<AuthorityId>, backend: &SBe) -> Result<(), Error>
-  where
-    SBe: AuxStore,
-  {
-    {
-      let lock = self.val.inner.read();
-      let aset = lock.persistent.authority_set.inner.read();
-      let opt = aux_store::AuthoritySet {
-        current_authorities: auths.clone(),
-        self_id: aset.self_id.clone(),
-        set_id: aset.set_id,
-      };
-      match aux_store::update_vote(
-        &Some(opt),
-        |insert| backend.insert_aux(insert, &[]),
-        |delete| backend.insert_aux(&[], delete),
-      )
-      {
-        Ok(_) =>
-        {}
-        Err(e) =>
-        {
-          warn!("Couldn't save vote to disk {:?}, might not be important", e);
-        }
-      }
-    }
-
-    self.val.do_vote_validators(auths, &self.network)
-  }
-  fn vote_change_encryption_schedule(&self, e: EncryptionSchedule) -> Result<(), Error>
-  {
-    self.val.do_vote_change_enc_schedule(e, &self.network)
-  }
-  fn notify_node_set(&self, _v: Vec<NodeId>) {}
-  fn update_validators<SBe>(&self, new_validators: BTreeMap<NodeId, AuthorityId>, backend: &SBe)
-  where
-    SBe: AuxStore,
-  {
-    let nex_set;
-    let aux: BadgerAuxCrypto;
-    let self_id;
-    {
-      let mut lock = self.val.inner.write();
-      lock.load_origin();
-      {
-        nex_set = lock.persistent.authority_set.inner.read().set_id + 1;
-        self_id = lock.persistent.authority_set.inner.read().self_id.clone();
-      }
-      match lock.state
-      {
-        BadgerState::Badger(ref mut node) =>
-        {
-          let secr = node.algo.inner().netinfo().secret_key_share().clone();
-          let ikset = node.algo.inner().netinfo().public_key_set();
-
-          // let kset=Some(ikset.clone());
-          aux = BadgerAuxCrypto {
-            secret_share: match secr
-            {
-              Some(s) => Some(SerdeSecret(s.clone())),
-              None => None,
-            },
-            key_set: ikset.clone(),
-            set_id: (nex_set) as u32,
-          };
-        }
-        _ =>
-        {
-          warn!("Not in BADGER state, odd.  Bailing");
-          return;
-        }
-      };
-    }
-    {
-      let lock = self.val.inner.write();
-      lock
-        .keystore
-        .write()
-        .insert_aux_by_type(app_crypto::key_types::HB_NODE, &self_id.encode(), &aux)
-        .expect("Couldn't save keys");
-    }
-
-    {
-      let mut lock = self.val.inner.write();
-
-      lock.config.keyset = Some(aux.key_set);
-      lock.config.secret_share = match aux.secret_share
-      {
-        Some(s) => Some(s.0.clone()),
-        None => None,
-      };
-
-      let mut aset = lock.persistent.authority_set.inner.write();
-      aset.current_authorities = new_validators.iter().map(|(_, v)| v.clone()).collect();
-      aset.set_id = nex_set;
-      match aux_store::update_authority_set(&aset, |insert| backend.insert_aux(insert, &[]))
-      {
-        Ok(_) =>
-        {}
-        Err(e) =>
-        {
-          warn!("Couldn't write to disk, potentially inconsistent state {:?}", e);
-        }
-      };
-
-      let topic = badger_topic::<B>();
-      let packet = {
-        let ses_mes = SessionData {
-          ses_id: aset.set_id,
-          session_key: lock.cached_origin.as_ref().unwrap().public(),
-          peer_id: lock.config.my_peer_id.clone().into(),
-        };
-        let sgn = lock.cached_origin.as_ref().unwrap().sign(&ses_mes.encode());
-        SessionMessage { ses: ses_mes, sgn: sgn }
-      };
-      let packet_data = GossipMessage::<B>::Session(packet).encode();
-      self.network.register_gossip_message(topic, packet_data);
-    }
-  }
-}*/
 
 pub struct WHash<A: AsRef<[u8]>>(A);
 impl<A: AsRef<[u8]>> std::cmp::Ord for WHash<A>
@@ -909,13 +764,13 @@ where
       //let mut lock = self.val.inner.write();
       self.load_origin();
       {
-        nex_set = self.persistent.authority_set.inner.read().set_id + 1;
         self_id = self.persistent.authority_set.inner.read().self_id.clone();
       }
       match self.state
       {
         BadgerState::Badger(ref mut node) =>
         {
+          nex_set = node.algo.inner().epoch().0;
           let secr = node.algo.inner().netinfo().secret_key_share().clone();
           let ikset = node.algo.inner().netinfo().public_key_set();
 
@@ -927,7 +782,7 @@ where
               None => None,
             },
             key_set: ikset.clone(),
-            set_id: (nex_set) as u32,
+            era: (nex_set) as u64,
           };
         }
         _ =>
@@ -955,7 +810,7 @@ where
 
       let mut aset = self.persistent.authority_set.inner.write();
       aset.current_authorities = new_validators.iter().map(|(_, v)| v.clone()).collect();
-      aset.set_id = nex_set;
+      aset.era = nex_set;
       match aux_store::update_authority_set(&aset, |insert| self.aux_backend.insert_aux(insert, &[]))
       {
         Ok(_) =>
@@ -968,7 +823,7 @@ where
 
       let packet = {
         let ses_mes = SessionData {
-          ses_id: aset.set_id,
+          ses_id: aset.era,
           session_key: self.cached_origin.as_ref().unwrap().public(),
           peer_id: self.config.my_peer_id.clone().into(),
         };
@@ -1495,10 +1350,10 @@ where
     if collected >= tolerated
     {
       //justification complete
-      let hash = existing.justification[0].hash.clone();
-      info!("Justification complete for {:?}", &hash);
+      let block_id = existing.justification[0].block_id.clone();
+      info!("Justification complete for {:?}", &block_id.hash);
       let full = BadgerFullJustification::<B> {
-        hash: hash.clone(),
+        block_id: block_id.clone(),
         commits: existing
           .justification
           .drain(..)
@@ -1554,10 +1409,65 @@ where
     }
     self.output_message_buffer.append(&mut drain);
   }
+  pub fn get_era(&self)->u64
+  {
+    match &self.state
+    {
+    BadgerState::Badger(ref node) =>
+     {
+      node.algo.inner().epoch().0
+     },
+     _ => 
+     {
+      let info = self.client.info();
+      let best_number = info.best_number;
+      let b_id = BlockId::Hash(info.best_hash);
+      let hd = self.client.justification(&b_id);
+      let cur_just = match hd
+      {
+        Ok(opt) =>
+        {
+          if let Some(just) = opt
+          {
+            let our_just: Result<BadgerFullJustification<B>, _> = Decode::decode(&mut &just[..]);
+            match our_just
+            {
+              Ok(jst) => jst,
+              Err(_) =>
+              {
+                warn!("We have invalid justification encoding in non-genesis block");
+                return 0;
+              }
+            }
+          }
+          else
+          {
+            if best_number == 0.into()
+            {
+              //genesis...
+              return 0;
+            }
+            else
+            {
+              panic!("We managed to import unjustified block");
+            }
+          }
+        }
+        Err(_) =>
+        {
+          warn!("We don't know our best block!");
+          return 0;
+        }
+      };
+      cur_just.block_id.era
 
+      }
+    }
+  }
   //pub fn initiate_block_justification(&mut self,n_jst:BadgerJustification<B>,auth_list:AuthorityList) ->BatchProcResult<B>
   pub fn initiate_block_justification(&mut self, hkey: B::Hash, auth_list: AuthorityList)
   {
+    // can we initiate  as not-validator or out of badger?
     self.load_origin();
     let pair = self.cached_origin.as_ref().unwrap().clone();
     let authid = pair.public();
@@ -1565,16 +1475,18 @@ where
     //////////////////////////////////////
     let mut n_hash = hkey;
     let mut n_list = auth_list;
-
+let era=self.get_era();
     //let locked=self.
     loop
     {
       info!("Emitting Justification {:?}", &n_hash);
       let sgn;
-      sgn = pair.sign(&n_hash.encode());
+      let b_id= BadgerBlockId{ hash: n_hash.clone(),
+        era:era};
+      sgn = pair.sign(&b_id.encode());
 
       let n_jst = BadgerJustification::<B> {
-        hash: n_hash.clone(),
+        block_id: b_id,
         validator: authid.clone(),
         sgn: sgn,
       };
@@ -1595,7 +1507,7 @@ where
         let mut remaining: Vec<_> = Vec::new();
         for jst in self.delayed_justifications.drain(..)
         {
-          if jst.1.hash == n_jst.hash
+          if jst.1.block_id == n_jst.block_id
           {
             //justification
             Self::process_justification(jst.1, existing)
@@ -1612,7 +1524,7 @@ where
       //don't emit if we are not authority
       {
         self.output_message_buffer.push((
-          LocalTarget::Keep(n_jst.hash.clone()),
+          LocalTarget::Keep(n_jst.block_id.hash.clone()),
           GossipMessage::JustificationData(n_jst.clone()),
         ));
 
@@ -1743,7 +1655,7 @@ where
           {
             //genesis...
             BadgerFullJustification {
-              hash: info.best_hash,
+              block_id: BadgerBlockId{hash: info.best_hash,era: 0} ,
               commits: Vec::new(),
             }
           }
@@ -1788,7 +1700,7 @@ where
     {
       Ok(data) =>
       {
-        if aset.set_id == data.set_id
+        if aset.era == data.era
         {
           self.config.keyset = Some(data.key_set);
           self.config.secret_share = match data.secret_share
@@ -1964,13 +1876,13 @@ where
         if vrf.best_block_num < sync.data.num
         {
           vrf.best_block_num = sync.data.num;
-          vrf.best_block_hash = sync.data.justification.hash;
+          vrf.best_block_hash = sync.data.justification.block_id.hash;
         }
       }
       else
       {
         self.sync_state.validators.push(ValidatorSync {
-          best_block_hash: sync.data.justification.hash,
+          best_block_hash: sync.data.justification.block_id.hash,
           best_block_num: sync.data.num,
           id: sync.source,
         })
@@ -1993,7 +1905,7 @@ where
   {
     let cset_id;
     {
-      cset_id = self.persistent.authority_set.inner.read().set_id;
+      cset_id = self.persistent.authority_set.inner.read().era;
     }
     match message
     {
@@ -2098,7 +2010,7 @@ where
               {
                 if let Some(ref block) = &self.mech.queued_block
                 {
-                  if block.header().hash() == sync.data.justification.hash
+                  if block.header().hash() == sync.data.justification.block_id.hash
                   {
                     let bhash = block.header().hash().clone();
 
@@ -2170,7 +2082,7 @@ where
                 None => None,
               },
               key_set: kset.clone(),
-              set_id: cset_id as u32,
+              era: cset_id as u64,
             };
 
             self.config.keyset = Some(kset);
@@ -2291,7 +2203,7 @@ where
           // observers use Sync as verifiactions...
           return (ValidationResult::Discard, false);
         }
-        let b_id = BlockId::Hash(just.hash);
+        let b_id = BlockId::Hash(just.block_id.hash);
         let hd = self.client.header(&b_id);
         let info = self.client.info();
         let finalized_number = info.finalized_number;
@@ -2313,8 +2225,8 @@ where
           Err(_) =>
           {}
         }
-        info!("Got justification for {:?}", &just.hash);
-        let hkey = just.hash.clone();
+        info!("Got justification for {:?}", &just.block_id.hash);
+        let hkey = just.block_id.hash.clone();
         match self.justification_collector.get_mut(&hkey)
         {
           Some(existing) =>
@@ -2345,7 +2257,7 @@ where
             if self
               .delayed_justifications
               .iter()
-              .find(|x| (x.1.hash == just.hash && x.1.validator == just.validator))
+              .find(|x| (x.1.block_id == just.block_id && x.1.validator == just.validator))
               .is_some()
             {
               return (ValidationResult::Discard, false);
@@ -2627,7 +2539,7 @@ impl<B: BlockT> BadgerNode<B, QHB>
         }
       })
       .collect();
-
+     
     let dhb = DynamicHoneyBadger::builder().build(ni, secr, Arc::new(val_map));
     let (qhb, qhb_step) = QueueingHoneyBadger::builder(dhb)
       .batch_size(batch_size)
@@ -2774,7 +2686,7 @@ where
     let spid;
     let mut drain: Vec<_> = Vec::new();
     {
-      info!("Lock inner");
+      //info!("Lock inner");
       let mut locked = self.inner.write();
       locked.flush_state();
       //add the buffer...
@@ -2782,7 +2694,7 @@ where
       drain.append(&mut extr);
 
       spid = locked.config.my_peer_id.clone();
-      info!("UnLock inner");
+     // info!("UnLock inner");
     }
     drain.append(additional);
     if drain.len() == 0
@@ -3114,7 +3026,7 @@ where
 
           let ses_mes = SessionData {
             ///TODO: mitigate sending of invalid peerid
-            ses_id: inner.persistent.authority_set.inner.read().set_id,
+            ses_id: inner.persistent.authority_set.inner.read().era,
             session_key: inner.cached_origin.as_ref().unwrap().public(),
             peer_id: inner.config.my_peer_id.clone().into(),
           };
@@ -3188,15 +3100,15 @@ where
           {
             return true;
           }
-          ses_data.ses.ses_id < self.inner.read().persistent.authority_set.inner.read().set_id
+          ses_data.ses.ses_id < self.inner.read().persistent.authority_set.inner.read().era
         }
         Ok(GossipMessage::JustificationData(just)) =>
         {
-          if badger_justification::<Block>(just.hash.clone()) != cell
+          if badger_justification::<Block>(just.block_id.hash.clone()) != cell
           {
             return true;
           }
-          self.inner.read().is_justification_expired(just.hash)
+          self.inner.read().is_justification_expired(just.block_id.hash)
         }
         Ok(_) => true,
       }

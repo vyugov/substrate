@@ -26,7 +26,7 @@ use std::sync::Arc;
 //use fork_tree::ForkTree;
 use badger_primitives::AuthorityId;
 use badger_primitives::AuthorityPair;
-use badger_primitives::{AuthorityList, SetId};
+use badger_primitives::{AuthorityList, EraId};
 use keystore::KeyStorePtr;
 use log::info;
 use runtime_primitives::traits::Block as BlockT;
@@ -47,7 +47,7 @@ pub struct AuthoritySet
 {
   pub current_authorities: AuthorityList,
   pub self_id: AuthorityId,
-  pub set_id: SetId,
+  pub era: EraId,
 }
 
 pub(crate) fn load_decode<B: AuxStore, T: Decode>(backend: &B, key: &[u8]) -> ClientResult<Option<T>>
@@ -143,7 +143,7 @@ where
   let genesis_authorities = genesis_authorities()?;
   let genesis_set = AuthoritySet {
     current_authorities: genesis_authorities,
-    set_id: 0,
+    era: 0,
     self_id: Default::default(),
   };
   return Ok(genesis_set.into());
@@ -198,7 +198,7 @@ where
     .unwrap_or_else(|| keystore.write().generate::<AuthorityPair>().unwrap().public());
   let genesis_set = AuthoritySet {
     current_authorities: genesis_authorities,
-    set_id: 0,
+    era: 0,
     self_id: s_id,
   };
 
