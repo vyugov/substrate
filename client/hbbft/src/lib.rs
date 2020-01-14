@@ -950,9 +950,10 @@ where
     client.clone(),
     mjust,
     block_handler,
-    Cwrap {
-      client: cclient.clone(),
-    },
+    //Cwrap {
+ //     client: cclient.clone(),
+    //},
+    cclient.clone(),
     &executor,
   );
   let net_arc = Arc::new(network_bridge);

@@ -24,19 +24,21 @@ use sc_network_ranting::RawMessage;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
-use gossip::BadgerBlockId;
+use gossip::BadgerBlockData;
 use badger_primitives::ConsensusLog;
 use gossip::BadgerSyncData;
 use gossip::{BadgerAuthCommit, BadgerFullJustification};
 use sc_network_ranting::ValidationResult;
 //use badger::dynamic_honey_badger::KeyGenMessage::Ack;
 use crate::aux_store::BadgerPersistentData;
+use crate::aux_store::BadgerAuthorityMap;
 use badger::crypto::{PublicKey, PublicKeySet, SecretKey, SecretKeyShare}; //PublicKeyShare, Signature
-use badger::{dynamic_honey_badger::Change, ConsensusProtocol, CpStep, NetworkInfo, Target};
+use badger::{dynamic_honey_badger::Change, ConsensusProtocol, CpStep, NetworkInfo, Target,dynamic_honey_badger::KeyGenMessage,};
 use futures03::channel::{mpsc, oneshot};
 use futures03::prelude::*;
 use futures03::{task::Context, task::Poll};
 //use hex_fmt::HexFmt;
+use badger::dynamic_honey_badger::JoinPlan;
 use badger::honey_badger::EncryptionSchedule;
 use log::{debug, error, info, trace, warn};
 use parity_codec::{Decode, Encode};
@@ -68,9 +70,11 @@ use sc_peerid_wrapper::IsSamePeer;
 pub const MAX_DELAYED_JUSTIFICATIONS: u64 = 10;
 //use badger_primitives::NodeId;
 use sc_peerid_wrapper::PeerIdW;
+ 
+pub use gossip::NodeId;
+pub use gossip::KeygenBlock;
 
 //use badger::{SourcedMessage as BSM,  TargetedMessage};
-pub type NodeId = PeerIdW; //session index? -> might be difficult. but it looks like nodeId for observer does not matter?  but it does for restarts
 
 pub enum ExtractedLogs<Block: BlockT>
 {
@@ -81,7 +85,7 @@ pub enum ExtractedLogs<Block: BlockT>
 pub enum BatchProcResult<Block: BlockT>
 {
   /// Need to emit justification for additional block
-  EmitJustification(Block::Hash, AuthorityList, Vec<ExtractedLogs<Block>>),
+  EmitJustification(Block::Hash, AuthorityList, Vec<ExtractedLogs<Block>>,Vec<KeygenBlock>,Option<JoinPlan<PeerIdW>>),
   /// Processed, nothing happened
   Nothing,
   /// Completed justification, no additional block emitted
@@ -449,6 +453,18 @@ pub struct SharedConfig
   pub batch_size: u64,
 }
 
+pub struct ObserverState
+{
+
+}
+impl ObserverState
+{
+  pub fn new() -> Self
+  {
+    ObserverState{}
+  }
+}
+
 pub enum BadgerState<B: BlockT, D>
 where
   D: ConsensusProtocol<NodeId = NodeId>, //specialize to avoid some of the confusion
@@ -464,8 +480,8 @@ where
   /// Running completed Badger node
   Badger(BadgerNode<B, D>),
 
-  /// need a Join Plan to become observer
-  AwaitingJoinPlan,
+  /// observing blocks only
+  PassiveObserver(ObserverState),
 }
 
 pub struct JustificationCollector<B: BlockT>
@@ -521,11 +537,12 @@ where
   pub delayed_justifications: Vec<(u64, BadgerJustification<B>)>,
   pub client: Arc<Cl>,
   pub block_maker: BPM,
-  pub aux_backend: Aux,
+  pub aux_backend: Arc<Aux>,
   pub mech: BatchBlockMechanics<B>,
   pub sync_state: BadgerSyncState<B>,
   pub output_message_buffer: Vec<(LocalTarget<B>, GossipMessage<B>)>,
   pub finalizer: Box<dyn FnMut(&B::Hash, Option<Justification>) -> bool + Send + Sync>,
+  pub peer_map: RwLock<BadgerAuthorityMap<Aux>>,
 }
 
 const MAX_QUEUE_LEN: usize = 1024;
@@ -659,7 +676,7 @@ where
 {
   pub fn new(
     keystore: KeyStorePtr, self_peer: PeerId, batch_size: u64, persist: BadgerPersistentData, client: Arc<Cl>,
-    finalizer: Box<dyn FnMut(&B::Hash, Option<Justification>) -> bool + Send + Sync>, bbld: BPM, astore: Aux,
+    finalizer: Box<dyn FnMut(&B::Hash, Option<Justification>) -> bool + Send + Sync>, bbld: BPM, astore: Arc<Aux>,
   ) -> BadgerStateMachine<B, QHB, Cl, BPM, Aux>
   {
     let ap: AuthorityPair;
@@ -675,7 +692,7 @@ where
       info!("SELFID: {:?} {:?}", &aset.self_id, &ap.public());
     }
     BadgerStateMachine {
-      state: BadgerState::AwaitingValidators,
+      state: if is_ob { BadgerState::PassiveObserver(ObserverState::new()) } else {BadgerState::AwaitingValidators},
       peers: Peers::new(),
       config: SharedConfig {
         is_observer: is_ob,
@@ -693,6 +710,7 @@ where
       justification_collector: BTreeMap::new(),
       delayed_justifications: Vec::new(),
       client: client.clone(),
+      peer_map:BadgerAuthorityMap::load_or_create(astore.clone()),
       aux_backend: astore,
       block_maker: bbld,
       mech: BatchBlockMechanics {
@@ -852,9 +870,9 @@ where
       {
         match self.batch_to_block(batch)
         {
-          BatchProcResult::EmitJustification(hash, alist, logs) =>
+          BatchProcResult::EmitJustification(hash, alist, logs,kg,jp) =>
           {
-            self.initiate_block_justification(hash, alist);
+            self.initiate_block_justification(hash, alist,kg,jp);
             self.process_extracted(logs);
           }
           BatchProcResult::Completed(logs) =>
@@ -1038,13 +1056,8 @@ where
       ChangeState::Complete(Change::EncryptionSchedule(_)) =>
       {} //don't care?
     }
-    match batch.join_plan()
-    {
-      Some(plan) =>
-      {} //todo: emit plan if there are waiting nodes
-      None =>
-      {}
-    }
+    let join_plan= batch.join_plan().clone();
+   
     let chain_head = match self.block_maker.best_chain()
     {
       Ok(x) => x,
@@ -1060,6 +1073,7 @@ where
 
     {
       let mut locked = &mut self.mech.overflow;
+      let keygens:Vec<_>=batch.keygen_messages().cloned().collect();
       let block = match self
         .block_maker
         .process_all(parent_id, inherent_digests, &mut locked, batch.into_tx_iter())
@@ -1094,7 +1108,7 @@ where
       {
         self.mech.queued_block = Some(block)
       }
-      BatchProcResult::EmitJustification(header_hash, auth_list, elogs)
+      BatchProcResult::EmitJustification(header_hash, auth_list, elogs,keygens,join_plan)
     }
   }
 
@@ -1111,6 +1125,8 @@ where
           .key_pair_by_type::<AuthorityPair>(&self.config.my_auth_id.clone().into(), app_crypto::key_types::HB_NODE)
           .expect("Needs private key to work");
       }
+      let pid=std::convert::Into::<PeerIdW>::into(self.config.my_peer_id.clone());
+      self.peer_map.write().insert(&pid,&self.config.my_auth_id);
       self.cached_origin = Some(pair);
     }
   }
@@ -1191,10 +1207,10 @@ where
       }
       BatchProcResult::Nothing =>
       {}
-      BatchProcResult::EmitJustification(hash, list, elogs) =>
+      BatchProcResult::EmitJustification(hash, list, elogs,kg,jp) =>
       {
         self.process_extracted(elogs);
-        self.initiate_block_justification(hash, list);
+        self.initiate_block_justification(hash, list,kg,jp);
         info!("Processed block with new block created");
       }
     }
@@ -1205,10 +1221,10 @@ where
        {
          BatchProcResult::Completed(elogs) =>{self.process_extracted(elogs); info!("Imported Block with completed result");},
          BatchProcResult::Nothing => {},
-         BatchProcResult::EmitJustification(hash,list,elogs) =>
+         BatchProcResult::EmitJustification(hash,list,elogs,kg,jp) =>
           {
             self.process_extracted(elogs);
-            self.initiate_block_justification(hash, list);
+            self.initiate_block_justification(hash, list,kg,jp);
             info!("Processed block with new block created");
           }
        }
@@ -1251,10 +1267,10 @@ where
        {
          BatchProcResult::Completed(elogs) =>{self.process_extracted(elogs); info!("Imported Block with completed result");},
          BatchProcResult::Nothing => {},
-         BatchProcResult::EmitJustification(hash,list,elogs) =>
+         BatchProcResult::EmitJustification(hash,list,elogs,kg,jp) =>
           {
             self.process_extracted(elogs);
-            self.initiate_block_justification(hash, list);
+            self.initiate_block_justification(hash, list,kg,jp);
             info!("Processed block with new block created");
           }
        }
@@ -1350,10 +1366,10 @@ where
     if collected >= tolerated
     {
       //justification complete
-      let block_id = existing.justification[0].block_id.clone();
-      info!("Justification complete for {:?}", &block_id.hash);
+      let block_data = existing.justification[0].block_data.clone();
+      info!("Justification complete for {:?}", &block_data.hash);
       let full = BadgerFullJustification::<B> {
-        block_id: block_id.clone(),
+        block_data: block_data.clone(),
         commits: existing
           .justification
           .drain(..)
@@ -1464,13 +1480,13 @@ where
           return (0,epoch);
         }
       };
-      (cur_just.block_id.era,epoch)
+      (cur_just.block_data.era,epoch)
 
       }
     }
   }
   //pub fn initiate_block_justification(&mut self,n_jst:BadgerJustification<B>,auth_list:AuthorityList) ->BatchProcResult<B>
-  pub fn initiate_block_justification(&mut self, hkey: B::Hash, auth_list: AuthorityList)
+  pub fn initiate_block_justification(&mut self, hkey: B::Hash, auth_list: AuthorityList,kgens:Vec<KeygenBlock>,jp:Option<JoinPlan<PeerIdW>>)
   {
     // can we initiate  as not-validator or out of badger?
     self.load_origin();
@@ -1480,18 +1496,19 @@ where
     //////////////////////////////////////
     let mut n_hash = hkey;
     let mut n_list = auth_list;
+    let mut kgb=kgens;
+    let mut plan=jp;
 let era=self.get_full_epoch().0;
     //let locked=self.
     loop
     {
       info!("Emitting Justification {:?}", &n_hash);
       let sgn;
-      let b_id= BadgerBlockId{ hash: n_hash.clone(),
-        era:era};
-      sgn = pair.sign(&b_id.encode());
+      let b_data= BadgerBlockData{ hash: n_hash.clone(), era:era ,keygen_messages:kgb,join_plan:plan};
+      sgn = pair.sign(&b_data.encode());
 
       let n_jst = BadgerJustification::<B> {
-        block_id: b_id,
+        block_data: b_data,
         validator: authid.clone(),
         sgn: sgn,
       };
@@ -1512,7 +1529,7 @@ let era=self.get_full_epoch().0;
         let mut remaining: Vec<_> = Vec::new();
         for jst in self.delayed_justifications.drain(..)
         {
-          if jst.1.block_id == n_jst.block_id
+          if jst.1.block_data == n_jst.block_data
           {
             //justification
             Self::process_justification(jst.1, existing)
@@ -1529,8 +1546,9 @@ let era=self.get_full_epoch().0;
       //don't emit if we are not authority
       {
         self.output_message_buffer.push((
-          LocalTarget::Keep(n_jst.block_id.hash.clone()),
+          LocalTarget::Keep(n_jst.block_data.hash.clone()),
           GossipMessage::JustificationData(n_jst.clone()),
+
         ));
 
         self.output_message_buffer.push((
@@ -1548,11 +1566,13 @@ let era=self.get_full_epoch().0;
           self.process_extracted(vc);
           break;
         }
-        BatchProcResult::EmitJustification(hash, alist, logs) =>
+        BatchProcResult::EmitJustification(hash, alist, logs,kg,jjp) =>
         {
           self.process_extracted(logs);
           n_hash = hash;
           n_list = alist;
+          kgb=kg;
+          plan=jjp;
         }
         BatchProcResult::Nothing =>
         {
@@ -1578,8 +1598,8 @@ let era=self.get_full_epoch().0;
   {
     match &mut self.state
     {
+      BadgerState::PassiveObserver(_) =>{Ok(())},
       BadgerState::AwaitingValidators |
-      BadgerState::AwaitingJoinPlan |
       BadgerState::KeyGen(_) |
       BadgerState::InitialSync => match self.queue_transaction(tx)
       {
@@ -1663,8 +1683,9 @@ let era=self.get_full_epoch().0;
           {
             //genesis...
             BadgerFullJustification {
-              block_id: BadgerBlockId{hash: info.best_hash,era: 0} ,
+              block_data: BadgerBlockData{ hash: info.best_hash,era: 0,keygen_messages:Vec::new(),join_plan:None} ,
               commits: Vec::new(),
+
             }
           }
           else
@@ -1744,7 +1765,8 @@ let era=self.get_full_epoch().0;
       info!("Our secret key : {:?} pub: {:?}", &secr, &secr.public_key());
       let thresh = badger::util::max_faulty(aset.current_authorities.len());
       let val_pub_keys: PubKeyMap<NodeId> = Arc::new(
-        aset
+        self.peer_map.read().get_peer_map_exact(&aset.current_authorities).into_iter().map( | (k,v)| (k.into(),v.into()) )
+      /*  aset
           .current_authorities
           .iter()
           .map(|x| {
@@ -1758,6 +1780,8 @@ let era=self.get_full_epoch().0;
             else
             {
               (
+                self.peer_map.read().get_peer(x).expect("All validators should be mapped at this point")
+
                 std::convert::Into::<PeerIdW>::into(
                   self
                     .peers
@@ -1769,7 +1793,7 @@ let era=self.get_full_epoch().0;
                 x.clone().into(),
               )
             })
-          })
+          }) */
           .collect(),
       );
       info!("VAL_PUB {:?} {:?}", &val_pub_keys, &self.config.my_peer_id);
@@ -1884,13 +1908,13 @@ let era=self.get_full_epoch().0;
         if vrf.best_block_num < sync.data.num
         {
           vrf.best_block_num = sync.data.num;
-          vrf.best_block_hash = sync.data.justification.block_id.hash;
+          vrf.best_block_hash = sync.data.justification.block_data.hash;
         }
       }
       else
       {
         self.sync_state.validators.push(ValidatorSync {
-          best_block_hash: sync.data.justification.block_id.hash,
+          best_block_hash: sync.data.justification.block_data.hash,
           best_block_num: sync.data.num,
           id: sync.source,
         })
@@ -1927,6 +1951,9 @@ let era=self.get_full_epoch().0;
         //??? needs session versions
         {
           let mut ret_msgs: Vec<(LocalTarget<B>, GossipMessage<B>)> = Vec::new();
+          {
+          self.peer_map.write().insert(&ses_msg.ses.peer_id, &ses_msg.ses.session_key);
+          }
           self
             .peers
             .update_id(&ses_msg.ses.peer_id.0, ses_msg.ses.session_key.clone());
@@ -1991,7 +2018,7 @@ let era=self.get_full_epoch().0;
             self.process_sync_message(sync.clone());
             return (ValidationResult::Discard, false);
           }
-          BadgerState::AwaitingJoinPlan =>
+          BadgerState::PassiveObserver(_) =>
           {
             self.process_sync_message(sync.clone());
             return (ValidationResult::Discard, false);
@@ -2018,7 +2045,7 @@ let era=self.get_full_epoch().0;
               {
                 if let Some(ref block) = &self.mech.queued_block
                 {
-                  if block.header().hash() == sync.data.justification.block_id.hash
+                  if block.header().hash() == sync.data.justification.block_data.hash
                   {
                     let bhash = block.header().hash().clone();
 
@@ -2211,7 +2238,7 @@ let era=self.get_full_epoch().0;
           // observers use Sync as verifiactions...
           return (ValidationResult::Discard, false);
         }
-        let b_id = BlockId::Hash(just.block_id.hash);
+        let b_id = BlockId::Hash(just.block_data.hash);
         let hd = self.client.header(&b_id);
         let info = self.client.info();
         let finalized_number = info.finalized_number;
@@ -2233,8 +2260,8 @@ let era=self.get_full_epoch().0;
           Err(_) =>
           {}
         }
-        info!("Got justification for {:?}", &just.block_id.hash);
-        let hkey = just.block_id.hash.clone();
+        info!("Got justification for {:?}", &just.block_data.hash);
+        let hkey = just.block_data.hash.clone();
         match self.justification_collector.get_mut(&hkey)
         {
           Some(existing) =>
@@ -2251,10 +2278,10 @@ let era=self.get_full_epoch().0;
                 }
                 BatchProcResult::Nothing =>
                 {}
-                BatchProcResult::EmitJustification(hash, alist, logs) =>
+                BatchProcResult::EmitJustification(hash, alist, logs,kg,jp) =>
                 {
                   self.process_extracted(logs);
-                  self.initiate_block_justification(hash, alist);
+                  self.initiate_block_justification(hash, alist,kg,jp);
                 }
               }
             }
@@ -2265,7 +2292,7 @@ let era=self.get_full_epoch().0;
             if self
               .delayed_justifications
               .iter()
-              .find(|x| (x.1.block_id == just.block_id && x.1.validator == just.validator))
+              .find(|x| (x.1.block_data == just.block_data && x.1.validator == just.validator))
               .is_some()
             {
               return (ValidationResult::Discard, false);
@@ -2935,7 +2962,7 @@ where
   /// Create a new gossip-validator.
   pub fn new(
     keystore: KeyStorePtr, self_peer: PeerId, batch_size: u64, persist: BadgerPersistentData, client: Arc<Cl>,
-    flizer: Box<dyn FnMut(&Block::Hash, Option<Justification>) -> bool + Send + Sync>, bpusher: BPM, astore: Aux,
+    flizer: Box<dyn FnMut(&Block::Hash, Option<Justification>) -> bool + Send + Sync>, bpusher: BPM, astore: Arc<Aux>,
   ) -> Self
   {
     Self {
@@ -3178,11 +3205,11 @@ where
         }
         Ok(GossipMessage::JustificationData(just)) =>
         {
-          if badger_justification::<Block>(just.block_id.hash.clone()) != cell
+          if badger_justification::<Block>(just.block_data.hash.clone()) != cell
           {
             return true;
           }
-          self.inner.read().is_justification_expired(just.block_id.hash)
+          self.inner.read().is_justification_expired(just.block_data.hash)
         }
         Ok(_) => true,
       }
@@ -3295,7 +3322,7 @@ where
   /// gossip service.
   pub fn new<N: RantingNetwork<B> + Send + Sync + Clone + 'static>(
     service: N, config: crate::Config, keystore: KeyStorePtr, persist: BadgerPersistentData, client: Arc<Cl>,
-    flizer: Box<dyn FnMut(&B::Hash, Option<Justification>) -> bool + Send + Sync>, bpusher: BPM, astore: Aux,
+    flizer: Box<dyn FnMut(&B::Hash, Option<Justification>) -> bool + Send + Sync>, bpusher: BPM, astore: Arc<Aux>,
     executor: &impl futures03::task::Spawn,
   ) -> (Self, impl futures03::future::Future<Output = ()> + Send + Unpin)
   {

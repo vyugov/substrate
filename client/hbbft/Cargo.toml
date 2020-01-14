@@ -28,6 +28,7 @@ sp-api = { package = "sp-api", path = "../../primitives/api" }
 txp = { package = "sp-transaction-pool", path = "../../primitives/transaction-pool" }
 
 block_primitives = { package = "sp-block-builder", path = "../../primitives/block-builder" }
+sp-std = { version = "2.0.0", default-features = false, path = "../../primitives/std" }
 
 consensus_common = { package = "sp-consensus", path = "../../primitives/consensus/common/" }
 substrate-primitives = {  package = "sp-core",path = "../../primitives/core" }

@@ -199,6 +199,11 @@ impl<I:AuxStore>  BadgerAuthorityMap<I>
   {
     list.iter().filter_map( |auth| self.auths.iter().find ( | (_,v) | *v==auth ).map( |(k,_)| k.clone()) ).collect()
   }
+
+  pub fn get_peer_map_exact(&self,list:&AuthorityList)-> BTreeMap<PeerIdW,AuthorityId>
+  {
+    list.iter().map( |auth| { let tupl=self.auths.iter().find ( | (_,v) | *v==auth ).expect("All auths mapped"); (tupl.0.clone(),tupl.1.clone()) }  ).collect()
+  }
 }
 
 /// Added so that I could access authority set without initializing whole badger

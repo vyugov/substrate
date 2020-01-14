@@ -2,8 +2,8 @@ use runtime_primitives::traits::Block as BlockT;
 //use network::consensus_gossip::{self as network_gossip, MessageIntent, ValidatorContext};
 use badger_primitives::{AuthorityId, AuthorityPair, AuthoritySignature};
 use network::PeerId; //config::Roles,
-use parity_codec::{Decode, Encode};
-
+use parity_codec::{Decode, Encode, Error as CodecError, Input};
+use serde::{Deserialize, Serialize};
 //use substrate_telemetry::{telemetry, CONSENSUS_DEBUG};
 //use log::{trace, debug, warn};
 //use futures03::prelude::*;
@@ -14,11 +14,11 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use substrate_primitives::crypto::Pair; //RuntimeAppPublic
                                         //use std::time::{ Instant};//Duration
-
+use runtime_primitives::traits::MaybeSerializeDeserialize;
 use app_crypto::RuntimeAppPublic;
 use runtime_primitives::traits::NumberFor;
-
-
+use badger::dynamic_honey_badger::KeyGenMessage;
+use badger::dynamic_honey_badger::JoinPlan;
 //const KEEP_RECENT_ROUNDS: usize = 3;
 
 //const BADGER_TOPIC: &str = "itsasnake";
@@ -40,21 +40,48 @@ pub enum GossipMessage<Block: BlockT>
   /// Full block justification data to facilitate initial sync
   SyncGossip(BadgerSyncGossip<Block>),
 }
+pub type NodeId = PeerIdW; //session index? -> might be difficult. but it looks like nodeId for observer does not matter?  but it does for restarts
 
-#[derive(Encode, Decode, Debug, Clone,PartialEq,Eq)]
-pub struct BadgerBlockId<Block: BlockT>
+pub type KeygenBlock=(u64,NodeId,KeyGenMessage);
+
+
+
+
+#[derive(Debug, Clone,Serialize, Deserialize)]
+pub struct BadgerBlockData<Block: BlockT>
 {
   pub hash: Block::Hash,
-
   /// Authority era
-  pub era:u64
+  pub era:u64,
+  pub keygen_messages:Vec<KeygenBlock>,
+  pub join_plan:Option<JoinPlan<PeerIdW>>
+}
+impl<Block:BlockT> PartialEq for BadgerBlockData<Block> {
+  fn eq(&self, other: &Self) -> bool {
+    self.era==other.era&&self.hash==other.hash
+  }
+}
+impl<Block:BlockT> Eq for BadgerBlockData<Block> {}
+
+impl<Block: BlockT> Encode for BadgerBlockData<Block> {
+	fn encode(&self) -> Vec<u8> {
+		let encoded = bincode::serialize(&self).unwrap();
+		Encode::encode(&encoded)
+	}
+}
+
+impl<Block: BlockT> Decode for BadgerBlockData<Block> {
+	fn decode<I: Input>(value: &mut I) -> Result<Self, CodecError> {
+		let decoded: Vec<u8> = Decode::decode(value)?;
+		bincode::deserialize(&decoded).map_err(|_| CodecError::from("bincode error"))
+	}
 }
 
 
 #[derive(Encode, Decode, Debug, Clone)]
 pub struct BadgerJustification<Block: BlockT>
 {
-  pub block_id:BadgerBlockId<Block>,
+  pub block_data:BadgerBlockData<Block>,
   pub validator: AuthorityId,
   pub sgn: AuthoritySignature,
 }
@@ -69,7 +96,7 @@ pub struct BadgerAuthCommit
 #[derive(Encode, Decode, Debug, Clone)]
 pub struct BadgerFullJustification<Block: BlockT>
 {
-  pub block_id:BadgerBlockId<Block>,
+  pub block_data:BadgerBlockData<Block>,
   pub commits: Vec<BadgerAuthCommit>,
 }
 
@@ -119,7 +146,7 @@ impl<Block: BlockT> BadgerFullJustification<Block>
 {
   pub fn verify(&self) -> bool
   {
-    let enc = self.block_id.encode();
+    let enc = self.block_data.encode();
     for commit in self.commits.iter()
     {
       if !badger_primitives::app::Public::verify(&commit.validator, &enc, &commit.sgn)
@@ -135,7 +162,7 @@ impl<Block: BlockT> BadgerJustification<Block>
 {
   pub fn verify(&self) -> bool
   {
-    badger_primitives::app::Public::verify(&self.validator, &self.block_id.encode(), &self.sgn)
+    badger_primitives::app::Public::verify(&self.validator, &self.block_data.encode(), &self.sgn)
   }
 }
 
