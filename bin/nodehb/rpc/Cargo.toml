@@ -20,3 +20,4 @@ keystore = { package = "sc-keystore", path = "../../../client/keystore" }
 substrate-frame-rpc-system = { path = "../../../utils/frame/rpc/system" }
 sc-api={ package = "sc-client-api", path = "../../../client/api" }
 txpool-api = { package = "sp-transaction-pool", path = "../../../primitives/transaction-pool" }
+sp-api = { version = "2.0.0", path = "../../../primitives/api" }

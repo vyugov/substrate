@@ -37,8 +37,7 @@ pub struct RantingEngine<B: BlockT> {
 
 pub struct RantingEngineInner<B: BlockT> {
 	state_machine: ConsensusGossip<B>,
-	context: Box<dyn Context<B> + Send>,
-	context_ext: Box<dyn ContextExt<B> + Send>,
+	network: Box<dyn Network<B> + Send>,
 }
 
 pub struct NetworkOvertext<'g,  B: BlockT>
@@ -53,15 +52,15 @@ impl<'g,  B: BlockT> ValidatorContext<B> for NetworkOvertext<'g,  B> {
     /// Broadcast to all except
 	fn broadcast_except(&mut self, except: HashSet<PeerId>, message: Vec<u8>)
 	{
-		self.gossipa.state_machine.broadcast_except(&mut *self.gossipa.context, self.engine_id,except , message, false,false)
+		self.gossipa.state_machine.broadcast_except(&mut *self.gossipa.network, self.engine_id,except , message, false,false)
 	}
 	fn send_to_set(&mut self,set:HashSet<PeerId>, message: Vec<u8>)
 	{
-		self.gossipa.state_machine.send_to_set(&mut *self.gossipa.context,self.engine_id, set, message, true,false,);
+		self.gossipa.state_machine.send_to_set(&mut *self.gossipa.network,self.engine_id, set, message, true,false,);
 	}
 	fn send_single(&mut self,who:&PeerId, message: Vec<u8>)
 	{
-		self.gossipa.state_machine.send_single(&mut *self.gossipa.context, self.engine_id,who, message)
+		self.gossipa.state_machine.send_single(&mut *self.gossipa.network, self.engine_id,who, message)
 	}
 	fn keep(&mut self,cell:B::Hash, message: Vec<u8>)
 	{
@@ -87,30 +86,29 @@ impl<B: BlockT> RantingEngine<B> {
 
 	/// Create a new instance.
 	pub fn new<N: Network<B> + Send + Clone + 'static>(
-		network: N,
+		mut network: N,
 		executor: &impl futures::task::Spawn,
 		engine_id: ConsensusEngineId,
 		validator: Arc<dyn Validator<B>>,
 	) -> Self where B: 'static {
 		let mut state_machine = ConsensusGossip::new(network.local_id());
-		let mut context = Box::new(ContextOverService {
+	/*	let mut context = Box::new(ContextOverService {
 			network: network.clone(),
 		});
 		let context_ext = Box::new(ContextOverService {
 			network: network.clone(),
-		});
+		});*/
 
 		// We grab the event stream before registering the notifications protocol, otherwise we
 		// might miss events.
 		let event_stream = network.event_stream();
 
 		network.register_notifications_protocol(engine_id);
-		state_machine.register_validator(&mut *context, engine_id, validator);
+		state_machine.register_validator(&mut network, engine_id, validator);
 
 		let inner = Arc::new(Mutex::new(RantingEngineInner {
 			state_machine,
-			context,
-			context_ext,
+			network: Box::new(network)
 		}));
 
 		let gossip_engine = RantingEngine {
@@ -126,7 +124,7 @@ impl<B: BlockT> RantingEngine<B> {
 					if let Some(inner) = inner.upgrade() {
 						let mut inner = inner.lock();
 						let inner = &mut *inner;
-						inner.state_machine.tick(&mut *inner.context);
+						inner.state_machine.tick(&mut *inner.network);
 					} else {
 						// We reach this branch if the `Arc<RantingEngineInner>` has no reference
 						// left. We can now let the task end.
@@ -151,7 +149,7 @@ impl<B: BlockT> RantingEngine<B> {
 						}
 						let mut inner = inner.lock();
 						let inner = &mut *inner;
-						inner.state_machine.new_peer(&mut *inner.context, remote, roles);
+						inner.state_machine.new_peer(&mut *inner.network, remote, roles);
 					}
 					Event::NotificationsStreamClosed { remote, engine_id: msg_engine_id } => {
 						if msg_engine_id != engine_id {
@@ -159,13 +157,13 @@ impl<B: BlockT> RantingEngine<B> {
 						}
 						let mut inner = inner.lock();
 						let inner = &mut *inner;
-						inner.state_machine.peer_disconnected(&mut *inner.context, remote);
+						inner.state_machine.peer_disconnected(&mut *inner.network, remote);
 					},
 					Event::NotificationsReceived { remote, messages } => {
 						let mut inner = inner.lock();
 						let inner = &mut *inner;
 						inner.state_machine.on_incoming(
-							&mut *inner.context,
+							&mut *inner.network,
 							remote,
 							messages.into_iter()
 								.filter_map(|(engine, data)| if engine == engine_id {
@@ -193,7 +191,7 @@ impl<B: BlockT> RantingEngine<B> {
 	}
 
 	pub fn report(&self, who: PeerId, reputation: ReputationChange) {
-		self.inner.lock().context.report_peer(who, reputation);
+		self.inner.lock().network.report_peer(who, reputation);
 	}
 
 	/// Registers a message without propagating it to any peers. The message
@@ -223,19 +221,19 @@ impl<B: BlockT> RantingEngine<B> {
 	{
 		let mut inner = self.inner.lock();
 		let inner = &mut *inner;
-		inner.state_machine.broadcast_except(&mut *inner.context, self.engine_id,except , message, false,false)
+		inner.state_machine.broadcast_except(&mut *inner.network, self.engine_id,except , message, false,false)
 	}
 	pub fn send_to_set(&self,set:HashSet<PeerId>, message: Vec<u8>)
 	{
 		let mut inner = self.inner.lock();
 		let inner = &mut *inner;
-		inner.state_machine.send_to_set(&mut *inner.context,self.engine_id, set, message, true,false,);
+		inner.state_machine.send_to_set(&mut *inner.network,self.engine_id, set, message, true,false,);
 	}
 	pub fn send_single(&self,who:PeerId, message: Vec<u8>)
 	{
 		let mut inner = self.inner.lock();
 		let inner = &mut *inner;
-	   inner.state_machine.send_single(&mut *inner.context, self.engine_id,&who, message)
+	   inner.state_machine.send_single(&mut *inner.network, self.engine_id,&who, message)
 	}
 	pub fn keep(&self,cell:B::Hash, message: Vec<u8>)
 	{
@@ -249,7 +247,7 @@ impl<B: BlockT> RantingEngine<B> {
 		let inner = &mut *inner;
 
 		for who in &who {
-			inner.state_machine.send_message(&mut *inner.context, who, self.engine_id.clone(), data.clone(),);
+			inner.state_machine.send_message(&mut *inner.network, who, self.engine_id.clone(), data.clone(),);
 		}
 	}
 
@@ -258,7 +256,7 @@ impl<B: BlockT> RantingEngine<B> {
 	/// Note: this method isn't strictly related to gossiping and should eventually be moved
 	/// somewhere else.
 	pub fn announce(&self, block: B::Hash, associated_data: Vec<u8>) {
-		self.inner.lock().context_ext.announce(block, associated_data);
+		self.inner.lock().network.announce(block, associated_data);
 	}
 }
 
@@ -271,6 +269,7 @@ impl<B: BlockT> Clone for RantingEngine<B> {
 	}
 }
 
+/*
 struct ContextOverService<N> {
 	network: N,
 }
@@ -310,4 +309,4 @@ impl<B: BlockT, N: Network<B>> ContextExt<B> for ContextOverService<N> {
 	fn announce(&self, block: B::Hash, associated_data: Vec<u8>) {
 		Network::announce(&self.network, block, associated_data)
 	}
-}
+}*/

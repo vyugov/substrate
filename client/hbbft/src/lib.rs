@@ -14,8 +14,9 @@ use parity_codec::{Decode, Encode};
 use parking_lot::Mutex;
 use inherents::InherentIdentifier;
 use keystore::KeyStorePtr;
-use runtime_primitives::traits::{Block as BlockT, Header, NumberFor, ProvideRuntimeApi};
-
+use sp_api::ProvideRuntimeApi;
+use runtime_primitives::traits::{Block as BlockT, Header, NumberFor, };
+use consensus_common::RecordProof;
 use block_builder::BlockBuilderApi;
 use runtime_primitives::{
   generic::{self, BlockId}, 
@@ -54,24 +55,25 @@ use substrate_telemetry::{telemetry, CONSENSUS_INFO, CONSENSUS_WARN};
 use crate::communication::SendOut;
 use txp::InPoolTransaction;
 use txp::TransactionPool;
-
+use sc_api::backend::TransactionFor;
 pub const INHERENT_IDENTIFIER: InherentIdentifier = *b"snakeshr";
 use communication::BlockPusherMaker;
 use network::ClientHandle as NetClient;
-pub type BadgerImportQueue<B> = BasicQueue<B>;
+pub type BadgerImportQueue<B,Trans> = BasicQueue<B,Trans>;
 pub mod aux_store;
 pub mod rpc;
-pub struct BadgerWorker<C, I, SO, Inbound, B: BlockT, A, Cl, BPM, Aux>
+pub struct BadgerWorker<C, I, SO, Inbound, B: BlockT, A, Cl, BPM, Aux,BEnd>
 where
   A: TransactionPool,
   Cl: NetClient<B>,
   B::Hash: Ord,
-  BPM: BlockPusherMaker<B>,
+  BEnd:Backend<B>,
+  BPM: BlockPusherMaker<B,BEnd>,
   Aux: AuxStore,
 {
   pub client: Arc<C>,
   pub block_import: Arc<Mutex<I>>,
-  pub network: NetworkBridge<B, Cl, BPM, Aux>,
+  pub network: NetworkBridge<B, Cl, BPM, Aux,BEnd>,
 
   pub transaction_pool: Arc<A>,
   pub sync_oracle: SO,
@@ -111,7 +113,7 @@ where
     &self, _block: B, _block_id: BlockId<B>, _inherent_data: InherentData, _timestamp_now: u64,
   ) -> Result<(), String>
   where
-    C: ProvideRuntimeApi,
+    C: ProvideRuntimeApi<B>,
     C::Api: BlockBuilderApi<B>,
   {
     //empty for now
@@ -121,16 +123,18 @@ where
 
 //Block:BlockT
 
-pub struct BadgerBlockImport<B, E, Block: BlockT<Hash = H256>, RA, SC>
+pub struct BadgerBlockImport<B, E, Block: BlockT, RA, SC>
+where B:Backend<Block>
 {
   pub inner: Arc<Client<B, E, Block, RA>>,
   pub select_chain: SC,
   pub authority_set: aux_store::BadgerSharedAuthoritySet,
-  pub send_on_import: ImportTx<Block>,
+  pub send_on_import: ImportTx<Block,B>,
   //	consensus_changes: SharedConsensusChanges<Block::Hash, NumberFor<Block>>,
 }
 
-impl<B, E, Block: BlockT<Hash = H256>, RA, SC: Clone> Clone for BadgerBlockImport<B, E, Block, RA, SC>
+impl<B, E, Block: BlockT, RA, SC: Clone> Clone for BadgerBlockImport<B, E, Block, RA, SC>
+where B:Backend<Block>
 {
   fn clone(&self) -> Self
   {
@@ -142,14 +146,16 @@ impl<B, E, Block: BlockT<Hash = H256>, RA, SC: Clone> Clone for BadgerBlockImpor
     }
   }
 }
+//B: Backend<Block> 
 
-impl<B, E, Block: BlockT<Hash = H256>, RA, SC> BadgerBlockImport<B, E, Block, RA, SC>
+impl<B, E, Block: BlockT, RA, SC> BadgerBlockImport<B, E, Block, RA, SC>
+where B:Backend<Block>
 {
   pub(crate) fn new(
     inner: Arc<Client<B, E, Block, RA>>,
     select_chain: SC,
     authority_set: aux_store::BadgerSharedAuthoritySet,
-    send_on_import: ImportTx<Block>,
+    send_on_import: ImportTx<Block,B>,
   ) -> BadgerBlockImport<B, E, Block, RA, SC>
   {
     BadgerBlockImport {
@@ -161,19 +167,22 @@ impl<B, E, Block: BlockT<Hash = H256>, RA, SC> BadgerBlockImport<B, E, Block, RA
   }
 }
 
-impl<B, E, Block: BlockT<Hash = H256>, RA, SC> BlockImport<Block> for BadgerBlockImport<B, E, Block, RA, SC>
+impl<B, E, Block: BlockT, RA, SC> BlockImport<Block> for BadgerBlockImport<B, E, Block, RA, SC>
 where
   //NumberFor<Block>: grandpa::BlockNumberOps,
-  B: Backend<Block, Blake2Hasher> + 'static,
-  E: CallExecutor<Block, Blake2Hasher> + 'static + Clone + Send + Sync,
+  B: Backend<Block, > + 'static,
+  E: CallExecutor<Block,Backend=B > + 'static + Clone + Send + Sync,
   DigestFor<Block>: Encode,
   RA: Send + Sync,
+  RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
   SC: SelectChain<Block> + Clone,
+  <Client<B, E, Block, RA> as ProvideRuntimeApi<Block>>::Api: BlockBuilderApi<Block, Error = sp_blockchain::Error>+
+  sp_api::ApiExt<Block, StateBackend = B::State>
 {
   type Error = ConsensusError;
-
+  type Transaction = TransactionFor<B, Block>;
   fn import_block(
-    &mut self, block: BlockImportParams<Block>, new_cache: HashMap<well_known_cache_keys::Id, Vec<u8>>,
+    &mut self, block: BlockImportParams<Block,TransactionFor<B, Block>>, new_cache: HashMap<well_known_cache_keys::Id, Vec<u8>>,
   ) -> Result<ImportResult, Self::Error>
   {
     let hash = block.post_header().hash();
@@ -248,7 +257,7 @@ where
     // we  want to finalize on `inner.import_block`, probably
     //let mut justification = block.justification.take();
     //let enacts_consensus_change = !new_cache.is_empty();
-    let import_result = (&*self.inner).import_block(block, new_cache);
+    let import_result = (&(*self.inner)).import_block(block, new_cache);
     import_result
   }
 
@@ -260,16 +269,17 @@ where
 
 impl<B: BlockT, C, Pub, Sig> Verifier<B> for BadgerVerifier<C, Pub, Sig>
 where
-  C: ProvideRuntimeApi + Send + Sync + sc_api::AuxStore + ProvideCache<B>,
+  C: ProvideRuntimeApi<B> + Send + Sync + sc_api::AuxStore + ProvideCache<B>,
   C::Api: BlockBuilderApi<B>,
   //DigestItemFor<B>: CompatibleDigestItem<P>,
   Pub: Send + Sync + Hash + Eq + Clone + Decode + Encode + Debug,
   Sig: Encode + Decode + Send + Sync,
+ // BEnd:Backend<B>
 {
   fn verify(
     &mut self, origin: BlockOrigin, header: B::Header, justification: Option<Justification>,
     body: Option<Vec<B::Extrinsic>>,
-  ) -> Result<(BlockImportParams<B>, Option<Vec<(CacheKeyId, Vec<u8>)>>), String>
+  ) -> Result<(BlockImportParams<B,()>, Option<Vec<(CacheKeyId, Vec<u8>)>>), String>
   {
     // dummy for the moment
     //let hash = header.hash();
@@ -284,6 +294,7 @@ where
       allow_missing_state: true,
       auxiliary: Vec::new(),
       fork_choice: ForkChoiceStrategy::LongestChain,
+      storage_changes:None,
       import_existing: false,
     };
     info!("VERIFIER BADGER");
@@ -310,15 +321,21 @@ fn register_badger_inherent_data_provider(
 }
 
 /// Start an import queue for the Badger consensus algorithm.
-pub fn badger_import_queue<B, C, Pub, Sig>(
-  block_import: BoxBlockImport<B>, justification_import: Option<BoxJustificationImport<B>>,
-  finality_proof_import: Option<BoxFinalityProofImport<B>>, client: Arc<C>,
+pub fn badger_import_queue<B, E,RA, Pub, Sig,BEnd>(
+  block_import: BoxBlockImport<B,TransactionFor<BEnd, B>>, justification_import: Option<BoxJustificationImport<B>>,
+  finality_proof_import: Option<BoxFinalityProofImport<B>>, client: Arc<Client<BEnd, E, B, RA>>,
   inherent_data_providers: InherentDataProviders,
-) -> Result<BadgerImportQueue<B>, consensus_common::Error>
+  //_infer:Arc<Client<BEnd, E, Block, RA>>
+) -> Result<BadgerImportQueue<B,TransactionFor<BEnd, B>>, consensus_common::Error>
 where
   B: BlockT,
-  C: 'static + ProvideRuntimeApi + ProvideCache<B> + Send + Sync + AuxStore,
-  C::Api: BlockBuilderApi<B>,
+  E: CallExecutor<B,Backend=BEnd > + 'static + Clone + Send + Sync,
+  RA: Send + Sync,
+  RA: ConstructRuntimeApi<B, Client<BEnd, E, B, RA>>,
+  Client<BEnd, E, B, RA>: 'static + ProvideRuntimeApi<B> + ProvideCache<B> + Send + Sync + AuxStore,
+  <Client<BEnd, E, B, RA> as ProvideRuntimeApi<B>>::Api: BlockBuilderApi<B, Error = sp_blockchain::Error>+
+  sp_api::ApiExt<B, StateBackend = BEnd::State>,
+  BEnd:Backend<B>+'static,
   //DigestItemFor<B>: CompatibleDigestItem<P>,
   Pub: Clone + Eq + Send + Sync + Hash + Debug + Encode + Decode + 'static,
   Sig: Encode + Decode + Send + Sync + 'static,
@@ -326,7 +343,7 @@ where
   register_badger_inherent_data_provider(&inherent_data_providers, 1)?;
   //initialize_authorities_cache(&*client)?;
 
-  let verifier = BadgerVerifier::<C, Pub, Sig> {
+  let verifier = BadgerVerifier::<Client<BEnd, E, B, RA>, Pub, Sig> {
     _client: client.clone(),
     _inherent_data_providers: inherent_data_providers,
     _pub: PhantomData,
@@ -354,10 +371,10 @@ pub trait AuthoritySetGetter<Block: BlockT>: Send + Sync
 }
 
 /// Client-based implementation of AuthoritySetForFinalityProver.
-impl<B, E, Block: BlockT<Hash = H256>, RA> AuthoritySetGetter<Block> for Client<B, E, Block, RA>
+impl<B, E, Block: BlockT, RA> AuthoritySetGetter<Block> for Client<B, E, Block, RA>
 where
-  B: Backend<Block, Blake2Hasher> + Send + Sync + 'static,
-  E: CallExecutor<Block, Blake2Hasher> + 'static + Clone + Send + Sync,
+  B: Backend<Block, > + Send + Sync + 'static,
+  E: CallExecutor<Block,Backend=B > + 'static + Clone + Send + Sync,
   RA: Send + Sync,
 {
   fn authorities(&self, block: &BlockId<Block>) -> ClientResult<AuthorityList>
@@ -469,10 +486,10 @@ where
 {
 }
 
-impl<B, E, Block: BlockT<Hash = H256>, RA> BlockStatus<Block> for Arc<Client<B, E, Block, RA>>
+impl<B, E, Block: BlockT, RA> BlockStatus<Block> for Arc<Client<B, E, Block, RA>>
 where
-  B: Backend<Block, Blake2Hasher>,
-  E: CallExecutor<Block, Blake2Hasher> + Send + Sync,
+  B: Backend<Block, >,
+  E: CallExecutor<Block, > + Send + Sync,
   RA: Send + Sync,
   NumberFor<Block>: BlockNumberOps,
 {
@@ -486,7 +503,7 @@ where
 //use communication::BadgerHandler;
 
 /// Parameters used to run Honeyed Badger.
-pub struct BadgerStartParams<Block: BlockT<Hash = H256>, N: Network<Block>, X>
+pub struct BadgerStartParams<Block: BlockT, N: Network<Block>, X>
 {
   /// Configuration for the Badger service.
   pub config: Config,
@@ -503,23 +520,23 @@ pub struct BadgerStartParams<Block: BlockT<Hash = H256>, N: Network<Block>, X>
   ph: PhantomData<Block>,
 }
 
-pub struct TxStream<A, B, E, RA, Block: BlockT<Hash = H256>>
+pub struct TxStream<A, B, E, RA, Block: BlockT>
 where
   A: TransactionPool,
-  B: Backend<Block, Blake2Hasher> + Send + Sync + 'static,
-  E: CallExecutor<Block, Blake2Hasher> + Send + Sync + Clone + 'static,
+  B: Backend<Block, > + Send + Sync + 'static,
+  E: CallExecutor<Block, Backend=B> + Send + Sync + Clone + 'static,
   RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
 {
   pub transaction_pool: Arc<A>,
   pub client: Arc<Client<B, E, Block, RA>>,
 }
 
-impl<A, B, E, RA, Block: BlockT<Hash = H256>> Stream for TxStream<A, B, E, RA, Block>
+impl<A, B, E, RA, Block: BlockT> Stream for TxStream<A, B, E, RA, Block>
 where
   A: TransactionPool,
-  <A as TransactionPool>::Block: BlockT<Hash = H256>,
-  B: Backend<Block, Blake2Hasher> + Send + Sync + 'static,
-  E: CallExecutor<Block, Blake2Hasher> + Send + Sync + Clone + 'static,
+  <A as TransactionPool>::Block: BlockT,
+  B: Backend<Block, > + Send + Sync + 'static,
+  E: CallExecutor<Block, Backend=B> + Send + Sync + Clone + 'static,
   RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
 {
   type Item = TransactionSet;
@@ -543,13 +560,13 @@ where
   }
 }
 
-pub struct BadgerProposerWorker<S, Block: BlockT<Hash = H256>, I, B, E, RA, SC>
+pub struct BadgerProposerWorker<S, Block: BlockT, I, B, E, RA, SC>
 where
   S: Stream<Item = <QHB as ConsensusProtocol>::Output>,
   //TF: Sink<TransactionSet>+Unpin,
   //A: txpool::ChainApi,
-  B: Backend<Block, Blake2Hasher> + Send + Sync + 'static,
-  E: CallExecutor<Block, Blake2Hasher> + Send + Sync + Clone + 'static,
+  B: Backend<Block, > + Send + Sync + 'static,
+  E: CallExecutor<Block, Backend=B> + Send + Sync + Clone + 'static,
   RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
   //N : Network<Block> + Send + Sync + 'static,
   NumberFor<Block>: BlockNumberOps,
@@ -570,19 +587,19 @@ where
 use crate::aux_store::GenesisAuthoritySetProvider;
 
 //Block:BlockT
-pub type BlockSentInfo<Block> = BlockImportParams<Block>;
+pub type BlockSentInfo<B,Block> = BlockImportParams<Block,TransactionFor<B, Block>>;
 
-pub trait AssignedCaller<Block: BlockT>
+pub trait AssignedCaller<Block: BlockT,B:Backend<Block>>
 {
-  fn call(&self, block: BlockSentInfo<Block>);
-  fn assign(&self, new_call: Box<dyn Fn(BlockSentInfo<Block>) + Send + Sync>);
+  fn call(&self, block: BlockSentInfo<B,Block>);
+  fn assign(&self, new_call: Box<dyn Fn(BlockSentInfo<B,Block>) + Send + Sync>);
 }
 //#[derive(Clone)]
-pub struct DefCall<Block: BlockT>
+pub struct DefCall<Block: BlockT,B:Backend<Block>>
 {
-  call: parking_lot::RwLock<Option<Box<dyn Fn(BlockSentInfo<Block>) + Send + Sync>>>,
+  call: parking_lot::RwLock<Option<Box<dyn Fn(BlockSentInfo<B,Block>) + Send + Sync>>>,
 }
-impl<Block: BlockT> DefCall<Block>
+impl<Block: BlockT,B:Backend<Block>> DefCall<Block,B>
 {
   pub fn new() -> Arc<Self>
   {
@@ -592,32 +609,35 @@ impl<Block: BlockT> DefCall<Block>
   }
 }
 
-impl<Block: BlockT> AssignedCaller<Block> for Arc<DefCall<Block>>
+impl<Block: BlockT,B:Backend<Block>> AssignedCaller<Block,B> for Arc<DefCall<Block,B>>
 {
-  fn call(&self, block: BlockSentInfo<Block>)
+  fn call(&self, block: BlockSentInfo<B,Block>)
   {
     if let Some(ref cl) = *self.call.read()
     {
       cl(block);
     }
   }
-  fn assign(&self, new_call: Box<dyn Fn(BlockSentInfo<Block>) + Send + Sync>)
+  fn assign(&self, new_call: Box<dyn Fn(BlockSentInfo<B,Block>) + Send + Sync>)
   {
     *self.call.write() = Some(new_call);
   }
 }
-pub type ImportRx<Block> = Arc<DefCall<Block>>; //mpsc::UnboundedReceiver<BlockSentInfo<Block>>;
-pub type ImportTx<Block> = Arc<DefCall<Block>>; //mpsc::UnboundedSender<BlockSentInfo<Block>>;
+pub type ImportRx<Block,B> = Arc<DefCall<Block,B>>; //mpsc::UnboundedReceiver<BlockSentInfo<Block>>;
+pub type ImportTx<Block,B> = Arc<DefCall<Block,B>>; //mpsc::UnboundedSender<BlockSentInfo<Block>>;
 
-pub fn block_importer<B, E, Block: BlockT<Hash = H256>, RA, SC>(
+pub fn block_importer<B, E, Block: BlockT, RA, SC>(
   client: Arc<Client<B, E, Block, RA>>, genesis_authorities_provider: &dyn GenesisAuthoritySetProvider<Block>,
   select_chain: SC,
-) -> Result<(BadgerBlockImport<B, E, Block, RA, SC>, ImportRx<Block>), ClientError>
+) -> Result<(BadgerBlockImport<B, E, Block, RA, SC>, ImportRx<Block,B>), ClientError>
 where
-  B: Backend<Block, Blake2Hasher> + 'static,
-  E: CallExecutor<Block, Blake2Hasher> + 'static + Clone + Send + Sync,
+  B: Backend<Block, > + 'static,
+  E: CallExecutor<Block, Backend=B> + 'static + Clone + Send + Sync,
   RA: Send + Sync,
+  RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
   SC: SelectChain<Block>,
+  <Client<B, E, Block, RA> as ProvideRuntimeApi<Block>>::Api: BlockBuilderApi<Block, Error = sp_blockchain::Error>+
+  sp_api::ApiExt<Block, StateBackend = B::State>,
 {
   let chain_info = client.chain_info();
   let _genesis_hash = chain_info.genesis_hash;
@@ -654,17 +674,17 @@ use communication::BlockPushResult;
 
 pub struct BlockUtil<B, E, Block, RA, SC, I>
 where
-  Block: BlockT<Hash = H256>,
+  Block: BlockT,
   Block::Hash: Ord,
-  B: Backend<Block, Blake2Hasher> + 'static,
-  E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static + Clone,
+  B: Backend<Block, > + 'static,
+  E: CallExecutor<Block, Backend = B> + Send + Sync + 'static + Clone,
   SC: SelectChain<Block> + 'static + Unpin,
   NumberFor<Block>: BlockNumberOps,
   DigestFor<Block>: Encode,
   RA: Send + Sync + 'static,
   I: BlockImport<Block> + Send + Sync + 'static,
   RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
-  <Client<B, E, Block, RA> as ProvideRuntimeApi>::Api: BlockBuilderApi<Block, Error = sp_blockchain::Error>,
+  <Client<B, E, Block, RA> as ProvideRuntimeApi<Block>>::Api: BlockBuilderApi<Block, Error = sp_blockchain::Error>,
 {
   pub client: Arc<Client<B, E, Block, RA>>,
   pub block_import: Arc<Mutex<I>>,
@@ -673,20 +693,21 @@ where
 }
 impl<B, E, Block, RA, SC, I> BlockUtil<B, E, Block, RA, SC, I>
 where
-  Block: BlockT<Hash = H256>,
+  Block: BlockT,
   Block::Hash: Ord,
-  B: Backend<Block, Blake2Hasher> + 'static,
-  E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static + Clone,
+  B: Backend<Block, > + 'static,
+  E: CallExecutor<Block, Backend = B> + Send + Sync + 'static + Clone,
   SC: SelectChain<Block> + 'static + Unpin,
   NumberFor<Block>: BlockNumberOps,
   DigestFor<Block>: Encode,
   RA: Send + Sync + 'static,
   I: BlockImport<Block> + Send + Sync + 'static,
   RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
-  <Client<B, E, Block, RA> as ProvideRuntimeApi>::Api: BlockBuilderApi<Block, Error = sp_blockchain::Error>,
+  <Client<B, E, Block, RA> as ProvideRuntimeApi<Block>>::Api: BlockBuilderApi<Block, Error = sp_blockchain::Error>+
+  sp_api::ApiExt<Block, StateBackend = B::State>,
 {
   pub fn process_data(
-    block_builder: &mut BlockBuilder<Block, Client<B, E, Block, RA>>, pending: &mut BadgerTransaction,
+    block_builder: &mut BlockBuilder<Block, Client<B, E, Block, RA>,B>, pending: &mut BadgerTransaction,
   ) -> BlockPushResult
   {
     let data: Result<<Block as BlockT>::Extrinsic, _> = Decode::decode(&mut pending.as_slice());
@@ -721,26 +742,27 @@ where
   }
 }
 
-impl<B, E, Block, RA, SC, I> BlockPusherMaker<Block> for BlockUtil<B, E, Block, RA, SC, I>
+impl<B, E, Block, RA, SC, I> BlockPusherMaker<Block,B> for BlockUtil<B, E, Block, RA, SC, I>
 where
-  Block: BlockT<Hash = H256>,
+  Block: BlockT,
   Block::Hash: Ord,
-  B: Backend<Block, Blake2Hasher> + 'static,
-  E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static + Clone,
+  B: Backend<Block, > + 'static,
+  E: CallExecutor<Block, Backend = B> + Send + Sync + 'static + Clone,
   SC: SelectChain<Block> + 'static + Unpin,
   NumberFor<Block>: BlockNumberOps,
   DigestFor<Block>: Encode,
   RA: Send + Sync + 'static,
-  I: BlockImport<Block> + Send + Sync + 'static,
+  I: BlockImport<Block,Transaction=TransactionFor<B,Block>> + Send + Sync + 'static,
   RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
-  <Client<B, E, Block, RA> as ProvideRuntimeApi>::Api: BlockBuilderApi<Block, Error = sp_blockchain::Error>,
+  <Client<B, E, Block, RA> as ProvideRuntimeApi<Block>>::Api: BlockBuilderApi<Block, Error = sp_blockchain::Error>+
+  sp_api::ApiExt<Block, StateBackend = B::State>,
 {
   fn process_all(
     &mut self, is: BlockId<Block>, digest: generic::Digest<Block::Hash>, locked: &mut VecDeque<BadgerTransaction>,
     batched: impl Iterator<Item = BadgerTransaction>,
   ) -> Result<Block, ()>
   {
-    let mut block_builder = match self.client.new_block_at(&is, digest)
+    let mut block_builder = match self.client.new_block_at(&is, digest,RecordProof::Yes)
     {
       Ok(val) => val,
       Err(_) =>
@@ -806,9 +828,9 @@ where
       }
     }
     debug!("Block is done, proceed with proposing.");
-    let block = match block_builder.bake()
+    let block = match block_builder.build()
     {
-      Ok(val) => Ok(val),
+      Ok(val) => Ok(val.block),
       Err(e) =>
       {
         warn!("Block baking error {:?}", e);
@@ -831,7 +853,7 @@ where
     };
     Ok(chain_head)
   }
-  fn import_block(&self, import_block: BlockImportParams<Block>) -> Result<(), ()>
+  fn import_block(&self, import_block: BlockImportParams<Block,TransactionFor<B,Block>>) -> Result<(), ()>
   {
     {
       let eh = import_block.header.parent_hash().clone();
@@ -848,20 +870,21 @@ where
 }
 use communication::BadgerStream;
 use sc_network_ranting::Network as RantingNetwork;
-
+/*
 pub struct Cwrap<B, E, Block: BlockT, RA>
 {
   pub client: Arc<Client<B, E, Block, RA>>,
 }
 impl<B, E, Block, RA> AuxStore for Cwrap<B, E, Block, RA>
 where
-  Block: BlockT<Hash = H256>,
+  Block: BlockT
   Block::Hash: Ord,
-  B: Backend<Block, Blake2Hasher> + 'static,
-  E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static + Clone,
+  B: Backend<Block, > + 'static,
+  E: CallExecutor<Block, > + Send + Sync + 'static + Clone,
   RA: Send + Sync + 'static,
   RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
-  <Client<B, E, Block, RA> as ProvideRuntimeApi>::Api: BlockBuilderApi<Block, Error = sp_blockchain::Error>,
+  <Client<B, E, Block, RA> as ProvideRuntimeApi<Block>>::Api: BlockBuilderApi<Block, Error = sp_blockchain::Error>+
+  sp_api::ApiExt<Block, StateBackend = B::State>,
 {
   fn insert_aux<
     'a,
@@ -881,19 +904,19 @@ where
   {
     (&*self.client).get_aux(key)
   }
-}
+} */
 /// Run a HBBFT churn as a task. Provide configuration and a link to a
 /// block import worker that has already been instantiated with `block_import`.
-pub fn run_honey_badger<B, E, Block: BlockT<Hash = H256>, N, RA, SC, X, I, A, Sp>(
+pub fn run_honey_badger<B, E, Block: BlockT, N, RA, SC, X, I, A, Sp>(
   client: Arc<Client<B, E, Block, RA>>, t_pool: Arc<A>, config: Config, network: N, on_exit: X,
   block_import: Arc<Mutex<I>>, inherent_data_providers: InherentDataProviders, selch: SC, keystore: KeyStorePtr,
-  executor: Sp, receiver: ImportRx<Block>, _node_key: Option<String>, _dev_seed: Option<String>,
+  executor: Sp, receiver: ImportRx<Block,B>, _node_key: Option<String>, _dev_seed: Option<String>,
 ) -> ClientResult<impl Future<Output = ()> + Send + Unpin>
 where
   Sp: futures03::task::Spawn + 'static,
   Block::Hash: Ord,
-  B: Backend<Block, Blake2Hasher> + 'static,
-  E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static + Clone,
+  B: Backend<Block, > + 'static,
+  E: CallExecutor<Block, Backend=B> + Send + Sync + 'static + Clone,
   N: RantingNetwork<Block> + Send + Sync + Unpin + Clone + 'static,
   //N::In: Send,
   SC: SelectChain<Block> + 'static + Unpin,
@@ -902,10 +925,11 @@ where
   RA: Send + Sync + 'static,
   X: futures03::future::Future<Output = ()> + Send + Unpin,
   A: TransactionPool + 'static,
-  <A as TransactionPool>::Block: BlockT<Hash = H256>,
-  I: BlockImport<Block> + Send + Sync + 'static,
+  <A as TransactionPool>::Block: BlockT,
+  I: BlockImport<Block,Transaction=TransactionFor<B,Block>> + Send + Sync + 'static,
   RA: ConstructRuntimeApi<Block, Client<B, E, Block, RA>>,
-  <Client<B, E, Block, RA> as ProvideRuntimeApi>::Api: BlockBuilderApi<Block, Error = sp_blockchain::Error>,
+  <Client<B, E, Block, RA> as ProvideRuntimeApi<Block>>::Api: BlockBuilderApi<Block, Error = sp_blockchain::Error>+
+  sp_api::ApiExt<Block, StateBackend = B::State>,
 {
   let genesis_authorities_provider = &*client.clone();
   let persistent_data = aux_store::load_persistent_badger(

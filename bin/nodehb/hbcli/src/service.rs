@@ -116,12 +116,13 @@ macro_rules! new_full_start {
 		let (block_import, import_rx) = badger::block_importer(client.clone(), &*client.clone(), select_chain.unwrap(),).expect("Invalid setup. QWOP.");
 		//let justification_import = block_import.clone();
 		import_setup=Some( (block_import.clone(),import_rx));
-        badger_import_queue::<_, _, Public, Signature>(
+        badger_import_queue::<_, _,_, Public, Signature,_>(
           Box::new(block_import),
           None,
           None,
           client,
-          inherent_data_providers.clone(),
+		  inherent_data_providers.clone(),
+		 
         )
         .map_err(Into::into)
 			
@@ -275,7 +276,7 @@ pub fn new_full<C: Send + Default + 'static>(config: NodeConfiguration<C>)
 		ConcreteTransactionPool,
 		OffchainWorkers<
 			ConcreteClient,
-			<ConcreteBackend as client_api::backend::Backend<Block, Blake2Hasher>>::OffchainStorage,
+			<ConcreteBackend as client_api::backend::Backend<Block, >>::OffchainStorage,
 			ConcreteBlock,
 		>
 	>,
@@ -315,12 +316,12 @@ pub fn new_light<C: Send + Default + 'static>(config: NodeConfiguration<C>)
 		//	let finality_proof_request_builder =
 	//			finality_proof_import.create_finality_proof_request_builder();
 
-  badger_import_queue::<_, _, Public, Signature>(
+  badger_import_queue::<_, _,_, Public, Signature,_>(
     Box::new(block_import),
     None,
     None,
     client,
-    inherent_data_providers.clone(),
+	inherent_data_providers.clone(),
   )
   .map_err(Into::into)
 

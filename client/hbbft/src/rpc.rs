@@ -3,12 +3,12 @@ use jsonrpc_core::{Error, ErrorCode, Result};
 use jsonrpc_derive::rpc;
 use keystore::KeyStorePtr;
 use std::sync::Arc;
-
+use sp_api::ProvideRuntimeApi;
 use client::blockchain::HeaderBackend;
 use parity_codec::{Codec, Encode};
 use runtime_primitives::traits::{
   Block as BlockT,
-  ProvideRuntimeApi, //BlakeTwo256,Header,NumberFor
+   //BlakeTwo256,Header,NumberFor
 };
 use substrate_primitives::Bytes;
 //use client::{
@@ -64,7 +64,7 @@ impl<C, Block, AccountId> BadgerRpcApi<AccountId> for BadgerRpcCaller<C, Block>
 where
   Block: BlockT,
   C: Send + Sync + 'static + sc_api::AuxStore + GenesisAuthoritySetProvider<Block>,
-  C: ProvideRuntimeApi,
+  C: ProvideRuntimeApi<Block>,
   C: HeaderBackend<Block>,
   AccountId: Codec + core::fmt::Debug,
   //Balance: Codec,

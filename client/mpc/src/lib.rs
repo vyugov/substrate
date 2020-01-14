@@ -145,8 +145,8 @@ struct KeyGenWork<B, E, Block: BlockT, RA, Storage> {
 
 impl<B, E, Block, RA, Storage> KeyGenWork<B, E, Block, RA, Storage>
 where
-	B: Backend<Block, Blake2Hasher> + 'static,
-	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
+	B: Backend<Block, > + 'static,
+	E: CallExecutor<Block, > + Send + Sync + 'static,
 	Block: BlockT<Hash = H256> + Unpin,
 	Block::Hash: Ord,
 	RA: Send + Sync + 'static,
@@ -198,8 +198,8 @@ where
 
 impl<B, E, Block, RA, Storage> Future for KeyGenWork<B, E, Block, RA, Storage>
 where
-	B: Backend<Block, Blake2Hasher> + 'static,
-	E: CallExecutor<Block, Blake2Hasher> + 'static + Send + Sync,
+	B: Backend<Block, > + 'static,
+	E: CallExecutor<Block, > + 'static + Send + Sync,
 	Block: BlockT<Hash = H256> + Unpin,
 	Block::Hash: Ord,
 	RA: Send + Sync + 'static,
@@ -293,8 +293,8 @@ pub fn run_mpc_task<B, E, Block, N, RA, Ex>(
 	executor: Ex,
 ) -> ClientResult<impl futures01::Future<Item = (), Error = ()>>
 where
-	B: Backend<Block, Blake2Hasher> + 'static,
-	E: CallExecutor<Block, Blake2Hasher> + 'static + Send + Sync,
+	B: Backend<Block, > + 'static,
+	E: CallExecutor<Block, > + 'static + Send + Sync,
 	Block: BlockT<Hash = H256> + Unpin,
 	Block::Hash: Ord,
 	N: Network<Block>,

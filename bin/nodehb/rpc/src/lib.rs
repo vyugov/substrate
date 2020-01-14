@@ -32,13 +32,13 @@
 use std::sync::Arc;
 
 use hb_node_primitives::{Block, AccountId, Index, Balance};
-use sp_runtime::traits::ProvideRuntimeApi;
+use sp_api::ProvideRuntimeApi;
 use keystore::KeyStorePtr;
 use sc_api::{AuxStore};//Backend
 use txpool_api::TransactionPool;
 /// Instantiate all RPC extensions.
 pub fn create<C, P, M>(client: Arc<C>, pool: Arc<P>,keystore:KeyStorePtr) -> jsonrpc_core::IoHandler<M> where
-C: ProvideRuntimeApi,
+C: ProvideRuntimeApi<Block>,
 	C: client::blockchain::HeaderBackend<Block>,
 	C: Send + Sync + 'static,
 	C::Api: srml_system_rpc::AccountNonceApi<Block, AccountId, Index>,

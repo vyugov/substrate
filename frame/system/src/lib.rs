@@ -114,7 +114,7 @@ use sp_runtime::{
 use sp_core::storage::well_known_keys;
 use frame_support::{
 	decl_module, decl_event, decl_storage, decl_error, storage, Parameter,
-	traits::{Contains, Get, ModuleToIndex},
+	traits::{Contains, Get, ModuleToIndex, OnReapAccount},
 	weights::{Weight, DispatchInfo, DispatchClass, SimpleDispatchInfo},
 };
 use codec::{Encode, Decode};
@@ -179,7 +179,7 @@ pub trait Trait: 'static + Eq + Clone {
 
 	/// The output of the `Hashing` function.
 	type Hash:
-		Parameter + Member + MaybeSerializeDeserialize + Debug + MaybeDisplay + SimpleBitOps
+		Parameter + Member + MaybeSerializeDeserialize + Debug + MaybeDisplay + SimpleBitOps + Ord
 		+ Default + Copy + CheckEqual + sp_std::hash::Hash + AsRef<[u8]> + AsMut<[u8]>;
 
 	/// The hashing system (algorithm) being used in the runtime (e.g. Blake2).
@@ -468,7 +468,7 @@ pub struct EnsureSignedBy<Who, AccountId>(sp_std::marker::PhantomData<(Who, Acco
 impl<
 	O: Into<Result<RawOrigin<AccountId>, O>> + From<RawOrigin<AccountId>>,
 	Who: Contains<AccountId>,
-	AccountId: PartialEq + Clone,
+	AccountId: PartialEq + Clone + Ord,
 > EnsureOrigin<O> for EnsureSignedBy<Who, AccountId> {
 	type Success = AccountId;
 	fn try_origin(o: O) -> Result<Self::Success, O> {
@@ -529,6 +529,27 @@ pub fn ensure_none<OuterOrigin, AccountId>(o: OuterOrigin) -> Result<(), BadOrig
 	match o.into() {
 		Ok(RawOrigin::None) => Ok(()),
 		_ => Err(BadOrigin),
+	}
+}
+
+/// A type of block initialization to perform.
+pub enum InitKind {
+	/// Leave inspectable storage entries in state.
+	///
+	/// i.e. `Events` are not being reset.
+	/// Should only be used for off-chain calls,
+	/// regular block execution should clear those.
+	Inspection,
+
+	/// Reset also inspectable storage entries.
+	///
+	/// This should be used for regular block execution.
+	Full,
+}
+
+impl Default for InitKind {
+	fn default() -> Self {
+		InitKind::Full
 	}
 }
 
@@ -634,6 +655,7 @@ impl<T: Trait> Module<T> {
 		parent_hash: &T::Hash,
 		txs_root: &T::Hash,
 		digest: &DigestOf<T>,
+		kind: InitKind,
 	) {
 		// populate environment
 		storage::unhashed::put(well_known_keys::EXTRINSIC_INDEX, &0u32);
@@ -642,9 +664,12 @@ impl<T: Trait> Module<T> {
 		<ParentHash<T>>::put(parent_hash);
 		<BlockHash<T>>::insert(*number - One::one(), parent_hash);
 		<ExtrinsicsRoot<T>>::put(txs_root);
-		<Events<T>>::kill();
-		EventCount::kill();
-		<EventTopics<T>>::remove_all();
+
+		if let InitKind::Full = kind {
+			<Events<T>>::kill();
+			EventCount::kill();
+			<EventTopics<T>>::remove_all();
+		}
 	}
 
 	/// Remove temporary "environment" entries in storage.
@@ -787,6 +812,13 @@ impl<T: Trait> Module<T> {
 			.map(ExtrinsicData::take).collect();
 		let xts_root = extrinsics_data_root::<T::Hashing>(extrinsics);
 		<ExtrinsicsRoot<T>>::put(xts_root);
+	}
+}
+
+impl<T: Trait> OnReapAccount<T::AccountId> for Module<T> {
+	/// Remove the nonce for the account. Account is considered fully removed from the system.
+	fn on_reap_account(who: &T::AccountId) {
+		<AccountNonce<T>>::remove(who);
 	}
 }
 
@@ -1215,7 +1247,13 @@ mod tests {
 	#[test]
 	fn deposit_event_should_work() {
 		new_test_ext().execute_with(|| {
-			System::initialize(&1, &[0u8; 32].into(), &[0u8; 32].into(), &Default::default());
+			System::initialize(
+				&1,
+				&[0u8; 32].into(),
+				&[0u8; 32].into(),
+				&Default::default(),
+				InitKind::Full,
+			);
 			System::note_finished_extrinsics();
 			System::deposit_event(1u16);
 			System::finalize();
@@ -1230,7 +1268,13 @@ mod tests {
 				]
 			);
 
-			System::initialize(&2, &[0u8; 32].into(), &[0u8; 32].into(), &Default::default());
+			System::initialize(
+				&2,
+				&[0u8; 32].into(),
+				&[0u8; 32].into(),
+				&Default::default(),
+				InitKind::Full,
+			);
 			System::deposit_event(42u16);
 			System::note_applied_extrinsic(&Ok(()), 0, Default::default());
 			System::note_applied_extrinsic(&Err(DispatchError::BadOrigin), 0, Default::default());
@@ -1259,6 +1303,7 @@ mod tests {
 				&[0u8; 32].into(),
 				&[0u8; 32].into(),
 				&Default::default(),
+				InitKind::Full,
 			);
 			System::note_finished_extrinsics();
 
@@ -1324,6 +1369,7 @@ mod tests {
 					&[n as u8 - 1; 32].into(),
 					&[0u8; 32].into(),
 					&Default::default(),
+					InitKind::Full,
 				);
 
 				System::finalize();

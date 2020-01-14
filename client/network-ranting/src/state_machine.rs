@@ -27,7 +27,7 @@ use sp_runtime::ConsensusEngineId;
 pub use sc_network::message::generic::{Message, ConsensusMessage};
 use sc_network::Context;
 use sc_network::config::Roles;
-
+use crate::Network;
 use sc_peerid_wrapper::PeerIdW;
 
 // FIXME: Add additional spam/DoS attack protection: https://github.com/paritytech/substrate/issues/1115
@@ -127,7 +127,7 @@ pub trait ValidatorContext<B: BlockT>
 pub struct NetworkContext<'g, 'p, B: BlockT>
 {
   gossip: &'g mut ConsensusGossip<B>,
-  protocol: &'p mut dyn Context<B>,
+  network: &'p mut dyn Network<B>,
   engine_id: ConsensusEngineId,
 }
 
@@ -137,15 +137,15 @@ impl<'g, 'p, B: BlockT> ValidatorContext<B> for NetworkContext<'g, 'p, B> {
     /// Broadcast to all except
 	fn broadcast_except(&mut self, except: HashSet<PeerId>, message: Vec<u8>)
 	{
-		self.gossip.broadcast_except(self.protocol, self.engine_id,except , message, false,false)
+		self.gossip.broadcast_except(self.network, self.engine_id,except , message, false,false)
 	}
 	fn send_to_set(&mut self,set:HashSet<PeerId>, message: Vec<u8>)
 	{
-		self.gossip.send_to_set(self.protocol,self.engine_id, set, message, true,false,);
+		self.gossip.send_to_set(self.network,self.engine_id, set, message, true,false,);
 	}
 	fn send_single(&mut self,who:&PeerId, message: Vec<u8>)
 	{
-      self.gossip.send_single(self.protocol, self.engine_id,who, message)
+      self.gossip.send_single(self.network, self.engine_id,who, message)
 	}
 	fn keep(&mut self,cell:B::Hash, message: Vec<u8>)
 	{
@@ -224,14 +224,14 @@ impl<B: BlockT> ConsensusGossip<B> {
 	/// Register message validator for a message type.
 	pub fn register_validator(
 		&mut self,
-		protocol: &mut dyn Context<B>,
+		network: &mut dyn Network<B>,
 		engine_id: ConsensusEngineId,
 		validator: Arc<dyn Validator<B>>
 	) {
 		self.register_validator_internal(engine_id, validator.clone());
 		let peers: Vec<_> = self.peers.iter().map(|(id, peer)| (id.clone(), peer.roles)).collect();
 		for (id, roles) in peers {
-			let mut context = NetworkContext { gossip: self, protocol, engine_id: engine_id.clone() };
+			let mut context = NetworkContext { gossip: self, network, engine_id: engine_id.clone() };
 			validator.new_peer(&mut context, &id, roles);
 		}
 	}
@@ -241,7 +241,7 @@ impl<B: BlockT> ConsensusGossip<B> {
 	}
 
 	/// Handle new connected peer.
-	pub fn new_peer(&mut self, protocol: &mut dyn Context<B>, who: PeerId, roles: Roles) {
+	pub fn new_peer(&mut self, network: &mut dyn Network<B>, who: PeerId, roles: Roles) {
 		// light nodes are not valid targets for consensus gossip messages
 		if !roles.is_full() {
 			return;
@@ -253,7 +253,7 @@ impl<B: BlockT> ConsensusGossip<B> {
 			roles,
 		});
 		for (engine_id, v) in self.validators.clone() {
-			let mut context = NetworkContext { gossip: self, protocol, engine_id: engine_id.clone() };
+			let mut context = NetworkContext { gossip: self, network, engine_id: engine_id.clone() };
 			v.new_peer(&mut context, &who, roles);
 		}
 	}
@@ -298,30 +298,30 @@ impl<B: BlockT> ConsensusGossip<B> {
 	}
 
 	/// Call when a peer has been disconnected to stop tracking gossip status.
-	pub fn peer_disconnected(&mut self, protocol: &mut dyn Context<B>, who: PeerId) {
+	pub fn peer_disconnected(&mut self, network: &mut dyn Network<B>, who: PeerId) {
 		for (engine_id, v) in self.validators.clone() {
-			let mut context = NetworkContext { gossip: self, protocol, engine_id: engine_id.clone() };
+			let mut context = NetworkContext { gossip: self, network, engine_id: engine_id.clone() };
 			v.peer_disconnected(&mut context, &who);
 		}
 	}
 
 	/// Perform periodic maintenance
-	pub fn tick(&mut self, protocol: &mut dyn Context<B>) {
+	pub fn tick(&mut self, network: &mut dyn Network<B>) {
 		self.collect_garbage();
 		if time::Instant::now() >= self.next_broadcast {
-			self.rebroadcast(protocol);
+			self.rebroadcast(network);
 			self.next_broadcast = time::Instant::now() + REBROADCAST_INTERVAL;
 		}
 	}
 
 	/// Rebroadcast all messages to all peers.
-	fn rebroadcast(&mut self, protocol: &mut dyn Context<B>) {
+	fn rebroadcast(&mut self, network: &mut dyn Network<B>) {
 
 		let wtf:Vec<_>=self.messages.iter().map( |(_,m)| (*m).clone()).collect();
 
 		for m in wtf.into_iter()
 		{
-			self.broadcast_except(protocol, m.engine_id, HashSet::new(), m.message,true,true);
+			self.broadcast_except(network, m.engine_id, HashSet::new(), m.message,true,true);
 		}	
 
 	}
@@ -381,7 +381,7 @@ impl<B: BlockT> ConsensusGossip<B> {
 
 		rx
 	}
-	pub fn broadcast_except(&mut self,protocol: &mut dyn Context<B>,engine_id: ConsensusEngineId,mut  except: HashSet<PeerId>, message: Vec<u8>,do_expand:bool,send_to_known:bool)
+	pub fn broadcast_except(&mut self,network: &mut dyn Network<B>,engine_id: ConsensusEngineId,mut  except: HashSet<PeerId>, message: Vec<u8>,do_expand:bool,send_to_known:bool)
 	{
 
 		let message_hash = HashFor::<B>::hash(&message[..]);
@@ -428,10 +428,11 @@ impl<B: BlockT> ConsensusGossip<B> {
 		};
 	   for peer in targets.into_iter()
 	   {
-		protocol.send_consensus(peer.clone(), vec![compound.clone()]);  
+		network.write_notification(peer.clone(),engine_id,compound.encode());
+		//protocol.send_consensus(peer.clone(), vec![compound.clone()]);  
 	   }
 	}
-	pub fn send_single(&mut self,protocol: &mut dyn Context<B>,engine_id: ConsensusEngineId,peer:&PeerId, message: Vec<u8>,)
+	pub fn send_single(&mut self,network: &mut dyn Network<B>,engine_id: ConsensusEngineId,peer:&PeerId, message: Vec<u8>,)
 	{
 		let outgoing= RoutedMessage
 		{
@@ -442,10 +443,11 @@ impl<B: BlockT> ConsensusGossip<B> {
 			engine_id: engine_id.clone(),
 			data:outgoing,
 		};
-		protocol.send_consensus(peer.clone(), vec![compound]);  
+		network.write_notification(peer.clone(),engine_id,compound.encode());
+		//protocol.send_consensus(peer.clone(), vec![compound]);  
 	}
 
-	pub fn send_to_set(&mut self,protocol: &mut dyn Context<B>,engine_id: ConsensusEngineId,mut  set: HashSet<PeerId>, message: Vec<u8>,do_constrict:bool,send_to_known:bool)
+	pub fn send_to_set(&mut self,network: &mut dyn Network<B>,engine_id: ConsensusEngineId,mut  set: HashSet<PeerId>, message: Vec<u8>,do_constrict:bool,send_to_known:bool)
 	{
 		let message_hash = HashFor::<B>::hash(&message[..]);
 
@@ -494,7 +496,8 @@ impl<B: BlockT> ConsensusGossip<B> {
 		};
 	   for peer in targets.into_iter()
 	   {
-		protocol.send_consensus(peer.clone(), vec![compound.clone()]);  
+		   network.write_notification(peer.clone(), engine_id.clone(), compound.encode());
+//		protocol.send_consensus(peer.clone(), vec![compound.clone()]);  
 	   }
 	}
 	/// Handle an incoming ConsensusMessage for topic by who via protocol. Discard message if topic
@@ -503,7 +506,7 @@ impl<B: BlockT> ConsensusGossip<B> {
 	/// in all other cases.
 	pub fn on_incoming(
 		&mut self,
-		protocol: &mut dyn Context<B>,
+		network: &mut dyn Network<B>,
 		who: PeerId,
 		messages: Vec<ConsensusMessage>,
 	) {
@@ -528,7 +531,7 @@ impl<B: BlockT> ConsensusGossip<B> {
 			  Err(e) =>
 			  {
 			trace!(target:"gossip", "Ignored malformed message from {}: {:?}", who,e);
-			protocol.report_peer(who.clone(), rep::MALFORMED_GOSSIP); 
+			network.report_peer(who.clone(), rep::MALFORMED_GOSSIP); 
 			continue;
 			
 			  }
@@ -552,7 +555,7 @@ impl<B: BlockT> ConsensusGossip<B> {
 			 if excluded.iter().find(|x| x.0==self.self_id ).is_some()
 			 {
 				 //just propagate...
-				 self.broadcast_except(protocol,engine_id.clone(),excluded.iter().map(|x| x.0.clone()).collect(),rmsg.msg.clone(), true,false);	
+				 self.broadcast_except(network,engine_id.clone(),excluded.iter().map(|x| x.0.clone()).collect(),rmsg.msg.clone(), true,false);	
                  continue;
 			 }
 			 else
@@ -565,7 +568,7 @@ impl<B: BlockT> ConsensusGossip<B> {
 			{
 				if set.iter().find(|x| x.0==self.self_id ).is_none()
 				{
-					self.send_to_set(protocol,engine_id.clone(),set.iter().map(|x| x.0.clone()).collect(),rmsg.msg.clone(),true,false);   
+					self.send_to_set(network,engine_id.clone(),set.iter().map(|x| x.0.clone()).collect(),rmsg.msg.clone(),true,false);   
 					continue;
 				}
 				else
@@ -581,7 +584,7 @@ impl<B: BlockT> ConsensusGossip<B> {
 			let validation = self.validators.get(&engine_id)
 				.cloned()
 				.map(|v| {
-					let mut context = NetworkContext { gossip: self, protocol, engine_id };
+					let mut context = NetworkContext { gossip: self, network, engine_id };
 					v.validate(&mut context, &who, &msgdata)
 				});
 
@@ -592,13 +595,13 @@ impl<B: BlockT> ConsensusGossip<B> {
 				Some(ValidationResult::Punish(num)) => 
 				{
 					trace!(target:"gossip", "Punishing message for {:?} from {}", &num, who);
-					protocol.report_peer(who.clone(), rep::punishment(num));
+					network.report_peer(who.clone(), rep::punishment(num));
 					continue;
 				},
 				None => {
 					trace!(target:"gossip", "Unknown message engine id {:?} from {}", engine_id, who);
-					protocol.report_peer(who.clone(), rep::UNKNOWN_GOSSIP);
-					protocol.disconnect_peer(who.clone());
+					network.report_peer(who.clone(), rep::UNKNOWN_GOSSIP);
+					network.disconnect_peer(who.clone());
 					continue;
 				}
 			};
@@ -607,12 +610,12 @@ impl<B: BlockT> ConsensusGossip<B> {
  // broadcast to all except
  RoutingInfo::BroadcastExclude(excluded) =>
  {
-  	  self.broadcast_except(protocol,engine_id.clone(),excluded.iter().map(|x| x.0.clone()).collect(),msgdata.clone(), true,false);	
+  	  self.broadcast_except(network,engine_id.clone(),excluded.iter().map(|x| x.0.clone()).collect(),msgdata.clone(), true,false);	
  }
  // target a subset
  RoutingInfo::Targeted(set) => 
  {
-		 self.send_to_set(protocol,engine_id.clone(),set.iter().map(|x| x.0.clone()).collect(),msgdata.clone(),true,false);   
+		 self.send_to_set(network,engine_id.clone(),set.iter().map(|x| x.0.clone()).collect(),msgdata.clone(),true,false);   
  },
  // Specific to a local node
  RoutingInfo::Specific =>  { },
@@ -629,7 +632,7 @@ impl<B: BlockT> ConsensusGossip<B> {
 					entry.remove_entry();
 				}
 			}
-         	protocol.report_peer(who.clone(), rep::GOSSIP_SUCCESS);
+         	network.report_peer(who.clone(), rep::GOSSIP_SUCCESS);
 			if let Some(cell) = validation_result {
 				if let Some(ref mut peer) = self.peers.get_mut(&who) {
 					peer.known_messages.put(message_hash,());
@@ -648,7 +651,7 @@ impl<B: BlockT> ConsensusGossip<B> {
 	/// later on.
 	pub fn send_message(
 		&mut self,
-		protocol: &mut dyn Context<B>,
+		network: &mut dyn Network<B>,
 		who: &PeerId,
 		engine_id:ConsensusEngineId,
 		message: RawMessage,
@@ -660,7 +663,7 @@ impl<B: BlockT> ConsensusGossip<B> {
 
 
 		trace!(target: "gossip", "Sending direct to {}: {:?}", who, message);
-		self.send_single(protocol,engine_id,who,message);
+		self.send_single(network,engine_id,who,message);
 	}
 }
 

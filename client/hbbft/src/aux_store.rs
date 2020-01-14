@@ -515,10 +515,10 @@ use substrate_primitives::H256; //Pair
 use runtime_primitives::traits::Zero;
 use state_machine::ExecutionStrategy;
 
-impl<B, E, Block: BlockT<Hash = H256>, RA> GenesisAuthoritySetProvider<Block> for Client<B, E, Block, RA>
+impl<B, E, Block: BlockT, RA> GenesisAuthoritySetProvider<Block> for Client<B, E, Block, RA>
 where
-  B: Backend<Block, Blake2Hasher> + Send + Sync + 'static,
-  E: CallExecutor<Block, Blake2Hasher> + 'static + Clone + Send + Sync,
+  B: Backend<Block, > + Send + Sync + 'static,
+  E: CallExecutor<Block, > + 'static + Clone + Send + Sync,
   RA: Send + Sync,
 {
   fn get(&self) -> Result<AuthorityList, ClientError>

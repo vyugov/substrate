@@ -89,7 +89,7 @@ decl_storage! {
 		///
 		/// The first key is always `HB_DEDUP_KEY_PREFIX` to have all the data in the same branch of
 		/// the trie. Having all data in the same branch should prevent slowing down other queries.
-		Votes: double_map hasher(twox_64_concat) Vec<u8>, blake2_256(T::AccountId) =>  Vec<T::AccountId>;
+		Votes: double_map hasher(twox_64_concat) Vec<u8>, hasher(twox_64_concat) T::AccountId =>  Vec<T::AccountId>;
 
     /// The current authority set.
     //Authorities get(authorities): Vec<AuthorityId>;

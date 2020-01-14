@@ -23,6 +23,7 @@ use sc_network_ranting::Network as RantingNetwork;
 use sc_network_ranting::RawMessage;
 use std::marker::PhantomData;
 use std::pin::Pin;
+use sc_api::backend::TransactionFor;
 use std::sync::Arc;
 use gossip::BadgerBlockData;
 use badger_primitives::ConsensusLog;
@@ -62,7 +63,7 @@ use sc_network_ranting::ValidatorContext;
 use runtime_primitives::traits::{Block as BlockT, Hash as HashT, Header as HeaderT};
 use substrate_primitives::crypto::Pair;
 use substrate_telemetry::{telemetry, CONSENSUS_DEBUG};
-
+use sc_api::Backend;
 pub mod gossip;
 
 use crate::Error;
@@ -100,7 +101,7 @@ pub enum BlockPushResult
   BlockError,
 }
 
-pub trait BlockPusherMaker<B: BlockT>: Send + Sync
+pub trait BlockPusherMaker<B: BlockT,BEnd:Backend<B>>: Send + Sync
 {
   fn process_all(
     &mut self, is: BlockId<B>, digest: generic::Digest<B::Hash>, locked: &mut VecDeque<BadgerTransaction>,
@@ -108,7 +109,7 @@ pub trait BlockPusherMaker<B: BlockT>: Send + Sync
   ) -> Result<B, ()>;
   //fn make_pusher<'a>(&self,is: BlockId<B> , digest: generic::Digest<B::Hash> )->Result<Self::Pusher,()>;
   fn best_chain(&self) -> Result<<B as BlockT>::Header, ()>;
-  fn import_block(&self, import_block: BlockImportParams<B>) -> Result<(), ()>;
+  fn import_block(&self, import_block: BlockImportParams<B,TransactionFor<BEnd,B>>) -> Result<(), ()>;
 }
 
 pub trait BatchProcessor<Block: BlockT>
@@ -516,13 +517,14 @@ pub struct BadgerSyncState<B: BlockT>
   pub validators: Vec<ValidatorSync<B>>,
 }
 
-pub struct BadgerStateMachine<B: BlockT, D, Cl, BPM, Aux>
+pub struct BadgerStateMachine<B: BlockT, D, Cl, BPM, Aux,BEnd>
 where
   D: ConsensusProtocol<NodeId = NodeId>, //specialize to avoid some of the confusion
   D::Message: Serialize + DeserializeOwned,
   B::Hash: Ord,
   Cl: NetClient<B>,
-  BPM: BlockPusherMaker<B>,
+  BEnd:Backend<B>,
+  BPM: BlockPusherMaker<B,BEnd>,
   Aux: AuxStore,
 {
   pub state: BadgerState<B, D>,
@@ -543,6 +545,7 @@ where
   pub output_message_buffer: Vec<(LocalTarget<B>, GossipMessage<B>)>,
   pub finalizer: Box<dyn FnMut(&B::Hash, Option<Justification>) -> bool + Send + Sync>,
   pub peer_map: RwLock<BadgerAuthorityMap<Aux>>,
+  _ni:PhantomData<BEnd>
 }
 
 const MAX_QUEUE_LEN: usize = 1024;
@@ -667,17 +670,18 @@ impl<A: AsRef<[u8]>> std::cmp::PartialOrd for WHash<A>
   }
 }
 
-impl<B: BlockT, Cl, BPM, Aux> BadgerStateMachine<B, QHB, Cl, BPM, Aux>
+impl<B: BlockT, Cl, BPM, Aux,BEnd> BadgerStateMachine<B, QHB, Cl, BPM, Aux,BEnd>
 where
   Cl: NetClient<B>,
   B::Hash: Ord,
-  BPM: BlockPusherMaker<B>,
+  BEnd:Backend<B>,
+  BPM: BlockPusherMaker<B,BEnd>,
   Aux: AuxStore + Send + Sync + 'static,
 {
   pub fn new(
     keystore: KeyStorePtr, self_peer: PeerId, batch_size: u64, persist: BadgerPersistentData, client: Arc<Cl>,
     finalizer: Box<dyn FnMut(&B::Hash, Option<Justification>) -> bool + Send + Sync>, bbld: BPM, astore: Arc<Aux>,
-  ) -> BadgerStateMachine<B, QHB, Cl, BPM, Aux>
+  ) -> BadgerStateMachine<B, QHB, Cl, BPM, Aux,BEnd>
   {
     let ap: AuthorityPair;
     let is_ob: bool;
@@ -725,6 +729,7 @@ where
       },
       finalizer: finalizer,
       output_message_buffer: Vec::new(),
+      _ni:PhantomData,
     }
     /*pub struct ValidatorSync<B:BlockT>
     {
@@ -945,7 +950,7 @@ where
             }
           }
         }
-        let import_block: BlockImportParams<B> = BlockImportParams {
+        let import_block: BlockImportParams<B,_> = BlockImportParams {
           origin: BlockOrigin::Own,
           header,
           justification: None,
@@ -955,6 +960,7 @@ where
           allow_missing_state: true,
           auxiliary: Vec::new(),
           fork_choice: ForkChoiceStrategy::LongestChain,
+          storage_changes:None,
           import_existing: false,
         };
         //let parent_hash = import_block.post_header().hash();
@@ -1130,7 +1136,7 @@ where
       self.cached_origin = Some(pair);
     }
   }
-  pub fn importing_external_block(&mut self, mut bli: BlockImportParams<B>)
+  pub fn importing_external_block(&mut self, mut bli: BlockImportParams<B,TransactionFor<BEnd,B>>)
   {
     let just: BadgerFullJustification<B> = match Decode::decode(&mut &bli.justification.as_mut().unwrap()[..])
     {
@@ -2750,25 +2756,25 @@ impl<B: BlockT> BadgerNode<B, QHB>
     }
   }
 }
-pub struct BadgerGossipValidator<Block: BlockT, Cl, BPM, Aux>
+pub struct BadgerGossipValidator<Block: BlockT, Cl, BPM, Aux,BEnd:Backend<Block>>
 where
   Block::Hash: Ord,
   Cl: NetClient<Block>,
-  BPM: BlockPusherMaker<Block>,
+  BPM: BlockPusherMaker<Block,BEnd>,
   Aux: AuxStore,
 {
   // peers: RwLock<Arc<Peers>>,
-  inner: RwLock<BadgerStateMachine<Block, QHB, Cl, BPM, Aux>>,
+  inner: RwLock<BadgerStateMachine<Block, QHB, Cl, BPM, Aux,BEnd>>,
   pending_messages: RwLock<BTreeMap<PeerIdW, Vec<Vec<u8>>>>,
 }
-impl<Block: BlockT, Cl, BPM, Aux> BadgerGossipValidator<Block, Cl, BPM, Aux>
+impl<Block: BlockT, Cl, BPM, Aux,BEnd:Backend<Block>> BadgerGossipValidator<Block, Cl, BPM, Aux,BEnd>
 where
   Cl: NetClient<Block>,
   Block::Hash: Ord,
-  BPM: BlockPusherMaker<Block>,
+  BPM: BlockPusherMaker<Block,BEnd>,
   Aux: AuxStore + Send + Sync + 'static,
 {
-  pub fn on_block_imported(&self, blki: BlockImportParams<Block>)
+  pub fn on_block_imported(&self, blki: BlockImportParams<Block,TransactionFor<BEnd,Block>>)
   //num:NumberFor::<Block>,hash:Block::Hash,just:&Justification)
   {
     self.inner.write().importing_external_block(blki); //imported_block_number(num,has,just);
@@ -2966,7 +2972,7 @@ where
   ) -> Self
   {
     Self {
-      inner: RwLock::new(BadgerStateMachine::<Block, QHB, Cl, BPM, Aux>::new(
+      inner: RwLock::new(BadgerStateMachine::<Block, QHB, Cl, BPM, Aux,BEnd>::new(
         keystore, self_peer, batch_size, persist, client, flizer, bpusher, astore,
       )),
       pending_messages: RwLock::new(BTreeMap::new()),
@@ -3100,12 +3106,12 @@ where
 }
 use gossip::PeerConsensusState;
 
-impl<Block: BlockT, Cl, BPM, Aux> sc_network_ranting::Validator<Block> for BadgerGossipValidator<Block, Cl, BPM, Aux>
+impl<Block: BlockT, Cl, BPM, Aux,BEnd:Backend<Block>> sc_network_ranting::Validator<Block> for BadgerGossipValidator<Block, Cl, BPM, Aux,BEnd>
 where
   Cl: NetClient<Block>,
   Block::Hash: Ord,
   Aux: AuxStore + Send + Sync + 'static,
-  BPM: BlockPusherMaker<Block>,
+  BPM: BlockPusherMaker<Block,BEnd>,
 {
   fn new_peer(&self, context: &mut dyn ValidatorContext<Block>, who: &PeerId, _roles: Roles)
   {
@@ -3282,22 +3288,23 @@ impl Stream for NetworkStream
 }
 
 /// Bridge between the underlying network service, gossiping consensus messages and Badger
-pub struct NetworkBridge<B: BlockT, Cl, BPM, Aux>
+pub struct NetworkBridge<B: BlockT, Cl, BPM, Aux,BEnd>
 where
   Cl: NetClient<B>,
   B::Hash: Ord,
+  BEnd:Backend<B>,
   Aux: AuxStore,
-  BPM: BlockPusherMaker<B>,
+  BPM: BlockPusherMaker<B,BEnd>,
 {
   engine: sc_network_ranting::RantingEngine<B>,
-  node: Arc<BadgerGossipValidator<B, Cl, BPM, Aux>>,
+  node: Arc<BadgerGossipValidator<B, Cl, BPM, Aux,BEnd>>,
 }
-impl<B: BlockT, Cl, BPM, Aux> BatchProcessor<B> for NetworkBridge<B, Cl, BPM, Aux>
+impl<B: BlockT, Cl, BPM, Aux,BEnd:Backend<B>> BatchProcessor<B> for NetworkBridge<B, Cl, BPM, Aux,BEnd>
 where
   Cl: NetClient<B> + 'static,
   B::Hash: Ord,
   Aux: AuxStore + Send + Sync + 'static,
-  BPM: BlockPusherMaker<B>,
+  BPM: BlockPusherMaker<B,BEnd>,
 {
   fn process_batch(&self, batch: <QHB as ConsensusProtocol>::Output)
   {
@@ -3305,14 +3312,14 @@ where
   }
 }
 
-impl<B: BlockT, Cl, BPM, Aux> NetworkBridge<B, Cl, BPM, Aux>
+impl<B: BlockT, Cl, BPM, Aux,BEnd:Backend<B>+'static> NetworkBridge<B, Cl, BPM, Aux,BEnd>
 where
   Cl: NetClient<B> + 'static,
   B::Hash: Ord,
   Aux: AuxStore + Send + Sync + 'static,
-  BPM: BlockPusherMaker<B> + 'static,
+  BPM: BlockPusherMaker<B,BEnd> + 'static,
 {
-  pub fn on_block_imported(&self, blki: BlockImportParams<B>) //num:NumberFor::<B>,hash:B::Hash,just:Justification)
+  pub fn on_block_imported(&self, blki: BlockImportParams<B,TransactionFor<BEnd,B>>) //num:NumberFor::<B>,hash:B::Hash,just:Justification)
   {
     self.node.on_block_imported(blki); //num,hash);
   }
@@ -3361,12 +3368,12 @@ where
   }
 }
 
-impl<B: BlockT, Cl, BPM, Aux> Clone for NetworkBridge<B, Cl, BPM, Aux>
+impl<B: BlockT, Cl, BPM, Aux,BEnd:Backend<B>> Clone for NetworkBridge<B, Cl, BPM, Aux,BEnd>
 where
   Cl: NetClient<B>,
   B::Hash: Ord,
   Aux: AuxStore,
-  BPM: BlockPusherMaker<B>,
+  BPM: BlockPusherMaker<B,BEnd>,
 {
   fn clone(&self) -> Self
   {
@@ -3389,23 +3396,23 @@ pub trait BadgerHandler<B: BlockT>
   fn assign_finalizer(&self, fnl: Box<dyn FnMut(&B::Hash, Option<Justification>) -> bool + Send + Sync>);
 }
 
-pub struct BadgerStream<Block: BlockT, Cl, BPM, Aux>
+pub struct BadgerStream<Block: BlockT, Cl, BPM, Aux,BEnd:Backend<Block>>
 where
   Cl: NetClient<Block>,
 
   Block::Hash: Ord,
   Aux: AuxStore + Send + Sync + 'static,
-  BPM: BlockPusherMaker<Block>,
+  BPM: BlockPusherMaker<Block,BEnd>,
 {
-  pub wrap: Arc<NetworkBridge<Block, Cl, BPM, Aux>>,
+  pub wrap: Arc<NetworkBridge<Block, Cl, BPM, Aux,BEnd>>,
 }
 
-impl<Block: BlockT, Cl, BPM, Aux> Stream for BadgerStream<Block, Cl, BPM, Aux>
+impl<Block: BlockT, Cl, BPM, Aux,BEnd:Backend<Block>> Stream for BadgerStream<Block, Cl, BPM, Aux,BEnd>
 where
   Cl: NetClient<Block>,
   Block::Hash: Ord,
   Aux: AuxStore + Send + Sync + 'static,
-  BPM: BlockPusherMaker<Block>,
+  BPM: BlockPusherMaker<Block,BEnd>,
 {
   type Item = <QHB as ConsensusProtocol>::Output;
 
@@ -3424,12 +3431,12 @@ pub trait SendOut
   fn send_out(&self, input: Vec<Vec<u8>>) -> Result<(), Error>;
 }
 
-impl<Block: BlockT, Cl, BPM, Aux> SendOut for NetworkBridge<Block, Cl, BPM, Aux>
+impl<Block: BlockT, Cl, BPM, Aux,BEnd:Backend<Block>> SendOut for NetworkBridge<Block, Cl, BPM, Aux,BEnd>
 where
   Cl: NetClient<Block>,
   Block::Hash: Ord,
   Aux: AuxStore + Send + Sync + 'static,
-  BPM: BlockPusherMaker<Block>,
+  BPM: BlockPusherMaker<Block,BEnd>,
 {
   fn send_out(&self, input: Vec<Vec<u8>>) -> Result<(), Error>
   {
@@ -3448,12 +3455,12 @@ where
 
 //use runtime_primitives::ConsensusEngineId;
 
-impl<Block: BlockT, Cl, BPM, Aux> Sink<Vec<Vec<u8>>> for NetworkBridge<Block, Cl, BPM, Aux>
+impl<Block: BlockT, Cl, BPM, Aux,BEnd:Backend<Block>> Sink<Vec<Vec<u8>>> for NetworkBridge<Block, Cl, BPM, Aux,BEnd>
 where
   Cl: NetClient<Block>,
   Block::Hash: Ord,
   Aux: AuxStore + Send + Sync + 'static,
-  BPM: BlockPusherMaker<Block>,
+  BPM: BlockPusherMaker<Block,BEnd>,
 {
   type Error = Error;
 

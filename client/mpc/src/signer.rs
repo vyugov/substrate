@@ -123,8 +123,8 @@ where
 
 impl<B, E, Block, RA, In, Out, Storage> Signer<B, E, Block, RA, In, Out, Storage>
 where
-	B: Backend<Block, Blake2Hasher> + 'static,
-	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
+	B: Backend<Block, > + 'static,
+	E: CallExecutor<Block, > + Send + Sync + 'static,
 	Block: BlockT<Hash = H256>,
 	Block::Hash: Ord,
 	RA: Send + Sync + 'static,
@@ -430,8 +430,8 @@ where
 
 impl<B, E, Block, RA, In, Out, Storage> Future for Signer<B, E, Block, RA, In, Out, Storage>
 where
-	B: Backend<Block, Blake2Hasher> + 'static,
-	E: CallExecutor<Block, Blake2Hasher> + Send + Sync + 'static,
+	B: Backend<Block, > + 'static,
+	E: CallExecutor<Block, > + Send + Sync + 'static,
 	Block: BlockT<Hash = H256>,
 	Block::Hash: Ord,
 	RA: Send + Sync + 'static,
